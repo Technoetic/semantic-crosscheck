@@ -256,11 +256,12 @@ class VerifyStageTest(unittest.TestCase):
     def test_clean_demo_passes_every_check(self):
         res = self.verify(self.out, ["v1", "v2", "v3"])
         failing = [(c.id, c.status, c.detail) for c in res.checks if c.status != "pass"]
-        self.assertEqual(failing, [])
+        self.assertEqual(failing, [("scope:v4", "not_run", {"reason": "excluded_by_only"})])
         want = ([f"v1:{g}" for g in V2_STRATA] + [f"v2:{g}:{s}" for g, ss in V2_STRATA.items() for s in ss]
-                + [f"v3:{t}" for t in V3_TESTS])
+                + [f"v3:{t}" for t in V3_TESTS] + ["scope:v4"])
         self.assertEqual([c.id for c in res.checks], want)
-        self.assertEqual(res.status, "pass")
+        self.assertEqual(res.status, "not_run", "--only left v4 out, so the run is not a pass")
+        self.assertIn("without them", res.next_safe_action)
         self.assertEqual(res.not_proven, [])
         v2 = {c.id: c.detail for c in res.checks if c.id.startswith("v2:")}
         self.assertEqual(v2["v2:q01_explosion:top"]["bindings"], 8)
@@ -276,7 +277,8 @@ class VerifyStageTest(unittest.TestCase):
         build.add("closure:has_component", "fail", "hierarchies.has_component", reason="cycle")
         build.write(out)
         res = self.verify(out, ["v1", "v3"])
-        status = {c.id: c.status for c in res.checks}
+        status = {c.id: c.status for c in res.checks if not c.id.startswith("scope:")}
+        self.assertEqual([c.id for c in res.checks if c.id.startswith("scope:")], ["scope:v2", "scope:v4"])
         gated = {"v1:q01_explosion", "v1:q02_where_used", "v1:q04_depth_histogram"} | {f"v3:{t}" for t in CLOSURE_V3}
         self.assertEqual(len(status), 5 + len(V3_TESTS))
         self.assertEqual({cid for cid, st in status.items() if st == "not_run"}, gated)
@@ -337,13 +339,13 @@ class VerifyStageTest(unittest.TestCase):
         cfg = config.load(pgfixture.DEMO_CONFIG)
         cfg.verify.mutation_operators = ["closure_qty_single_path", "closure_join_swap"]
         res = self.verify(self.tmp / "out", ["v4"], cfg)        # v1-v3 not requested: the baseline runs on its own
-        checks = {c.id: c for c in res.checks}
+        checks = {c.id: c for c in res.checks if not c.id.startswith("scope:")}
         self.assertEqual(set(checks), {"v4:closure_qty_single_path:has_component", "v4:closure_join_swap:firm_open"})
         for c in checks.values():
             self.assertEqual(c.status, "pass", c.detail)
-            self.assertRegex(c.detail["killed_by"], r"^v[123]:\S+ fail$")
+            self.assertRegex(c.detail["killed_by"], r"^v[123]:\S+$")
         self.assertEqual(res.not_proven, [])
-        self.assertEqual(res.status, "pass")
+        self.assertEqual({c.id for c in res.checks if c.status == "not_run"}, {"scope:v1", "scope:v2", "scope:v3"})
 
     @staticmethod
     def change(owner, lines: set, sign: str):

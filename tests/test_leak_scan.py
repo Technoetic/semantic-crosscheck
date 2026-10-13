@@ -3,10 +3,13 @@
 Every repository lives in a temporary directory with its own local user config; git runs with an empty global
 config so the developer's settings (signing, hooks, autocrlf) cannot leak in. Fake secrets, the disallowed e-mail
 address and the deny-listed term are assembled at run time, so this file never matches the scanner itself.
+test_leak_encodings.py and test_leak_history.py build on RepoTest and HookRepo from this module.
 """
 
+import hashlib
 import importlib.util
 import os
+import re
 import shutil
 import stat
 import subprocess
@@ -20,6 +23,7 @@ import pgfixture
 
 ROOT = pgfixture.ROOT
 SCANNER = ROOT / "tools" / "leak_scan.py"
+ALLOWLIST = ROOT / "tools" / "leak-allow.txt"
 HOOKS = ROOT / ".githooks"
 
 _spec = importlib.util.spec_from_file_location("leak_scan", SCANNER)
@@ -41,6 +45,11 @@ MAINTAINER = at("maintainer", "example.net")                 # the throw-away re
 PW = "pass" + "word"
 DENYLIST_TEXT = "# private terms, one per line\n\n" + TERM.lower() + "\n"
 TERM_LINE = 3
+
+
+def masked(name: str, kind: str = "path") -> str:
+    """The stand-in the scanner prints for a name holding a finding, computed independently of the scanner."""
+    return f"<{kind} sha256:{hashlib.sha256(name.encode('utf-8')).hexdigest()[:12]}>"
 
 
 def _rmtree(path: Path):
@@ -66,36 +75,45 @@ class RepoTest(unittest.TestCase):
         self.env = {**os.environ, "GIT_CONFIG_GLOBAL": str(self.base / "gitconfig"), "GIT_CONFIG_NOSYSTEM": "1",
                     "PYTHONIOENCODING": "utf-8"}
         self.env.pop("SXC_DENYLIST", None)
-        self.git("init", "-q")
-        for key, value in (("user.name", "Test Maintainer"), ("user.email", MAINTAINER),
-                           ("commit.gpgsign", "false"), ("tag.gpgsign", "false"), ("core.autocrlf", "false")):
-            self.git("config", key, value)
+        self.init_repo(self.repo)
 
-    def git(self, *args, check=True) -> subprocess.CompletedProcess:
-        return subprocess.run(["git", *args], cwd=self.repo, env=self.env, check=check, capture_output=True,
-                              text=True, encoding="utf-8", errors="replace")
+    def init_repo(self, repo: Path, email: str = MAINTAINER):
+        self.git("init", "-q", cwd=repo)
+        for key, value in (("user.name", "Test Maintainer"), ("user.email", email),
+                           ("commit.gpgsign", "false"), ("tag.gpgsign", "false"), ("core.autocrlf", "false")):
+            self.git("config", key, value, cwd=repo)
+
+    def git(self, *args, check=True, cwd: Path | None = None, env: dict | None = None,
+            stdin: str | None = None) -> subprocess.CompletedProcess:
+        return subprocess.run(["git", *args], cwd=cwd or self.repo, env=env or self.env, check=check,
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", input=stdin)
 
     def write(self, rel: str, text: str):
-        p = self.repo / rel
+        self.write_bytes(rel, text.encode("utf-8"))
+
+    def write_bytes(self, rel: str, data: bytes, repo: Path | None = None):
+        p = (repo or self.repo) / rel
         p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(text, encoding="utf-8", newline="\n")
+        p.write_bytes(data)
 
-    def commit(self, message: str, *extra):
-        self.git("add", "-A")
-        self.git("commit", "-q", "-m", message, *extra)
+    def commit(self, message: str, *extra, cwd: Path | None = None):
+        self.git("add", "-A", cwd=cwd)
+        self.git("commit", "-q", "-m", message, *extra, cwd=cwd)
 
-    def scan(self, *args, deny: bool = True, cwd: Path | None = None) -> tuple[int, str, str]:
+    def scan(self, *args, deny: bool = True, cwd: Path | None = None, scanner: Path = SCANNER,
+             stdin: str | None = None) -> tuple[int, str, str]:
         env = dict(self.env)
         if deny:
             env["SXC_DENYLIST"] = str(self.deny)
-        p = subprocess.run([sys.executable, str(SCANNER), *args], cwd=cwd or self.repo, env=env, capture_output=True,
-                           text=True, encoding="utf-8", errors="replace")
+        p = subprocess.run([sys.executable, str(scanner), *args], cwd=cwd or self.repo, env=env, capture_output=True,
+                           text=True, encoding="utf-8", errors="replace", input=stdin if stdin is not None else "")
         return p.returncode, p.stdout, p.stderr
 
     def assertNoEcho(self, *texts):
         for t in texts:
             self.assertNotIn(TERM.lower(), t.lower())
             self.assertNotIn(TOKEN, t)
+            self.assertNotIn(DISALLOWED, t)
 
 
 class HistoryScan(RepoTest):
@@ -129,17 +147,22 @@ class HistoryScan(RepoTest):
         self.assertRegex(out, r"history commit [0-9a-f]{12}:3: email")              # tree, parent, author
         self.assertRegex(out, rf"history commit [0-9a-f]{{12}}:6: denylist#{TERM_LINE}")
         self.assertRegex(out, rf"history tag [0-9a-f]{{12}}:6: denylist#{TERM_LINE}")
-        self.assertNotIn(DISALLOWED, out + err)
+        self.assertIn("belongs in leak-allow.txt", err)               # the scanner lives outside this repository
         self.assertNoEcho(out, err)
 
-    def test_term_in_a_path_is_hidden_in_the_location(self):
-        self.write(f"docs/{TERM.lower()}-plan.txt", "nothing secret\n")
+    def test_term_in_a_path_is_masked_in_every_location(self):
+        name = f"docs/{TERM.lower()}-plan.txt"
+        self.write(name, f"see {TOKEN}\n")
         self.commit("add plan")
+        hidden = re.escape(masked(name))
         code, out, err = self.scan("--history")
         self.assertEqual(code, 1)
-        self.assertIn(f"history path docs/<denylist#{TERM_LINE}>-plan.txt:name: denylist#{TERM_LINE}", out)
+        self.assertRegex(out, rf"(?m)^history path {hidden} \(commit [0-9a-f]{{12}}\):name: denylist#{TERM_LINE}$")
+        self.assertRegex(out, rf"(?m)^history blob [0-9a-f]{{12}} \({hidden}\):1: github_token$")
         code, out, err = self.scan()
-        self.assertIn(f"docs/<denylist#{TERM_LINE}>-plan.txt:name: denylist#{TERM_LINE}", out)
+        self.assertRegex(out, rf"(?m)^{hidden}:name: denylist#{TERM_LINE}$")
+        self.assertRegex(out, rf"(?m)^{hidden}:1: github_token$")
+        self.assertNotIn("-plan.txt", out + err)
         self.assertNoEcho(out, err)
 
 
@@ -156,6 +179,13 @@ class EmailRules(RepoTest):
         self.assertEqual(self.scan("--allow-email", DISALLOWED)[0], 0)
         self.assertEqual(self.scan("--allow-email", "@mail.invalid")[0], 0)
         self.assertEqual(self.scan("--allow-email", "@other.invalid")[0], 1)
+
+    def test_percent_encoded_and_escaped_addresses_are_found(self):
+        for text in (f"mailto:{DISALLOWED.replace('@', '%40')}", f'{{"reply": "{DISALLOWED.replace("@", "&#64;")}"}}'):
+            self.write("contact.txt", text + "\n")
+            code, out, err = self.scan()
+            self.assertEqual((code, out.strip()), (1, "contact.txt:1: email"), text)
+            self.assertNotIn(DISALLOWED, out + err)
 
 
 class StagedScan(RepoTest):
@@ -191,13 +221,23 @@ class ExtraAndUsage(RepoTest):
         self.assertEqual(out.strip(), f"extra {log}:2: url_credentials")
         self.assertNotIn(secret, out + err)
 
+    def test_extra_path_holding_a_term_is_masked_but_not_a_finding(self):
+        log = self.base / f"{TERM}-ci.log"
+        log.write_text(f"see {TOKEN}\n", encoding="utf-8")
+        code, out, err = self.scan("--extra", str(log))
+        self.assertEqual((code, out.strip()), (1, f"extra {masked(str(log))}:1: github_token"))
+        self.assertNoEcho(out, err)
+
     def test_usage_errors_exit_2(self):
         self.write("README.md", "clean\n")
         self.commit("initial")
         missing = self.base / "missing.txt"
         self.assertEqual(self.scan("--bogus")[0], 2)
         self.assertEqual(self.scan("--extra", str(missing))[0], 2)
-        self.assertEqual(self.scan("--allow-email", "not-an-address")[0], 2)
+        for bad in ("not-an-address", "@com", at("someone", "localhost")):
+            code, _, err = self.scan("--allow-email", bad)
+            self.assertEqual(code, 2, bad)
+            self.assertNotIn(bad, err)
         self.deny.unlink()
         self.assertEqual(self.scan()[0], 2)
         outside = self.base / "not-a-repo"
@@ -219,20 +259,23 @@ class ExtraAndUsage(RepoTest):
         code, out, err = self.scan()
         self.assertEqual((code, out), (0, ""), err)
 
+    def test_denylist_none_and_utf16(self):
+        self.write("notes.txt", f"customer {TERM}\n")
+        self.deny.write_bytes(DENYLIST_TEXT.encode("utf-16"))       # what PowerShell 5.1 `>` writes
+        self.assertEqual(self.scan()[:2], (1, f"notes.txt:1: denylist#{TERM_LINE}\n"))
+        env_none = {**self.env, "SXC_DENYLIST": "none"}
+        p = subprocess.run([sys.executable, str(SCANNER)], cwd=self.repo, env=env_none, capture_output=True, text=True,
+                           encoding="utf-8", errors="replace")
+        self.assertEqual((p.returncode, p.stdout), (0, ""), p.stderr)
+        self.assertIn("deny-list: none (SXC_DENYLIST=none)", p.stderr)
 
-class Hooks(RepoTest):
+
+class HookRepo(RepoTest):
     """The real hook scripts, enabled through core.hooksPath in the throw-away repository only."""
 
     def setUp(self):
         super().setUp()
-        for name in ("pre-commit", "pre-push"):
-            target = self.repo / ".githooks" / name
-            target.parent.mkdir(exist_ok=True)
-            shutil.copyfile(HOOKS / name, target)
-            os.chmod(target, 0o755)
-        (self.repo / "tools").mkdir()
-        shutil.copyfile(SCANNER, self.repo / "tools" / "leak_scan.py")
-        self.git("config", "core.hooksPath", ".githooks")
+        self.install_hooks(self.repo)
         self.write("README.md", "clean\n")
         self.git("add", "-A")
         first = self.git("commit", "-q", "-m", "initial", check=False)
@@ -241,12 +284,37 @@ class Hooks(RepoTest):
                 self.skipTest("the hooks found no python3 or python on PATH")
             self.fail(first.stdout + first.stderr)
 
+    def install_hooks(self, repo: Path, allowlist: str | None = None):
+        """Copy the hooks and the scanner into repo (and an allowlist next to the scanner, when given)."""
+        for name in ("pre-commit", "pre-push"):
+            target = repo / ".githooks" / name
+            target.parent.mkdir(exist_ok=True)
+            shutil.copyfile(HOOKS / name, target)
+            os.chmod(target, 0o755)
+        (repo / "tools").mkdir(exist_ok=True)
+        shutil.copyfile(SCANNER, repo / "tools" / "leak_scan.py")
+        if allowlist is not None:
+            (repo / "tools" / "leak-allow.txt").write_text(allowlist, encoding="utf-8")
+        self.git("config", "core.hooksPath", ".githooks", cwd=repo)
+
+    def bare_remote(self, name: str = "remote.git") -> Path:
+        remote = self.base / name
+        subprocess.run(["git", "init", "-q", "--bare", str(remote)], env=self.env, check=True, capture_output=True)
+        return remote
+
+    def branch(self, cwd: Path | None = None) -> str:
+        return self.git("rev-parse", "--abbrev-ref", "HEAD", cwd=cwd).stdout.strip()
+
+
+class Hooks(HookRepo):
     def test_hook_files_are_posix_sh_with_lf(self):
-        for name, flag in (("pre-commit", b"tools/leak_scan.py --staged"), ("pre-push", b"tools/leak_scan.py --history")):
+        for name, flag in (("pre-commit", b"tools/leak_scan.py --staged\n"),
+                           ("pre-push", b"tools/leak_scan.py --history --push-refs -\n")):
             data = (HOOKS / name).read_bytes()
             self.assertTrue(data.startswith(b"#!/bin/sh\n"))
             self.assertNotIn(b"\r", data)
             self.assertIn(flag, data)
+            self.assertIn(b"</dev/null", data)                       # the probes leave the pushed refs on stdin
 
     def test_pre_commit_refuses_a_staged_secret(self):
         self.write("leak.txt", f"see {TOKEN}\n")
@@ -257,10 +325,8 @@ class Hooks(RepoTest):
         self.assertNoEcho(r.stdout, r.stderr)
 
     def test_pre_push_refuses_a_secret_in_history(self):
-        remote = self.base / "remote.git"
-        subprocess.run(["git", "init", "-q", "--bare", str(remote)], env=self.env, check=True, capture_output=True)
-        self.git("remote", "add", "origin", str(remote))
-        branch = self.git("rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
+        self.git("remote", "add", "origin", str(self.bare_remote()))
+        branch = self.branch()
         self.assertEqual(self.git("push", "-q", "origin", branch, check=False).returncode, 0)
         self.write("notes.txt", f"see {TOKEN}\n")
         self.git("add", "notes.txt")
@@ -270,6 +336,21 @@ class Hooks(RepoTest):
         r = self.git("push", "-q", "origin", branch, check=False)
         self.assertNotEqual(r.returncode, 0)
         self.assertIn("(notes.txt):1: github_token", r.stdout + r.stderr)
+
+    def test_hooks_warn_while_no_denylist_is_set(self):
+        warning = "warning: SXC_DENYLIST is unset"
+        self.write("a.txt", "clean\n")
+        self.git("add", "a.txt")
+        r = self.git("commit", "-q", "-m", "a")
+        self.assertIn(f"pre-commit: {warning}", r.stderr)
+        self.write("b.txt", "clean\n")
+        self.git("add", "b.txt")
+        r = self.git("commit", "-q", "-m", "b", env={**self.env, "SXC_DENYLIST": "none"})
+        self.assertNotIn(warning, r.stderr)
+        self.assertIn("deny-list: none", r.stderr)
+        self.git("remote", "add", "origin", str(self.bare_remote()))
+        r = self.git("push", "-q", "origin", self.branch())
+        self.assertIn(f"pre-push: {warning}", r.stderr)
 
 
 class Patterns(unittest.TestCase):
@@ -341,10 +422,15 @@ class Patterns(unittest.TestCase):
         other = f'      "resolved": "https://registry.invalid/{DISALLOWED}/x.tgz",'
         self.assertEqual(self.rules.scan_text(other, "package-lock.json"), [(1, "email")])
 
-    def test_denylist_and_locations(self):
+    def test_denylist_and_masked_names(self):
         self.assertEqual(self.hits(f"a {TERM.upper()} b"), [f"denylist#{TERM_LINE}"])
-        self.assertEqual(self.rules.safe(f"dir/{TERM}-x.txt"), f"dir/<denylist#{TERM_LINE}>-x.txt")
-        self.assertEqual(self.rules.safe("plain/path.txt"), "plain/path.txt")
+        found = leak_scan.Findings(self.rules)
+        for name, kind in ((f"dir/{TERM}-x.txt", "path"), (f"backup-{TOKEN}.txt", "path"),
+                           (f"export_{DISALLOWED}.eml", "path"), (f"refs/heads/pilot-{TERM}", "ref")):
+            self.assertEqual(found.show(name, kind), masked(name, kind), name)
+        self.assertEqual(found.show("plain/path.txt"), "plain/path.txt")
+        self.assertEqual(found.scan_name(f"{TERM}.txt", "staged "), "staged " + masked(f"{TERM}.txt"))
+        self.assertEqual(found.items, [("staged " + masked(f"{TERM}.txt"), "name", f"denylist#{TERM_LINE}")])
 
     def test_long_binary_like_lines_stay_fast(self):
         line = ("a" * 100000 + "@") * 20 + "://" + "b" * 100000 + "token=" + "c" * 600
@@ -353,8 +439,9 @@ class Patterns(unittest.TestCase):
         self.assertLess(time.perf_counter() - start, 5.0)
 
     def test_files_of_this_change_are_clean(self):
-        files = [SCANNER, HOOKS / "pre-commit", HOOKS / "pre-push", Path(__file__),
-                 ROOT / "tests" / "test_doctor_demo_report.py"]
+        tests = ROOT / "tests"
+        files = [SCANNER, ALLOWLIST, HOOKS / "pre-commit", HOOKS / "pre-push", Path(__file__),
+                 tests / "test_leak_encodings.py", tests / "test_leak_history.py", tests / "test_doctor_demo_report.py"]
         files += [pgfixture.SCRIPTS / "semantic_crosscheck" / f for f in ("doctor.py", "report.py", "stage_demo.py")]
         args = [a for f in files for a in ("--extra", str(f))]
         env = {k: v for k, v in os.environ.items() if k != "SXC_DENYLIST"}

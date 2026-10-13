@@ -6,9 +6,10 @@ data), never the generated output. The demo configuration `demo/crosscheck.toml`
 
 Validation runs before any stage does work. An invalid entry stops the run with exit code 2 and a
 message that names the entry where it can, for example `crosscheck.toml [measures.on_hand]: ...`.
-Unknown keys are rejected in `[source]`, `[hierarchies.*]`, `[[shapes]]`, `[measures.*]`, `[cube]`,
-`[verify]` and `[[gold]]`. In `[entities.*]`, `[ontology]`, `[[ontology.defined]]`, `[gold.params.*]`
-and `[output]` unknown keys are ignored, so check the spelling there.
+Unknown keys are rejected at the top level (only the tables below exist) and in `[source]`,
+`[hierarchies.*]`, `[[shapes]]`, `[measures.*]`, `[cube]`, `[verify]` and `[[gold]]`. In `[entities.*]`,
+`[ontology]`, `[[ontology.defined]]` and `[gold.params.*]` unknown keys are ignored, so check the
+spelling there. The file is read as UTF-8, with or without a byte order mark.
 
 ## Conventions
 
@@ -18,8 +19,12 @@ and `[output]` unknown keys are ignored, so check the spelling there.
 - **Tables** are schema-qualified: `"schema.table"`.
 - **Cube members** are written `cube.member`, for example `"m_on_hand.value"`. Cube names come from
   the configuration: `<entity>`, `<h>_closure`, `<h>_ancestor`, `<h>_descendant` and `m_<measure>`.
-- **Credentials are never stored here.** DSNs come from environment variables named in `[source]` and
-  `[cube]`; a `[source]` key named `dsn` or containing `password` is rejected.
+- **Credentials are never stored here.** `source.dsn_env`, `source.owner_dsn_env` and `cube.dsn_env`
+  hold the NAME of an environment variable (`[A-Za-z_][A-Za-z0-9_]*`) that holds the DSN. Any other value
+  is refused without being repeated in the message (which adds a hint when the value looks like a DSN),
+  and a key named `dsn` or containing `password` is rejected in `[source]` and `[cube]`.
+- **Integers** are type-checked: booleans, floats and strings are refused, and the limits in the tables
+  below apply.
 - Paths (`gold.sql`) are relative to the directory of `crosscheck.toml`. The output directory defaults
   to `.sxc` next to it.
 
@@ -29,17 +34,24 @@ and `[output]` unknown keys are ignored, so check the spelling there.
 |---|---|---|---|
 | `version` | integer | required | Format version. Only `1` is supported. |
 
+The other top-level keys are the tables `source`, `entities`, `hierarchies`, `shapes`, `measures`,
+`ontology`, `cube`, `verify` and `gold`; any other key is exit 2.
+
 ## `[source]`
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `dsn_env` | string | `"SXC_PG_DSN"` | Environment variable holding the check role's DSN (`postgresql://user@host:port/database`). |
-| `owner_dsn_env` | string | `"SXC_PG_OWNER_DSN"` | Environment variable holding the loader role's DSN; used only by `demo`. |
+| `dsn_env` | string | `"SXC_PG_DSN"` | Name of the environment variable holding the check role's DSN (`postgresql://user@host:port/database`). |
+| `owner_dsn_env` | string | `"SXC_PG_OWNER_DSN"` | Name of the environment variable holding the loader role's DSN; used only by `demo`. |
 | `schemas` | list of strings | required | Source schemas. Every entity table must be in one of them. |
 | `output_schema` | string | `"sxc_out"` | Schema owned by the check role, where closures, cycle examples and `v_shape_<id>` views are created. Must differ from every source schema. |
-| `statement_timeout_ms` | integer | `60000` | `statement_timeout` for the stages' database transactions. |
+| `statement_timeout_ms` | integer | `60000` | `statement_timeout` for the stages' database transactions; at least 1000. A build waiting for another build of the same output schema counts against it. |
 
-A DSN may carry the password in the URL (percent-encoded); when it does not, `PGPASSWORD` is used.
+A DSN may carry the password in the URL (percent-encoded: reserved characters such as `/ # ? @ : %` in the
+user name or password must be encoded); when it does not, `PGPASSWORD` is used. TLS settings go in the
+DSN: `?sslmode=disable|allow|prefer|require|verify-ca|verify-full` and `sslrootcert=<file>` (or
+`system`); see SECURITY.md for what each mode verifies. `sslcert`, `sslkey`, `sslpassword`, `sslcrl`,
+`sslcrldir` and `sslcertmode` are refused. A malformed DSN is exit 3 naming only the variable.
 
 ## `[entities.<name>]`
 
@@ -70,9 +82,16 @@ the cycles table `<name>_cycles`, the Cube cubes `<name>_closure`, `<name>_ances
 
 Data rules. Each shape becomes a SQL view `v_shape_<id>` with the key columns of the violating rows and,
 when it has a SHACL form, a node shape in `build/shapes.ttl`. A shape needs at least one of `class`, a
-bound, or `sql_violation`; when it has several, a row violating any of them violates the shape. A shape
-with `sql_violation`, or one that combines `class` with bounds, has no SHACL form and is reported as not
-proven by `reason` instead of compared.
+bound, or `sql_violation`; when it has several, a row violating any of them violates the shape.
+
+`reason` compares a shape with SHACL only when it has a separate SHACL form. These shapes are reported as
+not proven, "checked only in SQL", instead of compared:
+
+- a shape with `sql_violation` (also when it has `class` or bounds as well);
+- a shape that combines `class` with bounds;
+- shapes on the same `target` and `path` that need different kinds of RDF value: a `class` shape and a
+  bound shape, or `class` shapes naming different entities (`shared_path`). None of them is compared, so
+  adding a shape can remove the SHACL comparison of another one.
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
@@ -109,7 +128,8 @@ measure `value`.
 
 ## `[ontology]`
 
-Optional. When present, `reason` builds an OWL ontology for one hierarchy.
+Optional. When present, `reason` builds an OWL ontology for one hierarchy (and `report` then requires
+`reason`, as it does when there are `[[shapes]]`).
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
@@ -144,26 +164,20 @@ Defined classes compared with their SQL definition (`v5:defined:<name>`).
 |---|---|---|---|
 | `version` | string | `"1.8.3"` | Cube release. Must equal the release this version of semantic-crosscheck pins (the adapter's lockfile and native hashes belong to it). |
 | `port` | integer | `0` | Port on 127.0.0.1, 0 to 65535; `0` lets the adapter pick a free port. |
-| `dsn_env` | string | `""` | Environment variable with the DSN Cube uses; empty means `source.dsn_env`. Sessions are forced read-only either way. |
-| `startup_timeout_s` | integer | `90` | Seconds to wait for the adapter to become ready. |
-| `query_timeout_s` | integer | `120` | Seconds to wait for one Cube query, including "Continue wait" polling. |
+| `dsn_env` | string | `""` | Name of the environment variable with the DSN Cube uses; empty means `source.dsn_env`. Sessions are forced read-only either way. |
+| `startup_timeout_s` | integer | `90` | Seconds to wait for the adapter to become ready; at least 1. |
+| `query_timeout_s` | integer | `120` | Seconds to wait for one Cube query, including "Continue wait" polling; at least 1. It is also the `statement_timeout` of every Cube database session and Cube's own query timeout, so an abandoned query stops in PostgreSQL too. |
 
 ## `[verify]`
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
 | `sweep_k` | integer | `40` | Parameter values per gold query in V2, spread over its strata (k = ceil(sweep_k / strata) per stratum). At least 1. |
-| `seed` | integer | `7` | Seed of the deterministic sampling order `md5(id \|\| seed), id`. |
-| `mutation_operators` | string or list | `"default"` | `"default"` or a list of V4 operator names: `closure_depth_shift`, `closure_path_count_one`, `closure_qty_single_path`, `measure_filter_drop`, `measure_normalization_drop`, `measure_agg_to_max`, `dated_shift_one_day`, `closure_join_swap`, `closure_end_swap`. |
+| `seed` | integer | `7` | Seed of the deterministic sampling order `md5(id \|\| seed), id` (strata and the 2,000-key sample of large V3 pair tests). Any integer. |
+| `mutation_operators` | string or list | `"default"` | `"default"` or a list of V4 operator names: `closure_depth_shift`, `closure_path_count_one`, `closure_qty_single_path`, `measure_filter_drop`, `measure_normalization_drop`, `measure_agg_to_max`, `dated_shift_one_day`, `closure_join_swap`, `closure_end_swap`. An unknown name is exit 2 as soon as the verify stage starts, before any check runs. |
 | `mutant_bindings` | integer | `3` | Bindings per stratum replayed against each mutant. At least 1. |
-| `shacl_max_rows` | integer | `200000` | Upper bound on the rows exported to RDF for the SHACL comparison. |
-| `owl_max_individuals` | integer | `50000` | Upper bound on the individuals (node keys and edge endpoints) given to HermiT. |
-
-## `[output]`
-
-| Key | Type | Default | Meaning |
-|---|---|---|---|
-| `show_rows` | integer | `0` | Number of example rows written to a local samples file. `0` writes none. It is the only way rows reach a file; results and reports never contain row values. Do not share or commit the samples file. |
+| `shacl_max_rows` | integer | `200000` | Upper bound on the rows exported to RDF for the SHACL comparison; at least 1. Above it no shape is compared and `reason` says so in not proven. |
+| `owl_max_individuals` | integer | `50000` | Upper bound on the individuals (node keys and edge endpoints) given to HermiT; at least 1. Above it the OWL checks do not run and `reason` says so in not proven. |
 
 ## `[[gold]]`
 
@@ -174,10 +188,10 @@ otherwise a shared mistake goes unnoticed.
 | Key | Type | Default | Meaning |
 |---|---|---|---|
 | `id` | string | required | Identifier, unique among gold queries. |
-| `sql` | string | required | Path of the SQL file, relative to `crosscheck.toml`. Parameters are written `:name` and bound as values; the query runs in a read-only transaction. |
+| `sql` | string | required | Path of the SQL file, relative to `crosscheck.toml`, read as UTF-8 with or without a byte order mark. One statement; parameters are written `:name` and bound as values (`stream` and `types` are reserved names); the query runs in a read-only transaction. |
 | `key` | string or list of strings | required | Gold column(s) forming a unique row key. Each must be in `map`. |
 | `cube_query` | table | `{}` | The Cube query: `dimensions`, `measures`, `filters`, `timeDimensions` (a `dateRange`, no `granularity`). Every string equal to `:<param>` is replaced by the binding, also inside lists. |
-| `map` | table of strings | required | Gold column to Cube member. Must cover exactly the `cube_query` dimensions and measures. |
+| `map` | table of strings | required | Gold column to Cube member. Must cover exactly the `cube_query` dimensions and measures. Each column is compared in the form of its member's Cube type: `string` as exact text, `number` as an exact decimal, `time` as a UTC timestamp, `boolean` as a boolean. |
 | `zero_if_null` | list of strings | `[]` | Gold columns the gold SQL coalesces to 0; a Cube NULL counts as 0 there. The only declared equivalence. |
 | `params` | table | `{}` | At most one swept parameter, as `[gold.params.<name>]` with exactly one of `strata` (list of `top`, `mid`, `leaf`, `leaf_parent`, `deep`, `shared`, `empty`; optional `hierarchy`), `values_of` (`"entity.column"`: every distinct non-null value) or `values` (explicit list). |
 | `param_sets` | list of tables | `[]` | Explicit bindings for multi-parameter queries, for example `[{ date_from = "2026-01-01", date_to = "2026-03-31" }]`. Not together with `params`. |
@@ -191,6 +205,8 @@ not proven, not as a failure.
 |---|---|---|
 | `SXC_PG_DSN` | every database stage, Cube | Check role DSN (name configurable with `source.dsn_env`). |
 | `SXC_PG_OWNER_DSN` | `demo` | Loader role DSN (name configurable with `source.owner_dsn_env`). |
-| `PGPASSWORD` | database stages | Password used when the DSN has none. |
-| `SXC_JAVA` | `doctor`, `reason` | Path of the `java` executable for HermiT when `java` is not on `PATH`. |
-| `SXC_CUBE_HOME` | `cube-install`, `cube`, `verify` | Install directory of the Cube adapter (default: a per-user cache). |
+| `PGPASSWORD` | database stages, Cube | Password used when the DSN has none (`~/.pgpass` is not read). |
+| `SXC_JAVA` | `doctor`, `reason` | Absolute path of the `java` executable for HermiT, or a command name on `PATH`, when `java` itself is not on `PATH`. |
+| `SXC_CUBE_HOME` | `cube-install`, `doctor`, `cube`, `verify` | Install directory of the Cube adapter (default: a per-user cache); a relative value is resolved against the current directory. |
+| `SXC_CUBE_DEBUG` | `cube`, `verify` | `1` writes the full Cube error text to `server.log` for local debugging; the log can then hold row values. |
+| `SXC_DEBUG` | every stage | `1` prints the full traceback of an unexpected exception for local debugging. |

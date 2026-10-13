@@ -7,12 +7,14 @@ default.
 
 ## Invocation
 
-- Installed as a plugin, the skill is `semantic-crosscheck:semantic-crosscheck`. Ask for a stage with
+- The plugin is installed with `codex plugin marketplace add Technoetic/semantic-crosscheck --ref <tag>`
+  and `codex plugin add semantic-crosscheck@semantic-crosscheck-local` (see the README). The skill is
+  `semantic-crosscheck:semantic-crosscheck`. Ask for a stage with
   `$semantic-crosscheck:semantic-crosscheck <stage> [arguments]`, for example
   `$semantic-crosscheck:semantic-crosscheck verify --only v1,v2`.
-- Installed as a standalone skill, use `$semantic-crosscheck <stage> [arguments]`.
 - A request in plain language ("check my semantic layer against the gold queries") maps to the stage
-  order in `SKILL.md`: `doctor`, `demo` (optional), `build`, `reason`, `cube`, `verify`, `report`.
+  order in `SKILL.md`: `doctor`, `build`, `reason`, `cube`, `verify`, `report`; for the demo `demo` first,
+  then `doctor` with `--config` and the rest.
 
 ## Paths
 
@@ -21,6 +23,9 @@ default.
   (from a file in `references/`, `parents[3]`).
 - `${CLAUDE_PLUGIN_ROOT}` in the command documents is a placeholder for that plugin root. Codex does
   not set this variable; substitute the resolved path instead of requiring or exporting it.
+- The Python requirements are installed from the plugin root by absolute path:
+  `python -m pip install -r "<plugin root>/requirements/reason.txt"`. When a package is missing, `doctor`
+  prints this command with the absolute paths filled in.
 - Do not copy the scripts into the user's project. If a file the stage needs is missing, report an
   incomplete installation and stop.
 
@@ -43,7 +48,8 @@ default.
   elements, for example `subprocess.run([python, str(sxc), "verify", "--config", str(config)],
   shell=False)`. The user's arguments are data; never interpolate them into shell code.
 - `$ARGUMENTS` in the command documents means the text after the stage name in the Codex request.
-- Read the exit code and the `result.json` the stage wrote; the console summary is a convenience.
+- Read the exit code and the `result.json` the stage wrote; the console summary is a convenience. A run
+  narrowed with `--only`, `--gold` or `--hierarchy` exits 1 and is not a result.
 
 ## Sandbox and environment
 
@@ -55,6 +61,8 @@ default.
 - `SXC_PG_DSN`, `SXC_PG_OWNER_DSN` (demo only), `PGPASSWORD`, `SXC_JAVA` and `SXC_CUBE_HOME` must be
   visible to the commands Codex runs. If a stage reports a missing variable, ask the user to provide it
   through the environment; never ask for a password in the chat or write one into a file.
+- `SXC_CUBE_DEBUG=1` and `SXC_DEBUG=1` are for the user's local debugging only: their output can hold row
+  values, so do not set them on your own and never paste what they print.
 
 ## Same rules as Claude Code
 

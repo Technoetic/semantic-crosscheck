@@ -2,21 +2,61 @@
 // semantic-crosscheck adapter: Cube Core on 127.0.0.1 serving a generated data model (development mode off).
 // Configuration comes only from the environment prepared by the Python runner (cube_run.py):
 //   CUBEJS_DB_* connection settings, CUBEJS_API_SECRET (random per run), SXC_PORT (0 = ephemeral),
-//   SXC_MODEL_DIR (relative to the working directory, default "model").
-// Request logs are dropped because they contain query filter values; errors are kept.
+//   SXC_MODEL_DIR (relative to the working directory, default "model"), SXC_CUBE_DEBUG ("1" = full error text).
+// Everything printed here lands in a server.log next to the results. Request logs are dropped because they contain
+// query filter values, and PostgreSQL and Cube error messages quote values too (an id compared with a number column
+// is echoed back), so by default an error is logged as one line: its class and first line with quoted text, numbers
+// and SQL removed. Free-form console output of the Cube packages cannot be cleaned that way, so it is replaced by one
+// notice. SXC_CUBE_DEBUG=1 adds the full text for local debugging; the log can then hold row values and must not be
+// shared.
 process.env.CUBEJS_TELEMETRY = 'false';
+const DEBUG = process.env.SXC_CUBE_DEBUG === '1';
+const print = { log: console.log.bind(console), error: console.error.bind(console) };
+
+const firstLine = (text) => String(text).split(/\r?\n/, 1)[0];
+const scrub = (text) => firstLine(text)
+  .replace(/\b(?:SELECT|WITH|INSERT|UPDATE|DELETE|MERGE|VALUES|FROM|WHERE)\b[\s\S]*$/, '<sql>')
+  .replace(/'(?:[^'\\]|\\.)*'?|"(?:[^"\\]|\\.)*"?|`(?:[^`\\]|\\.)*`?/g, '<v>')
+  .replace(/\b0x[0-9a-fA-F]+\b|\b\d+(?:[.,:/-]\d+)*/g, '<n>')
+  .slice(0, 300);
+const summary = (err) => {
+  const code = err && typeof err.code === 'string' && /^[A-Z0-9_]{2,40}$/.test(err.code) ? ` [${err.code}]` : '';
+  return scrub(err instanceof Error ? `${err.name}: ${err.message}` : err) + code;
+};
+const report = (tag, msg, err) => {
+  print.error(`${tag} ${scrub(msg)}: ${summary(err)}`);
+  if (DEBUG) {
+    print.error(`SXC_DEBUG ${msg}: ${String((err && err.stack) || err).slice(0, 4000)}`);
+  }
+};
+
+if (!DEBUG) {
+  let noticed = false;
+  const hide = () => {
+    if (!noticed) {
+      noticed = true;
+      print.error('SXC_CONSOLE console output of the Cube packages is hidden (SXC_CUBE_DEBUG=1 shows it)');
+    }
+  };
+  for (const name of ['log', 'info', 'warn', 'error', 'debug', 'trace']) {
+    console[name] = hide;
+  }
+}
+process.on('uncaughtException', (e) => { report('SXC_ERROR', 'uncaught exception', e); process.exit(1); });
+process.on('unhandledRejection', (e) => { report('SXC_ERROR', 'unhandled rejection', e); process.exit(1); });
+
 const express = require('express');
 const { CubejsServerCore } = require('@cubejs-backend/server-core');
 
 const secret = process.env.CUBEJS_API_SECRET || '';
 if (secret.length < 32) {
-  console.error('SXC_ERROR CUBEJS_API_SECRET must be set by the runner');
+  print.error('SXC_ERROR CUBEJS_API_SECRET must be set by the runner');
   process.exit(2);
 }
 
 const logger = (msg, params) => {
   if (params && params.error) {
-    console.error('SXC_CUBE_ERROR ' + msg + ': ' + String(params.error).slice(0, 2000));
+    report('SXC_CUBE_ERROR', msg, params.error);
   }
 };
 
@@ -36,13 +76,13 @@ app.use(express.json({ limit: '1mb' }));
 Promise.resolve(core.initApp(app))
   .then(() => {
     const server = app.listen(Number(process.env.SXC_PORT || 0), '127.0.0.1', () => {
-      console.log('SXC_READY ' + server.address().port);
+      print.log('SXC_READY ' + server.address().port);
     });
     // The runner keeps stdin open; when it closes (normal stop or the runner died) the adapter exits.
     process.stdin.on('end', () => process.exit(0));
     process.stdin.resume();
   })
   .catch((e) => {
-    console.error('SXC_ERROR ' + (e && e.message));
+    report('SXC_ERROR', 'startup failed', e);
     process.exitCode = 1;
   });

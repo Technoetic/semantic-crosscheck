@@ -1,9 +1,11 @@
-"""Packaging contracts: plugin manifests, command and skill documents, licence, requirement pins and CI pins.
+"""Packaging contracts: plugin manifests, command and skill documents, licence, requirement pins and the CI workflow.
 
 These files are what users install and what agents read before they run sxc.py, so they must agree with the code
 they describe: the version comes from semantic_crosscheck.VERSION, stages and options from sxc.parser(), and the
 configuration keys and defaults from the config dataclasses. A drift between them sends an agent to a stage or an
-option that does not exist, or to a default that is not the real one. No database or network is needed.
+option that does not exist, or to a default that is not the real one. The workflow must keep its actions pinned,
+scan the whole history for leaks, and run the roles template, the tests and the demo in that order. No database or
+network is needed; tests/test_docs_*.py cover the rest of the documents.
 """
 
 import contextlib
@@ -75,6 +77,7 @@ def load_json(rel: str) -> dict:
 def docs() -> list[Path]:
     """Every Markdown document shipped with the plugin."""
     return [ROOT / "README.md", ROOT / "SECURITY.md", THIRD_PARTY, ROOT / "CHANGELOG.md", SKILL,
+            ROOT / "docs" / "design.md", *sorted((ROOT / "docs" / "releases").glob("*.md")),
             *sorted(REFERENCES.glob("*.md")), *sorted(COMMANDS.glob("*.md"))]
 
 
@@ -120,14 +123,18 @@ def code_lines(text: str) -> list[str]:
 
 
 def sxc_invocations(path: Path) -> list[tuple[str, list[str]]]:
-    """(script token, arguments) of every `python ... sxc.py ...` line in a fenced code block."""
+    """(script token, arguments) of every `python ... sxc.py ...` line in a fenced code block. A synopsis
+    (`sxc.py <stage> [options]`) and `sxc.py --version` are not stage command lines and are left out."""
     out = []
     for line in code_lines(read(path)):
         if not (line.startswith("python ") and "sxc.py" in line):
             continue
         tokens = shlex.split(line, comments=True)
         i = next(n for n, t in enumerate(tokens) if t.endswith("sxc.py"))
-        out.append((tokens[i], tokens[i + 1:]))
+        args = tokens[i + 1:]
+        if not args or args[0].startswith("<") or args == ["--version"]:
+            continue
+        out.append((tokens[i], args))
     return out
 
 
@@ -305,9 +312,11 @@ class DocumentTest(unittest.TestCase):
 
     def test_release_version_appears_where_users_copy_it(self):
         readme = read(ROOT / "README.md")
-        refs = {line.strip() for line in readme.split("\n") if line.startswith("codex plugin marketplace add ")}
+        refs = {line.strip() for line in readme.split("\n")
+                if line.startswith("codex plugin marketplace add Technoetic/")}
         self.assertEqual(refs, {f"codex plugin marketplace add Technoetic/{NAME} --ref v{VERSION}"})
-        self.assertIn(f"## [{VERSION}]", read(ROOT / "CHANGELOG.md"))
+        self.assertRegex(read(ROOT / "CHANGELOG.md"), rf"(?m)^## \[{re.escape(VERSION)}\] - \d{{4}}-\d{{2}}-\d{{2}}$")
+        self.assertTrue((ROOT / "docs" / "releases" / f"v{VERSION}.md").is_file())
         major, minor, _patch = VERSION.split(".")
         self.assertIn(f"{major}.{minor}.x", read(ROOT / "SECURITY.md"))
 
@@ -335,7 +344,7 @@ class ConfigReferenceTest(unittest.TestCase):
                 expected = {KEY_NAMES.get((cls.__name__, f.name), f.name): documented_default(cls, f)
                             for f in dataclasses.fields(cls) if (cls.__name__, f.name) not in NOT_KEYS}
                 self.assertEqual(tables[heading], expected)
-        self.assertEqual(tables.get("[output]"), {"show_rows": "`0`"})
+        self.assertNotIn("[output]", tables)          # removed: config.load refuses the table
 
     def test_malformed_configuration_is_a_configuration_error(self):
         base = 'version = 1\n[source]\nschemas = ["s"]\n'
@@ -437,14 +446,49 @@ class WorkflowTest(unittest.TestCase):
         self.assertNotIn("pull_request_target", self.text)
 
     def test_no_deny_list_in_ci(self):
-        for value in re.findall(r"SXC_DENYLIST:\s*(\S*)", self.text):
-            self.assertIn(value, ("''", '""', ""))
+        values = re.findall(r"SXC_DENYLIST:\s*(\S*)", self.text)
+        self.assertTrue(values)
+        for value in values:
+            self.assertIn(value, ("none", "''", '""', ""))
         self.assertNotRegex(self.text, r"\.denylist\b")
 
     def test_referenced_scripts_exist(self):
         for rel in re.findall(r"python\s+(?:-\S+\s+)*([\w./-]+\.py)\b", self.text):
             with self.subTest(script=rel):
                 self.assertTrue((ROOT / rel).is_file())
+
+    def test_leak_scan_reads_the_whole_history(self):
+        hygiene = jobs(self.text)["hygiene"]
+        self.assertRegex(hygiene, r"uses: actions/checkout@\S+ # v[\d.]+\n\s+with:\n\s+fetch-depth: 0\n")
+        scans = re.findall(r"python tools/leak_scan\.py([^\n]*)", hygiene)
+        self.assertTrue(scans)
+        for options in scans:
+            self.assertIn("--history", options)
+            self.assertNotIn("--allow-email", options)      # public addresses belong in tools/leak-allow.txt
+
+    def test_integration_runs_the_roles_template_then_the_tests_then_the_demo(self):
+        job = jobs(self.text)["integration"]
+        roles = job.find("-f docs/setup-roles.sql")
+        tests = job.find("python -m unittest discover -s tests")
+        clean = job.find("expect 0 python skills/semantic-crosscheck/scripts/sxc.py demo")
+        self.assertTrue(0 < roles < tests < clean, "setup-roles.sql with psql, then the tests, then the demo")
+        self.assertRegex(job[:roles], r"\bpsql\b[^\n]*$|\bpsql -d \S+ -v loader_role=")
+        for stage in ("demo", "doctor", "build", "reason", "cube", "verify", "report"):
+            with self.subTest(stage=stage, variant="clean"):
+                self.assertRegex(job, rf"expect 0 python skills/semantic-crosscheck/scripts/sxc\.py {stage} ")
+        self.assertIn("--variant dirty", job)
+        for stage in ("build", "report"):
+            with self.subTest(stage=stage, variant="dirty"):
+                self.assertRegex(job, rf"expect 1 python skills/semantic-crosscheck/scripts/sxc\.py {stage} ")
+        self.assertIn("image: postgres:17", job)
+        self.assertIn("timeout-minutes:", job)
+
+
+def jobs(text: str) -> dict[str, str]:
+    """{job id: its block of the workflow} for the jobs under `jobs:` (two-space indented ids)."""
+    body = text.split("\njobs:\n", 1)[1]
+    parts = re.split(r"(?m)^  ([a-z][a-z0-9_-]*):\n", body)
+    return dict(zip(parts[1::2], parts[2::2]))
 
 
 if __name__ == "__main__":

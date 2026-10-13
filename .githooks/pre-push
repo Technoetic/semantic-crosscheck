@@ -1,12 +1,20 @@
 #!/bin/sh
-# Refuse a push while any blob, commit or tag reachable from a ref contains a secret, an e-mail address outside
-# the allowlist or a deny-listed term (deny-list file named by SXC_DENYLIST, kept outside the repository).
-# A finding in history means rewriting those commits before pushing. Details: tools/leak_scan.py.
+# Refuse a push while anything reachable from a ref or from the pushed commits contains a secret, an e-mail address
+# outside the allowlist (tools/leak-allow.txt) or a deny-listed term: blobs, commit and tag metadata, every path name
+# and ref name, and the remote ref names being pushed. git passes the pushed refs on standard input, which goes
+# straight to the scanner; a push that only deletes remote refs publishes nothing and is not scanned. A finding in
+# history means rewriting those commits before pushing. Details: tools/leak_scan.py.
+# The deny-list file is named by SXC_DENYLIST and kept outside the repository. While SXC_DENYLIST is unset every
+# push warns that private terms were not checked; set SXC_DENYLIST=none when you deliberately have no deny-list.
 # The maintainer enables the hooks once per clone: git config core.hooksPath .githooks
 cd "$(git rev-parse --show-toplevel)" || exit 2
+if [ -z "${SXC_DENYLIST:-}" ]; then
+  echo "pre-push: warning: SXC_DENYLIST is unset, so private deny-listed terms are not checked" >&2
+  echo "pre-push: set it to the deny-list file, or to none when there is deliberately no deny-list" >&2
+fi
 for py in python3 python; do
-  if "$py" -c 'import sys; sys.exit(sys.version_info < (3, 8))' >/dev/null 2>&1; then
-    exec "$py" tools/leak_scan.py --history
+  if "$py" -c 'import sys; sys.exit(sys.version_info < (3, 8))' </dev/null >/dev/null 2>&1; then
+    exec "$py" tools/leak_scan.py --history --push-refs -
   fi
 done
 echo "pre-push: no Python 3.8+ found as python3 or python, so the leak scan could not run" >&2

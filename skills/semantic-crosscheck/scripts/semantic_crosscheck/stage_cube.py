@@ -13,8 +13,13 @@ to the data.
                              (a primary-key dimension without public: true is hidden and must not be listed)
 
 The catalog is read in a READ ONLY transaction and Cube runs read-only sessions (cube_run). Cube errors are
-recorded by HTTP status only, because response bodies can quote values; the adapter's error lines stay in
-cube/server.log.
+recorded by HTTP status only, because response bodies can quote values. The adapter writes each error to
+cube/server.log as its class and first line with quoted text, numbers and SQL removed (the full text only when the
+user sets SXC_CUBE_DEBUG=1, and then the log can hold row values), so the next action points at the generated model
+and the configuration, not at the log.
+
+When a closure cube is missing, the next action follows build's closure:<h> result: rerunning build cannot help
+while that check fails on a cycle or the depth limit, so the agent is sent to the hierarchy entry instead.
 """
 
 import http.client
@@ -23,7 +28,7 @@ from pathlib import Path
 
 from . import cube_gen, cube_run, db, naming
 from .cube_client import CubeError
-from .result import EXIT_CONFIG, Result, StageError
+from .result import EXIT_CONFIG, Result, StageError, load_result
 
 LIST_CAP = 20
 _REF = re.compile(r"^(entities|measures|hierarchies)\.[a-z_][a-z0-9_]*$")
@@ -133,14 +138,42 @@ def generate(cfg) -> tuple[dict, list[str]]:
         conn.close()
 
 
-def _next_action(res: Result, cfg, cube_names: set[str]) -> str:
+def _closure_action(out: Path, missing: list[str]) -> str:
+    """What makes the missing closure tables exist, from build's closure:<h> checks."""
+    try:
+        build = load_result(out, "build")
+    except (OSError, ValueError):
+        build = None
+    listed = build.get("checks") if isinstance(build, dict) else None
+    checks = {c.get("id"): c for c in listed if isinstance(c, dict)} if isinstance(listed, list) else {}
+    for h in missing:
+        c = checks.get(f"closure:{h}")
+        if not c or c.get("status") == "pass":
+            continue
+        detail = c.get("detail")
+        reason = detail.get("reason") if isinstance(detail, dict) else None
+        if reason == "cycle":
+            fix = (f"hierarchy {h} has cycles: fix the edge rows that form them, or set hierarchies.{h}.on_cycle = "
+                   "\"report\" in crosscheck.toml")
+        elif reason == "depth_limit":
+            fix = f"hierarchy {h} is deeper than its max_depth: raise hierarchies.{h}.max_depth in crosscheck.toml"
+        else:
+            fix = f"closure:{h} did not pass in build: fix what build/result.json reports for it"
+        return f"{fix}, rerun `sxc.py build` until closure:{h} passes, then rerun `sxc.py cube`"
+    return "run `sxc.py build` so the closure tables exist, then rerun `sxc.py cube`"
+
+
+def _next_action(res: Result, cfg, cube_names: set[str], out: Path) -> str:
     bad = {c.id: c for c in res.checks if c.status != "pass"}
     if not bad:
         return "run `sxc.py verify` to compare the gold queries with Cube"
     if "cube:meta" in bad:
-        return "read the SXC_CUBE_ERROR lines in cube/server.log and the generated cube/model, then rerun `sxc.py cube`"
-    if any(naming.cube_closure(h) not in cube_names for h in cfg.hierarchies):
-        return "run `sxc.py build` so the closure tables exist, then rerun `sxc.py cube`"
+        return ("Cube did not serve the generated model as expected: compare cube/model with crosscheck.toml and fix the "
+                "entry it comes from, then rerun `sxc.py cube` (cube/server.log names only the error class; the user can "
+                "rerun with SXC_CUBE_DEBUG=1 for the full Cube error text, which can quote row values and stays local)")
+    missing = [h for h in cfg.hierarchies if naming.cube_closure(h) not in cube_names]
+    if missing:
+        return _closure_action(out, missing)
     return "fix the members of the failing [[gold]] entries (cube_query, map) in crosscheck.toml, then rerun `sxc.py cube`"
 
 
@@ -175,5 +208,5 @@ def run(cfg, args, out: Path) -> Result:
         res.add("cube:meta", status, "", cubes=len(meta.get("cubes", []) or []), **detail)
     elif meta is not None:
         res.add("cube:meta", "error", "", reason="unexpected_response")
-    res.next_safe_action = _next_action(res, cfg, cube_names)
+    res.next_safe_action = _next_action(res, cfg, cube_names, Path(out))
     return res

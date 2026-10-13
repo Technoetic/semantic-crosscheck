@@ -1,10 +1,16 @@
 #!/bin/sh
-# Refuse a commit whose staged files contain a secret, an e-mail address outside the allowlist or a deny-listed
-# term (deny-list file named by SXC_DENYLIST, kept outside the repository). Details: tools/leak_scan.py.
+# Refuse a commit whose staged files contain a secret, an e-mail address outside the allowlist
+# (tools/leak-allow.txt) or a deny-listed term. Details: tools/leak_scan.py.
+# The deny-list file is named by SXC_DENYLIST and kept outside the repository. While SXC_DENYLIST is unset every
+# commit warns that private terms were not checked; set SXC_DENYLIST=none when you deliberately have no deny-list.
 # The maintainer enables the hooks once per clone: git config core.hooksPath .githooks
 cd "$(git rev-parse --show-toplevel)" || exit 2
+if [ -z "${SXC_DENYLIST:-}" ]; then
+  echo "pre-commit: warning: SXC_DENYLIST is unset, so private deny-listed terms are not checked" >&2
+  echo "pre-commit: set it to the deny-list file, or to none when there is deliberately no deny-list" >&2
+fi
 for py in python3 python; do
-  if "$py" -c 'import sys; sys.exit(sys.version_info < (3, 8))' >/dev/null 2>&1; then
+  if "$py" -c 'import sys; sys.exit(sys.version_info < (3, 8))' </dev/null >/dev/null 2>&1; then
     exec "$py" tools/leak_scan.py --staged
   fi
 done

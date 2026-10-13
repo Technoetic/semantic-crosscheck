@@ -22,7 +22,9 @@ import pgfixture
 
 import sxc
 from semantic_crosscheck import config, demo, doctor, report
-from semantic_crosscheck.result import EXIT_CONFIG, Result, StageError
+from semantic_crosscheck.result import EXIT_CONFIG, Result, StageError, inputs_fingerprint
+
+DEMO_INPUTS = inputs_fingerprint(config.load(pgfixture.DEMO_CONFIG))
 
 DB_PREFIX = "sxc_t_misc"
 DEMO_CONFIG = pgfixture.DEMO_CONFIG
@@ -95,16 +97,25 @@ class DoctorProbes(TempDirTest):
         runner = fake_runner(AssertionError("must not run"))
         ok, detail, hint = doctor.probe_java(env={}, which=lambda _n: None, runner=runner)
         self.assertFalse(ok)
-        self.assertEqual(detail, {"found": False})
+        self.assertEqual(detail, {"found": False, "source": "PATH"})
         self.assertIn("SXC_JAVA", hint)
         self.assertEqual(runner.calls, [])
 
     def test_java_from_env_variable_wins(self):
         runner = fake_runner(FakeProc(0, "", 'openjdk version "21.0.2" 2024-01-16\n'))
-        ok, detail, _ = doctor.probe_java(env={"SXC_JAVA": "jdk/bin/java"}, which=lambda _n: "path-java", runner=runner)
+        found = {"configured-java": "resolved-configured-java", "java": "path-java"}
+        ok, detail, _ = doctor.probe_java(env={"SXC_JAVA": "configured-java"}, which=found.get, runner=runner)
         self.assertTrue(ok)
         self.assertEqual((detail["source"], detail["major"]), ("SXC_JAVA", 21))
-        self.assertEqual(runner.calls, [["jdk/bin/java", "-version"]])
+        self.assertEqual(runner.calls, [["resolved-configured-java", "-version"]])
+
+    def test_unresolvable_sxc_java_does_not_fall_back_to_path(self):
+        runner = fake_runner(AssertionError("must not run"))
+        ok, detail, hint = doctor.probe_java(env={"SXC_JAVA": "relative/bin/java"}, which={"java": "path-java"}.get,
+                                             runner=runner)
+        self.assertEqual((ok, detail), (False, {"found": False, "source": "SXC_JAVA"}))
+        self.assertIn("absolute path", hint)
+        self.assertEqual(runner.calls, [])
 
     def test_java_from_path_failures(self):
         for outcome in (FakeProc(1, "", 'openjdk version "21.0.2"'), FakeProc(0, "", "no version here"), FileNotFoundError(2, "x"),
@@ -114,11 +125,14 @@ class DoctorProbes(TempDirTest):
             self.assertEqual(detail["source"], "PATH")
 
     def test_node_minimum_version(self):
-        ok, detail, hint = doctor.probe_node(which=lambda _n: "node", runner=fake_runner(FakeProc(0, "v18.20.4\n")))
+        from semantic_crosscheck import cube_install
+        minimum = cube_install.MIN_NODE
+        too_old = f"v{minimum - 2}.20.4\n"
+        ok, detail, hint = doctor.probe_node(which=lambda _n: "node", runner=fake_runner(FakeProc(0, too_old)))
         self.assertFalse(ok)
-        self.assertEqual(detail["version"], "18.20.4")
-        self.assertIn("20", hint)
-        ok, detail, _ = doctor.probe_node(which=lambda _n: "node", runner=fake_runner(FakeProc(0, "v20.0.0\n")))
+        self.assertEqual(detail["version"], too_old.strip()[1:])
+        self.assertIn(str(minimum), hint)
+        ok, detail, _ = doctor.probe_node(which=lambda _n: "node", runner=fake_runner(FakeProc(0, f"v{minimum}.0.0\n")))
         self.assertTrue(ok)
         ok, detail, _ = doctor.probe_node(which=lambda _n: None, runner=fake_runner(AssertionError("must not run")))
         self.assertEqual((ok, detail), (False, {"found": False}))
@@ -195,9 +209,10 @@ class DoctorWithoutDatabase(TempDirTest):
 
     def test_without_config_only_basics(self):
         res = self.run_doctor({}, cfg=None)
-        self.assertEqual(set(statuses(res)), {"python", "pg8000", "dsn", "connect", "pg_version"})
+        self.assertEqual(set(statuses(res)), {"python", "pg8000", "dsn", "connect", "pg_version", "privileges:temporary"})
         self.assertEqual(res.checks[2].config_ref, "")
-        self.assertTrue(res.not_proven[0].startswith("check-role privileges and the output schema were not checked"))
+        self.assertTrue(res.not_proven[0].startswith("the check role's privileges on the source tables and the output "
+                                                     "schema were not checked"))
 
     def test_required_components_become_checks_others_not_proven(self):
         res = self.run_doctor({}, require=("core", "reason"))
@@ -216,9 +231,9 @@ class DoctorWithoutDatabase(TempDirTest):
         self.assertEqual(cm.exception.exit_code, EXIT_CONFIG)
 
     def test_sxc_main_writes_the_doctor_result(self):
-        with mock.patch.dict(os.environ, {}):
+        with mock.patch.dict(os.environ, {}), contextlib.chdir(self.tmp):     # no crosscheck.toml here: environment only
             os.environ.pop("SXC_PG_DSN", None)
-            code = quiet_main(["doctor", "--config", str(self.tmp / "absent.toml"), "--out", str(self.tmp)])
+            code = quiet_main(["doctor", "--out", str(self.tmp)])
         self.assertEqual(code, 1)
         saved = json.loads((self.tmp / "doctor" / "result.json").read_text(encoding="utf-8"))
         self.assertEqual(saved["status"], "fail")
@@ -241,7 +256,7 @@ class DemoStageGuards(TempDirTest):
 
 
 # ---- report aggregation ----------------------------------------------------------------------------------
-def write_result(out: Path, stage: str, checks, not_proven=(), action="", started="", finished="", raw=None):
+def write_result(out: Path, stage: str, checks, not_proven=(), action="", started="", finished="", raw=None, inputs=None):
     d = out / stage
     d.mkdir(parents=True, exist_ok=True)
     if raw is not None:
@@ -253,6 +268,7 @@ def write_result(out: Path, stage: str, checks, not_proven=(), action="", starte
     res.not_proven, res.next_safe_action = list(not_proven), action
     data = res.to_dict()
     data["started_at"], data["finished_at"] = started or data["started_at"], finished or data["started_at"]
+    data["inputs"] = DEMO_INPUTS if inputs is None else inputs
     (d / "result.json").write_text(json.dumps(data), encoding="utf-8")
 
 
@@ -273,19 +289,22 @@ class ReportAggregation(TempDirTest):
         write_result(self.tmp, "cube", [("stage", "error", "", {"exception": "OSError"})])
         res = self.run_report()
         st = statuses(res)
-        self.assertEqual(st, {"stage:doctor": "pass", "stage:build": "fail", "stage:cube": "error"})
+        self.assertEqual(st, {"stage:doctor": "pass", "stage:build": "fail", "stage:reason": "not_run", "stage:cube": "error",
+                              "stage:verify": "not_run"})
         build = next(c for c in res.checks if c.id == "stage:build")
         self.assertEqual(build.config_ref, "hierarchies.has_component")
-        self.assertEqual((build.detail["pass"], build.detail["fail"]), (1, 1))
+        self.assertEqual((build.detail["pass"], build.detail["fail"], build.detail["required"]), (1, 1, True))
+        self.assertEqual(next(c for c in res.checks if c.id == "stage:verify").detail, {"reason": "missing", "required": True})
         self.assertEqual((res.status, res.exit_code()), ("error", 1))
-        self.assertEqual(res.not_proven, [f"stage {s} was not run (no {s}/result.json)" for s in ("demo", "reason", "verify")])
+        self.assertEqual(res.not_proven, [])
         self.assertTrue(res.next_safe_action.startswith("fix build first (fail): fix the cycle"))
 
         md = (self.tmp / "report.md").read_text(encoding="utf-8")
         self.assertIn("`closure:has_component`, fix `hierarchies.has_component`: cycle_nodes=2", md)
         self.assertIn("doctor: reason:java is not ready: install Java", md)
-        self.assertIn("report: stage verify was not run", md)
-        self.assertIn("| reason | not run |", md)
+        self.assertIn("- verify: required, but it has not run (no verify/result.json)", md)
+        self.assertIn("| reason | not run (required) |", md)
+        self.assertIn("| demo | not run (optional) |", md)
         self.assertIn("trusted code", md)
         self.assertIn("shape `open_le_total` (sql_violation)", md)
         self.assertIn("gold `q05_firm_window`: `gold/q05_firm_window.sql`", md)
@@ -294,26 +313,36 @@ class ReportAggregation(TempDirTest):
         js = json.loads((self.tmp / "report.json").read_text(encoding="utf-8"))
         self.assertEqual(js["status"], "error")
         self.assertEqual(js["not_run"], ["demo", "reason", "verify"])
+        self.assertEqual(js["required"], ["build", "reason", "cube", "verify"])
+        self.assertEqual(js["missing_required"], ["reason", "verify"])
         self.assertEqual(js["stages"]["build"]["failing"][0]["config_ref"], "hierarchies.has_component")
         self.assertEqual(js["stages"]["doctor"]["counts"], {"pass": 1, "fail": 0, "error": 0, "not_run": 0})
+        self.assertEqual((js["stages"]["doctor"]["required"], js["stages"]["doctor"]["counted_as"]), (False, "pass"))
         self.assertEqual(js["trusted_sql"]["shapes"], ["open_le_total"])
         self.assertEqual(js["config"], "crosscheck.toml")
 
     def test_no_stage_results(self):
         res = self.run_report()
-        self.assertEqual(statuses(res), {"stages": "not_run"})
+        self.assertEqual(statuses(res), {f"stage:{s}": "not_run" for s in ("build", "reason", "cube", "verify")})
         self.assertEqual((res.status, res.exit_code()), ("not_run", 1))
-        self.assertEqual(len(res.not_proven), len(report.PIPELINE))
+        self.assertEqual(len(res.not_proven), 1)
+        self.assertTrue(res.not_proven[0].startswith("stage doctor was not run"))
+        self.assertTrue(res.next_safe_action.startswith("run `sxc.py doctor`, then build, reason, cube, verify"))
         self.assertTrue((self.tmp / "report.md").is_file())
         self.assertEqual(json.loads((self.tmp / "report.json").read_text(encoding="utf-8"))["stages"], {})
 
-    def test_all_present_stages_pass(self):
+    def test_passing_present_stages_are_not_enough(self):
         for stage in ("doctor", "build"):
             write_result(self.tmp, stage, [("x", "pass", "", {})])
         res = self.run_report(cfg=None)
-        self.assertEqual((res.status, res.exit_code()), ("pass", 0))
-        self.assertIn("reason, cube, verify", res.next_safe_action)
-        self.assertIn("none in this configuration", (self.tmp / "report.md").read_text(encoding="utf-8"))
+        self.assertEqual((res.status, res.exit_code()), ("not_run", 1))
+        self.assertEqual(statuses(res), {"stage:doctor": "pass", "stage:build": "pass", "stage:reason": "not_run",
+                                         "stage:cube": "not_run", "stage:verify": "not_run"})
+        self.assertEqual(res.next_safe_action,
+                         "run the stages that have not run yet (reason, cube, verify), in this order, then rerun report")
+        md = (self.tmp / "report.md").read_text(encoding="utf-8")
+        self.assertIn("Overall: **NOT_RUN**", md)
+        self.assertIn("none in this configuration", md)
 
     def test_status_is_recomputed_fail_closed(self):
         ok_checks = [("a", "pass", "", {})]
@@ -331,19 +360,33 @@ class ReportAggregation(TempDirTest):
         st = statuses(self.run_report())
         self.assertEqual(st, {"stage:build": "fail", "stage:reason": "error", "stage:cube": "error", "stage:verify": "error"})
 
-    def test_stale_results_are_not_proven(self):
+    def test_stale_results_are_not_run(self):
         write_result(self.tmp, "demo", [("demo:rows:part", "pass", "", {})],
                      started="2026-10-13T10:05:00+0000", finished="2026-10-13T10:06:00+0000")
         write_result(self.tmp, "build", [("x", "pass", "", {})],
-                     started="2026-10-13T10:00:00+0000", finished="2026-10-13T10:01:00+0000")
-        # 19:03+0900 is 10:03 UTC: after build finished, before demo finished (a text comparison would say neither)
+                     started="2026-10-13T10:00:00+0000", finished="2026-10-13T10:04:00+0000")
+        # 19:03+0900 is 10:03 UTC, before build finished (a text comparison of the two times would say after)
         write_result(self.tmp, "reason", [("x", "pass", "", {})],
                      started="2026-10-13T19:03:00+0900", finished="2026-10-13T19:04:00+0900")
+        write_result(self.tmp, "cube", [("x", "pass", "", {})],
+                     started="2026-10-13T10:05:00+0000", finished="2026-10-13T10:05:30+0000")
         res = self.run_report()
-        self.assertIn("build ran before the latest demo run finished; rerun build", res.not_proven)
-        self.assertIn("reason ran before the latest demo run finished; rerun reason", res.not_proven)
-        self.assertNotIn("reason ran before the latest build run finished; rerun reason", res.not_proven)
-        self.assertEqual(res.status, "pass")
+        checks = {c.id: c for c in res.checks}
+        self.assertEqual({k: c.status for k, c in checks.items()},
+                         {"stage:demo": "pass", "stage:build": "not_run", "stage:reason": "not_run", "stage:cube": "not_run",
+                          "stage:verify": "not_run"})
+        self.assertEqual({k: checks["stage:build"].detail[k] for k in ("reason", "after", "why", "last_status")},
+                         {"reason": "stale", "after": "demo", "why": "newer", "last_status": "pass"})
+        self.assertEqual((checks["stage:reason"].detail["after"], checks["stage:reason"].detail["why"]), ("build", "newer"))
+        self.assertEqual((checks["stage:cube"].detail["after"], checks["stage:cube"].detail["why"]), ("build", "stale_dependency"))
+        self.assertEqual(checks["stage:verify"].detail["reason"], "missing")
+        self.assertEqual((res.status, res.exit_code()), ("not_run", 1))
+        self.assertEqual(res.next_safe_action, "rerun the stale stages (build, reason, cube) and run the stages that have "
+                                               "not run yet (verify), in the order build, reason, cube, verify, then rerun report")
+        md = (self.tmp / "report.md").read_text(encoding="utf-8")
+        self.assertIn("| build | pass, stale (after demo) |", md)
+        self.assertIn("- build: stale (build ran before the latest demo run finished); rerun it", md)
+        self.assertIn("- cube: stale (cube depends on build, which is stale); rerun it", md)
 
     def test_stale_next_action_when_every_stage_ran(self):
         for stage in report.PIPELINE:
@@ -352,16 +395,19 @@ class ReportAggregation(TempDirTest):
         write_result(self.tmp, "demo", [("x", "pass", "", {})],
                      started="2026-10-13T10:00:00+0000", finished="2026-10-13T10:30:00+0000")
         res = self.run_report()
-        self.assertEqual(res.status, "pass")
+        self.assertEqual((res.status, res.exit_code()), ("not_run", 1))
         self.assertEqual(res.next_safe_action, "rerun the stale stages (build, reason, cube, verify), in this order, then rerun report")
         stale = json.loads((self.tmp / "report.json").read_text(encoding="utf-8"))["stale"]
-        self.assertIn({"stage": "verify", "after": "demo"}, stale)
+        self.assertIn({"stage": "build", "after": "demo", "why": "newer"}, stale)
+        self.assertIn({"stage": "verify", "after": "build", "why": "stale_dependency"}, stale)
 
     def test_through_sxc_main(self):
         write_result(self.tmp, "build", [("closure:has_component", "fail", "hierarchies.has_component", {})])
         self.assertEqual(quiet_main(["report", "--config", str(DEMO_CONFIG), "--out", str(self.tmp)]), 1)
         saved = json.loads((self.tmp / "report" / "result.json").read_text(encoding="utf-8"))
-        self.assertEqual([(c["id"], c["status"]) for c in saved["checks"]], [("stage:build", "fail")])
+        self.assertEqual([(c["id"], c["status"]) for c in saved["checks"]],
+                         [("stage:build", "fail"), ("stage:reason", "not_run"), ("stage:cube", "not_run"),
+                          ("stage:verify", "not_run")])
 
 
 # ---- integration -----------------------------------------------------------------------------------------
@@ -389,7 +435,8 @@ class DemoStageIntegration(TempDirTest):
         self.assertEqual(checks["demo:rows:sales_order"]["detail"]["loaded"], len(data["orders"]))
         self.assertEqual(checks["demo:copy_on_error"]["detail"], {"skipped": len(data["malformed"]), "malformed": len(data["malformed"])})
         expected = json.loads((self.tmp / "demo" / "expected.json").read_text(encoding="utf-8"))
-        self.assertEqual(expected, {**data["expected"], "variant": variant, "seed": seed, "scale": 1})
+        self.assertEqual(expected, demo.reference(data["expected"], variant, seed, 1))
+        self.assertEqual(expected["rows"]["parts"], checks["demo:rows:part"]["detail"]["loaded"])
         self.assertIn("build", saved["next_safe_action"])
         conn = self.fx.check_conn()
         try:
@@ -419,6 +466,8 @@ class DemoStageIntegration(TempDirTest):
         self.assertEqual(code, 1)
         self.assertEqual([(c["id"], c["status"]) for c in saved["checks"]], [("demo:load", "error")])
         self.assertEqual(saved["checks"][0]["detail"]["sqlstate"], "42501")          # insufficient privilege
+        self.assertIn("SQLSTATE 42501", saved["next_safe_action"])
+        self.assertIn("lacks a privilege: it must own the demo tables", saved["next_safe_action"])
         self.assertFalse((self.tmp / "demo" / "expected.json").exists())
         self.assertNotIn("Traceback", stdout.getvalue() + stderr.getvalue())
         conn = self.fx.check_conn()
@@ -449,11 +498,14 @@ class DoctorIntegration(TempDirTest):
         self.assertEqual(code, 0, saved)
         self.assertTrue(all(c["status"] == "pass" for c in checks.values()))
         for e in self.cfg.entities:
-            self.assertEqual(checks[f"privileges:no_write:{e}"]["detail"], {"held": "", "member_of_owner": False})
+            self.assertEqual(checks[f"privileges:no_write:{e}"]["detail"],
+                             {"held": "", "member_of_owner": False, "schema_owner": False, "schema_create": False})
             self.assertTrue(checks[f"privileges:select:{e}"]["detail"]["select"])
         self.assertGreaterEqual(checks["pg_version"]["detail"]["server_version_num"], 170000)
+        self.assertEqual(checks["privileges:temporary"]["detail"], {"temporary": True})
         self.assertEqual(checks["output_schema"]["detail"]["exists"], True)
         self.assertFalse(any(c.startswith(("reason:", "cube:")) for c in checks))
+        self.assertEqual(saved["next_safe_action"], "ready: run `sxc.py build`")
 
     def test_owner_role_cannot_pass_as_check_role(self):
         with mock.patch.dict(os.environ, {"SXC_PG_DSN": os.environ["SXC_PG_OWNER_DSN"]}):
@@ -461,8 +513,10 @@ class DoctorIntegration(TempDirTest):
         checks = {c["id"]: c for c in saved["checks"]}
         self.assertEqual(code, 1)
         for e in self.cfg.entities:
+            detail = checks[f"privileges:no_write:{e}"]["detail"]
             self.assertEqual(checks[f"privileges:no_write:{e}"]["status"], "fail")
-            self.assertIn("INSERT", checks[f"privileges:no_write:{e}"]["detail"]["held"])
+            self.assertEqual(detail["held"], "INSERT,UPDATE,DELETE,TRUNCATE,TRIGGER")
+            self.assertEqual((detail["member_of_owner"], detail["schema_owner"]), (True, True))
         self.assertIn("read-only role", saved["next_safe_action"])
 
     def test_missing_table_is_reported_not_raised(self):
@@ -471,12 +525,15 @@ class DoctorIntegration(TempDirTest):
                             '[entities.part]\ntable = "sxc_demo.part"\nkey = ["part_id"]\n'
                             '[entities.ghost]\ntable = "sxc_demo.ghost"\nkey = ["ghost_id"]\n', encoding="utf-8")
         code = quiet_main(["doctor", "--config", str(cfg_file), "--out", str(self.tmp)])
-        checks = {c["id"]: c for c in json.loads((self.tmp / "doctor" / "result.json").read_text(encoding="utf-8"))["checks"]}
+        saved = json.loads((self.tmp / "doctor" / "result.json").read_text(encoding="utf-8"))
+        checks = {c["id"]: c for c in saved["checks"]}
         self.assertEqual(code, 1)
         self.assertEqual(checks["privileges:select:part"]["status"], "pass")
         self.assertEqual(checks["privileges:select:ghost"]["status"], "fail")
         self.assertEqual(checks["privileges:select:ghost"]["detail"]["table_exists"], False)
         self.assertEqual(checks["privileges:no_write:ghost"]["status"], "not_run")
+        self.assertIn("does not exist in the connected database: check entities.ghost.table", saved["next_safe_action"])
+        self.assertNotIn("grant", saved["next_safe_action"])
 
 
 if __name__ == "__main__":

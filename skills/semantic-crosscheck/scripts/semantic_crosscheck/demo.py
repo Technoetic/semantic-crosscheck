@@ -3,22 +3,77 @@
 Deterministic: an own xorshift64* PRNG (not `random`) so output is identical on every Python version.
 `build(dirty)` returns rows plus an `expected` dict computed here independently (closure via DFS with
 exact Decimal path products), which the integration tests compare against what the SQL stages produce.
+`reference()` turns that dict into demo/expected.json for people and agents: which numbers apply to which
+variant, which check to compare them with, and which check shows each planted defect.
 
 Dirty variant adds, each counted in `expected`:
   1 cycle (2-node), 2 orphan children, 1 zero-quantity line, 2 negative stock rows, 3 orders with
   qty_open > qty_total, 1 raw part with a child (ontology must become inconsistent), 3 stock rows with
   whitespace/case variants of location codes (normalisation), 2 FIRM orders with out-of-range due dates,
   and 2 malformed CSV rows that PostgreSQL 17 `COPY ... ON_ERROR ignore` must skip.
+The closure numbers are a reference for acyclic data only: build refuses the closure of the dirty variant
+(on_cycle = "error"), so there they are None and marked as not compared.
+
+load() reloads the demo tables in place (create the missing ones, TRUNCATE, COPY) instead of dropping them:
+build creates views on these tables in the output schema, owned by the check role, and a DROP fails on those
+dependencies (with CASCADE it would silently remove another role's objects).
 """
 
 import csv
 import datetime as dt
 import io
 from decimal import Decimal
+from typing import NamedTuple
 
 M64 = (1 << 64) - 1
 QTYS = ["1", "2", "0.5", "0.25", "3", "1.5", "4", "0.125", "6", "0.75"]
 SCHEMA = "sxc_demo"
+CLOSURE_KEYS = ("closure_pairs", "paths_total", "multi_path_pairs", "max_depth", "depth_histogram", "qty_checksum")
+LOCK_SQL = "SELECT pg_advisory_xact_lock(hashtext(:key))"
+LOCK_KEY = f"semantic-crosscheck demo {SCHEMA}"
+
+
+class Table(NamedTuple):
+    columns: tuple      # (name, type as format_type() prints it), in table order
+    key: tuple
+
+
+TABLES = {
+    "part": Table((("part_id", "text"), ("part_class", "text"), ("unit", "text"), ("procure", "text"), ("name", "text")),
+                  ("part_id",)),
+    "bom_line": Table((("parent_id", "text"), ("child_id", "text"), ("line_no", "integer"), ("qty_per", "numeric(18,6)")),
+                      ("parent_id", "child_id", "line_no")),
+    "sales_order": Table((("order_id", "text"), ("part_id", "text"), ("status", "text"), ("qty_total", "numeric(18,3)"),
+                          ("qty_open", "numeric(18,3)"), ("due_date", "date")), ("order_id",)),
+    "stock": Table((("part_id", "text"), ("location_id", "text"), ("qty", "numeric(18,3)")), ("part_id", "location_id")),
+}
+
+# planted defect -> (stage, check, what the check shows on the dirty variant)
+REPORTED = {
+    "cycle": ("build", "closure:has_component", "fail with reason cycle; verify then reports the gold queries over the "
+                                                "closure as not_run"),
+    "orphan_children": ("build", "shape:child_exists", "fail with violations = orphan_child_refs; reason shacl:child_exists "
+                                                       "agrees"),
+    "zero_qty_lines": ("build", "shape:qty_positive", "fail with violations = zero_qty_lines; reason shacl:qty_positive agrees"),
+    "negative_stock_rows": ("build", "shape:stock_nonnegative", "pass (severity warning) with violations = "
+                                                                "negative_stock_rows; reason shacl:stock_nonnegative agrees"),
+    "open_gt_total": ("build", "shape:open_le_total", "fail with violations = open_gt_total (sql_violation: SQL only)"),
+    "raw_with_child": ("reason", "owl:consistency", "fail: a raw material (ontology.no_children) has a child"),
+    "malformed_csv_rows": ("demo", "demo:copy_on_error", "pass with skipped = malformed_csv_rows"),
+}
+# planted values no check reports: they exercise checks that pass on them
+EXERCISED = {
+    "location_variants": ("verify", ("v1:q03_stock", "v2:q03_stock:values", "v4:measure_normalization_drop:on_hand"),
+                          "Cube and the gold SQL both normalise location codes, so q03 passes; the variants make the "
+                          "normalisation mutant observable (witness = location_variants) and q03 kills it"),
+    "out_of_range_due": ("verify", ("v1:q05_firm_window", "v2:q05_firm_window:param_sets"),
+                         "the q05 date windows include these orders (1990-01-01 to 2100-12-31) or leave them out "
+                         "(the 2026 windows); Cube and the gold SQL agree on both"),
+}
+
+
+class TableMismatch(Exception):
+    """Demo tables exist with other columns than TABLES defines; the message names each difference."""
 
 
 class Rng:
@@ -153,7 +208,8 @@ def build(dirty: bool = False, seed: int = 20261013, scale: int = 1) -> dict:
 
 
 def _expected(parts, edges, orders, stock, extra) -> dict:
-    """Independent reference numbers (Python), used by integration tests."""
+    """Independent reference numbers (Python), used by integration tests. The closure numbers (CLOSURE_KEYS) are
+    None when the edges contain a cycle: build refuses that closure, so there is nothing to compare them with."""
     pair_qty = {}
     for p, c, _ln, q in edges:
         pair_qty[(p, c)] = pair_qty.get((p, c), Decimal(0)) + Decimal(q)
@@ -161,46 +217,140 @@ def _expected(parts, edges, orders, stock, extra) -> dict:
     for (p, c), q in pair_qty.items():
         children.setdefault(p, []).append((c, q))
     known = {x["part_id"] for x in parts}
+    counts = {"parts": len(parts), "bom_lines": len(edges), "edges": len(pair_qty),
+              "orphan_child_refs": sum(1 for (_p, c) in pair_qty if c not in known)}
+    tail = {"orders": len(orders), "stock_rows": len(stock), **extra}
+    if _has_cycle(children):
+        return {**counts, **dict.fromkeys(CLOSURE_KEYS), "has_cycle": True, **tail}
     closure = {}
-    cyc = False
 
-    def walk(root, node, depth, qty, path):
-        nonlocal cyc
+    def walk(root, node, depth, qty):
         for c, q in children.get(node, []):
-            if c in path:
-                cyc = True
-                continue
             k = (root, c)
             mn, mx, pc, tq = closure.get(k, (depth + 1, depth + 1, 0, Decimal(0)))
             closure[k] = (min(mn, depth + 1), max(mx, depth + 1), pc + 1, tq + qty * q)
-            walk(root, c, depth + 1, qty * q, path | {c})
+            walk(root, c, depth + 1, qty * q)
 
     for root in children:
-        walk(root, root, 0, Decimal(1), {root})
+        walk(root, root, 0, Decimal(1))
     hist = {}
     for (_a, _d), (_mn, mx, _pc, _q) in closure.items():
         hist[mx] = hist.get(mx, 0) + 1
     return {
-        "parts": len(parts), "bom_lines": len(edges), "edges": len(pair_qty),
-        "orphan_child_refs": sum(1 for (_p, c) in pair_qty if c not in known),
+        **counts,
         "closure_pairs": len(closure), "paths_total": sum(v[2] for v in closure.values()),
         "multi_path_pairs": sum(1 for v in closure.values() if v[2] > 1),
         "max_depth": max((v[1] for v in closure.values()), default=0),
         "depth_histogram": {str(k): v for k, v in sorted(hist.items())},
         "qty_checksum": str(sum((v[3] for v in closure.values()), Decimal(0)).normalize()),
-        "has_cycle": cyc, "orders": len(orders), "stock_rows": len(stock), **extra,
+        "has_cycle": False, **tail,
     }
 
 
-DDL = f"""
-DROP TABLE IF EXISTS {SCHEMA}.bom_line, {SCHEMA}.sales_order, {SCHEMA}.stock, {SCHEMA}.part;
-CREATE TABLE {SCHEMA}.part (part_id text PRIMARY KEY, part_class text NOT NULL, unit text NOT NULL, procure text NOT NULL, name text NOT NULL);
-CREATE TABLE {SCHEMA}.bom_line (parent_id text NOT NULL, child_id text NOT NULL, line_no int NOT NULL, qty_per numeric(18,6) NOT NULL,
-  PRIMARY KEY (parent_id, child_id, line_no));
-CREATE TABLE {SCHEMA}.sales_order (order_id text PRIMARY KEY, part_id text NOT NULL, status text NOT NULL,
-  qty_total numeric(18,3) NOT NULL, qty_open numeric(18,3) NOT NULL, due_date date NOT NULL);
-CREATE TABLE {SCHEMA}.stock (part_id text NOT NULL, location_id text NOT NULL, qty numeric(18,3) NOT NULL, PRIMARY KEY (part_id, location_id));
-"""
+def _has_cycle(children: dict) -> bool:
+    """Depth-first search with an explicit stack: a node met again while it is still on the path closes a cycle."""
+    state = {}   # node -> 1 while on the current path, 2 when finished
+    for root in children:
+        if root in state:
+            continue
+        state[root] = 1
+        stack = [(root, iter(children[root]))]
+        while stack:
+            node, it = stack[-1]
+            child = next(it, None)
+            if child is None:
+                state[node] = 2
+                stack.pop()
+                continue
+            c = child[0]
+            if state.get(c) == 1:
+                return True
+            if c not in state:
+                state[c] = 1
+                stack.append((c, iter(children.get(c, []))))
+    return False
+
+
+def reference(expected: dict, variant: str, seed: int, scale: int) -> dict:
+    """demo/expected.json: the reference numbers grouped by what they are compared with, the variants they apply
+    to, and for every planted defect the check that shows it (or the checks it exercises without being reported)."""
+    acyclic = not expected["has_cycle"]
+    closure = {"applies_to": ["clean"], "compared": acyclic}
+    if acyclic:
+        closure["compare_with"] = ("build closure:has_component (detail pairs, paths_total, multi_path_pairs, max_depth, "
+                                   "depth_histogram), the sum of qty in the closure table (qty_checksum), reason "
+                                   "v5:closure:has_component (owl_pairs, sql_pairs) and verify q04_depth_histogram")
+        closure.update({k: expected[k] for k in CLOSURE_KEYS})
+    else:
+        closure["not_compared"] = ("the data has a cycle and hierarchies.has_component.on_cycle = \"error\", so build "
+                                   "refuses the closure (closure:has_component fails with reason cycle) and there is no "
+                                   "closure table to compare with")
+    planted = {}
+    for key, (stage, check, outcome) in REPORTED.items():
+        planted[key] = {"count": expected[key], "reported": True, "stage": stage, "check": check, "dirty_outcome": outcome}
+    for key, (stage, checks, note) in EXERCISED.items():
+        planted[key] = {"count": expected[key], "reported": False, "stage": stage, "exercised_by": list(checks),
+                        "dirty_outcome": "not reported: " + note}
+    return {
+        "variant": variant, "seed": seed, "scale": scale,
+        "about": "reference numbers computed in Python by demo.py, independently of the SQL stages, for "
+                 "demo/crosscheck.toml; each section names the variants it applies to and the checks to compare it with",
+        "rows": {"applies_to": ["clean", "dirty"],
+                 "compare_with": "demo demo:rows:<table> (detail loaded; sales_order counts the valid orders) and "
+                                 "demo:copy_on_error (detail skipped = malformed_csv_rows)",
+                 **{k: expected[k] for k in ("parts", "bom_lines", "orders", "stock_rows", "malformed_csv_rows")}},
+        "graph": {"applies_to": ["clean", "dirty"],
+                  "compare_with": "build closure:has_component (detail edges; cycle_nodes > 0 exactly when has_cycle) "
+                                  "and shape:child_exists (detail violations = orphan_child_refs)",
+                  **{k: expected[k] for k in ("edges", "orphan_child_refs", "has_cycle")}},
+        "closure": closure,
+        "planted_defects": {"applies_to": ["dirty"], "note": "every count is 0 in the clean variant", **planted},
+    }
+
+
+def create_sql(name: str) -> str:
+    t = TABLES[name]
+    cols = ", ".join(f"{c} {typ} NOT NULL" for c, typ in t.columns)
+    return f"CREATE TABLE {SCHEMA}.{name} ({cols}, PRIMARY KEY ({', '.join(t.key)}))"
+
+
+def existing_tables(conn) -> dict:
+    """{table: (relkind, {column: type})} for the demo tables that already exist in SCHEMA."""
+    found = {}
+    rows = conn.run("""SELECT c.relname, c.relkind, a.attname, format_type(a.atttypid, a.atttypmod)
+        FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+        LEFT JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
+        WHERE n.nspname = :s AND c.relname = ANY(:t)
+        ORDER BY c.relname, a.attnum""", s=SCHEMA, t=list(TABLES))
+    for name, kind, column, typ in rows or []:
+        entry = found.setdefault(name, (kind, {}))
+        if column is not None:
+            entry[1][column] = typ
+    return found
+
+
+def table_problems(found: dict) -> list[str]:
+    """How each existing demo table differs from TABLES (column names and types; order does not matter)."""
+    problems = []
+    for name in TABLES:
+        if name not in found:
+            continue
+        kind, have = found[name]
+        if kind not in ("r", "p"):
+            problems.append(f"{SCHEMA}.{name} is not a table")
+            continue
+        want = dict(TABLES[name].columns)
+        parts = []
+        missing = [c for c in want if c not in have]
+        unexpected = [c for c in have if c not in want]
+        if missing:
+            parts.append("missing column " + ", ".join(missing))
+        if unexpected:
+            parts.append("unexpected column " + ", ".join(unexpected))
+        parts += [f"{c} is {have[c]} instead of {want[c]}" for c in want if c in have and have[c] != want[c]]
+        if parts:
+            problems.append(f"{SCHEMA}.{name}: " + "; ".join(parts))
+    return problems
 
 
 def _csv(rows, cols) -> str:
@@ -212,13 +362,24 @@ def _csv(rows, cols) -> str:
 
 
 def load(conn, data: dict) -> dict:
-    """(Re)create the sxc_demo tables and load the rows with COPY. Orders use PG17 `ON_ERROR ignore` so malformed
-    rows are skipped. The schema is created only when missing (an existing schema may belong to a loader role
-    without CREATE on the database)."""
+    """Reload the demo tables inside the caller's transaction and return the loaded row counts.
+
+    Concurrent demo runs wait for each other (advisory lock). The schema is created only when missing (an existing
+    schema may belong to a loader role without CREATE on the database), and so is each table (a loader that owns
+    the tables needs no CREATE on the schema). Existing tables must have the columns of TABLES (TableMismatch,
+    raised before anything is written); they are emptied with TRUNCATE, so views built on them stay valid. Rows
+    go in with COPY; orders use PG17 `ON_ERROR ignore` so malformed rows are skipped."""
+    conn.run(LOCK_SQL, key=LOCK_KEY)
     if not conn.run("SELECT 1 FROM pg_namespace WHERE nspname = :s", s=SCHEMA):
         conn.run(f"CREATE SCHEMA {SCHEMA}")
-    for stmt in [s for s in DDL.split(";") if s.strip()]:
-        conn.run(stmt)
+    found = existing_tables(conn)
+    problems = table_problems(found)
+    if problems:
+        raise TableMismatch("; ".join(problems))
+    for name in TABLES:
+        if name not in found:
+            conn.run(create_sql(name))
+    conn.run("TRUNCATE " + ", ".join(f"{SCHEMA}.{name}" for name in TABLES))
     conn.run(f"COPY {SCHEMA}.part (part_id, part_class, unit, procure, name) FROM STDIN WITH (FORMAT csv)",
              stream=io.StringIO(_csv(data["parts"], ["part_id", "part_class", "unit", "procure", "name"])))
     conn.run(f"COPY {SCHEMA}.bom_line (parent_id, child_id, line_no, qty_per) FROM STDIN WITH (FORMAT csv)",

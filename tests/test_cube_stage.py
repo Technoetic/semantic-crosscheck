@@ -1,16 +1,21 @@
-"""Integration: the `cube` stage on the clean demo, and proof that every Cube session is read-only.
+"""Integration: the `cube` stage on the clean demo, and proof that every Cube session is read-only with a statement
+timeout, that the adapter's log keeps no row values and that HTTP proxies are never used for the local adapter.
 
 Skipped unless SXC_TEST_ADMIN_DSN names a superuser connection, node is on PATH and the Cube adapter is
-installed (cube_run.installed(cube_home()); SXC_CUBE_HOME may point at an existing install).
+installed from this checkout's adapter files (cube_run.installed(cube_home()); SXC_CUBE_HOME may point at an
+existing install, which must be refreshed with `sxc.py cube-install` after server.js or the lockfile change).
 """
 
 import argparse
 import copy
 import json
+import os
 import shutil
+import socket
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import pgfixture
 from semantic_crosscheck import closure, config, cube_gen, cube_run, db, ident, stage_cube
@@ -57,6 +62,36 @@ class CubeStageTest(unittest.TestCase):
         self.assertTrue((out / "cube" / "server.log").is_file())
         self.assertNotRegex(json.dumps(res.to_dict()), r"P-\d{6}|SO-\d{6}", "results must not carry row values")
 
+    def test_stage_ignores_http_proxies(self):
+        with socket.socket() as s:
+            s.bind(("127.0.0.1", 0))
+            dead = f"http://127.0.0.1:{s.getsockname()[1]}"
+        proxies = {name: dead for name in ("HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy", "ALL_PROXY")}
+        with mock.patch.dict(os.environ, proxies):
+            for name in ("NO_PROXY", "no_proxy"):
+                os.environ.pop(name, None)
+            res = stage_cube.run(self.cfg, argparse.Namespace(), self.tmp / "out_proxy")
+        self.assertEqual({c.id: c.status for c in res.checks}["cube:meta"], "pass")
+
+    def test_query_errors_leave_no_row_values_in_the_log(self):
+        out = self.tmp / "out_log"
+        stage_cube.run(self.cfg, argparse.Namespace(), out)
+        conn = self.fx.check_conn()
+        try:
+            key = db.scalar(conn, "SELECT min(part_id) FROM sxc_demo.part")
+        finally:
+            conn.close()
+        log = out / "cube" / "error.log"
+        query = {"dimensions": ["has_component_closure.min_depth"],     # a number dimension compared with a key
+                 "filters": [{"member": "has_component_closure.min_depth", "operator": "equals", "values": [key]}]}
+        with cube_run.serve(self.cfg, out / "cube", log) as client:
+            with self.assertRaises(CubeError):
+                client.load(query)
+        text = log.read_text(encoding="utf-8")
+        self.assertIn("SXC_CUBE_ERROR", text)
+        self.assertNotIn(key, text, "a row value reached the adapter log")
+        self.assertNotRegex(text, r"P-\d{6}")
+
     def test_generation_error_names_the_entity(self):
         cfg = copy.deepcopy(self.cfg)
         cfg.entities["part"].key = ["no_such_column"]
@@ -85,12 +120,17 @@ class CubeStageTest(unittest.TestCase):
         probes = [
             {"name": "ro_setting", "sql": "SELECT current_setting('transaction_read_only') AS ro",
              "dimensions": [{"name": "ro", "sql": "{CUBE}.ro", "type": "string", "primary_key": True, "public": True}]},
+            {"name": "ro_timeout", "sql": "SELECT setting AS ms FROM pg_settings WHERE name = 'statement_timeout'",
+             "dimensions": [{"name": "ms", "sql": "{CUBE}.ms", "type": "string", "primary_key": True, "public": True}]},
             {"name": "ro_probe", "sql": f"SELECT nextval({cube_gen._lit(SEQUENCE)}::regclass) AS v",
              "dimensions": [{"name": "v", "sql": "{CUBE}.v", "type": "number", "primary_key": True, "public": True}]},
         ]
         cube_gen.write_model({"cubes": probes}, run_dir / "model")
         with cube_run.serve(self.cfg, run_dir, run_dir / "server.log") as client:
             self.assertEqual(client.load({"dimensions": ["ro_setting.ro"]}), [{"ro_setting.ro": "on"}])
+            self.assertEqual(client.load({"dimensions": ["ro_timeout.ms"]}),
+                             [{"ro_timeout.ms": str(self.cfg.cube.query_timeout_s * 1000)}],
+                             "a query the client gave up on must also stop in PostgreSQL")
             with self.assertRaises(CubeError) as caught:
                 client.load({"dimensions": ["ro_probe.v"]})
         text = str(caught.exception)

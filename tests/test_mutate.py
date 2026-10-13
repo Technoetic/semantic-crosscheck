@@ -2,8 +2,9 @@
 
 Unit tests run cube_gen.generate against a catalog-only fake connection, so the model has exactly the shape
 of the real one (the integration test proves that), and check that every operator changes one element of
-a copy. Integration tests load the demo into PostgreSQL 17, compute witnesses against the independent demo
-reference numbers and, with the Cube adapter installed, serve every observable mutant to a small gold suite.
+a copy, that only a failing suite item kills a mutant and that the closure operators follow build's closure check.
+Integration tests load the demo into PostgreSQL 17, compute witnesses against the independent demo reference
+numbers and, with the Cube adapter installed, serve every observable mutant to a small gold suite.
 """
 
 import contextlib
@@ -23,7 +24,7 @@ import pgfixture
 from semantic_crosscheck import canon, closure, config, cube_gen, cube_run, db, ident, mutate, naming
 from semantic_crosscheck.config import Param
 from semantic_crosscheck.cube_client import CubeError
-from semantic_crosscheck.result import StageError
+from semantic_crosscheck.result import Result, StageError
 
 # information_schema view of demo.DDL
 DEMO_COLUMNS = {
@@ -186,55 +187,49 @@ class OperatorTest(unittest.TestCase):
         drop = mu[("measure_filter_drop", "firm_open")].witness_sql
         self.assertIn(cube_gen.where_sql(self.cfg.measures["firm_open"]), drop)
         self.assertTrue(drop.endswith("""AND t."qty_open" IS NOT NULL AND t."qty_open" <> 0"""))
-        end = mu[("closure_end_swap", "has_component")].witness_sql
-        self.assertIn('a."part_class" IS DISTINCT FROM d."part_class"', end)
+        self.assertEqual(mu[("closure_end_swap", "has_component")].witness_sql,
+                         f'SELECT count(*) FROM {closure_table} p LEFT JOIN "sxc_demo"."part" a ON a."part_id" = p.ancestor '
+                         'LEFT JOIN "sxc_demo"."part" d ON d."part_id" = p.descendant WHERE a."part_id" IS DISTINCT FROM d."part_id"')
         self.assertIn("coalesce(a.v, 0) <> coalesce(d.v, 0)", mu[("closure_join_swap", "firm_open")].witness_sql)
-        self.assertIn("count(*) >= 2", mu[("measure_agg_to_max", "on_hand")].witness_sql)
 
-    def test_end_swap_without_class_column_counts_all_pairs(self):
-        self.cfg.ontology = dataclasses.replace(self.cfg.ontology, class_column="")
-        mu = self.mutants()[("closure_end_swap", "has_component")]
-        self.assertEqual(mu.witness_sql, 'SELECT count(*) FROM "sxc_out"."has_component_closure"')
+    def test_agg_to_max_witness_aggregates_the_cube_rows_per_key_overall_and_in_pairs(self):
+        mu = self.mutants()
+        on_hand = mu[("measure_agg_to_max", "on_hand")].witness_sql
+        self.assertIn(f'FROM ({element(self.model, ("cubes", "m_on_hand", "sql"))}) c', on_hand)
+        self.assertIn('SELECT c."key" AS k, c."value" AS v', on_hand)
+        for part in ("sum(v) IS DISTINCT FROM max(v)", "GROUP BY k", "count(*) > 0 AND sum(v)",
+                     "count(*) FILTER (WHERE w <> 0) >= 2", "count(*) FILTER (WHERE w < 0) >= 1 AND count(w) >= 2"):
+            self.assertIn(part, on_hand)
+        dated = mu[("measure_agg_to_max", "firm_open_dated")].witness_sql
+        self.assertIn(f'FROM ({element(self.model, ("cubes", "m_firm_open_dated", "sql"))}) c', dated)
+        self.assertIn('c."v" AS v', dated)
+        self.cfg.measures["firm_open_dated"].agg = self.cfg.measures["on_hand"].agg = "count"
+        model, _notes = cube_gen.generate(self.cfg, CatalogConn())
+        counted = {(m.operator, m.target): m.witness_sql for m in mutate.operators(self.cfg, model)}
+        self.assertIn("count(v) IS DISTINCT FROM max(v)", counted[("measure_agg_to_max", "firm_open_dated")])
+        self.assertIn("sum(v) IS DISTINCT FROM max(v)", counted[("measure_agg_to_max", "on_hand")],
+                      "a pre-aggregated count is summed over its per-key counts")
 
-    def test_dated_witness_uses_every_gold_window(self):
-        mu = self.mutants()[("dated_shift_one_day", "firm_open_dated")]
-        q05 = next(g for g in self.cfg.gold if g.id == "q05_firm_window")
-        self.assertEqual(mu.witness_params, {"ends": sorted({ps["date_to"] for ps in q05.param_sets}),
-                                             "starts": sorted({ps["date_from"] for ps in q05.param_sets})})
-        self.assertIn(element(self.model, ("cubes", "m_firm_open_dated", "sql")), mu.witness_sql)
-        self.assertIn("""(c."ts" AT TIME ZONE 'UTC')::date + 1 = ANY(CAST(:starts AS date[]))""", mu.witness_sql)
-
-    def _with_q05(self, **change) -> mutate.Mutant:
-        self.cfg.gold = [dataclasses.replace(g, **change) if g.id == "q05_firm_window" else g for g in self.cfg.gold]
-        return self.mutants()[("dated_shift_one_day", "firm_open_dated")]
-
-    def test_dated_witness_is_zero_without_a_gold_window(self):
-        self.cfg.gold = [g for g in self.cfg.gold if g.id != "q05_firm_window"]
-        mu = self.mutants()[("dated_shift_one_day", "firm_open_dated")]
-        self.assertEqual((mu.witness_sql, mu.witness_params), ("SELECT 0", {}))
-
-    def test_dated_witness_with_swept_values(self):
-        query = {"dimensions": ["m_firm_open_dated.key"], "measures": ["m_firm_open_dated.value"],
+    def test_witnesses_depend_on_the_data_not_on_the_ontology_or_the_gold_windows(self):
+        end = self.mutants()[("closure_end_swap", "has_component")].witness_sql
+        dated = self.mutants()[("dated_shift_one_day", "firm_open_dated")]
+        rows = element(self.model, ("cubes", "m_firm_open_dated", "sql"))
+        self.assertEqual((dated.witness_sql, dated.witness_params), (f'SELECT count(*) FROM ({rows}) c WHERE c."ts" IS NOT NULL', {}))
+        swept = {"dimensions": ["m_firm_open_dated.key"], "measures": ["m_firm_open_dated.value"],
                  "timeDimensions": [{"dimension": TS, "dateRange": [":d", "2026-12-31"]}]}
-        mu = self._with_q05(cube_query=query, param_sets=[], params={"d": Param(name="d", values=["2026-07-01", "2026-01-01"])})
-        self.assertEqual(mu.witness_params, {"ends": ["2026-12-31"], "starts": ["2026-01-01", "2026-07-01"]})
-
-    def test_dated_witness_reads_in_date_range_filters(self):
-        query = {"dimensions": ["m_firm_open_dated.key"], "measures": ["m_firm_open_dated.value"],
-                 "filters": [{"or": [{"member": TS, "operator": "inDateRange", "values": ["2026-02-01", "2026-02-28"]}]}]}
-        mu = self._with_q05(cube_query=query, param_sets=[])
-        self.assertEqual(mu.witness_params, {"ends": ["2026-02-28"], "starts": ["2026-02-01"]})
-
-    def test_dated_witness_counts_every_dated_row_when_windows_need_the_database(self):
-        for change in ({"param_sets": [], "params": {"date_from": Param(name="date_from", values_of="sales_order.status")}},
-                       {"cube_query": {"dimensions": ["m_firm_open_dated.key"], "measures": ["m_firm_open_dated.value"],
-                                       "filters": [{"member": TS, "operator": "beforeDate", "values": ["2026-06-01"]}]}},
-                       {"param_sets": [{"date_from": "last year", "date_to": "2026-12-31"}]}):
-            with self.subTest(change=sorted(change)):
+        variants = {"no class column": lambda: setattr(self.cfg, "ontology", dataclasses.replace(self.cfg.ontology, class_column="")),
+                    "no gold window": lambda: setattr(self.cfg, "gold", [g for g in self.cfg.gold if g.id != "q05_firm_window"]),
+                    "swept window": lambda: setattr(self.cfg, "gold", [
+                        dataclasses.replace(g, cube_query=swept, param_sets=[], params={"d": Param(name="d", values=["2026-07-01"])})
+                        if g.id == "q05_firm_window" else g for g in self.cfg.gold])}
+        for name, change in variants.items():
+            with self.subTest(variant=name):
                 self.cfg = config.load(pgfixture.DEMO_CONFIG)
-                mu = self._with_q05(**change)
-                self.assertTrue(mu.witness_sql.endswith('c."ts" IS NOT NULL'))
-                self.assertEqual(mu.witness_params, {})
+                change()
+                mu = self.mutants()
+                self.assertEqual(mu[("closure_end_swap", "has_component")].witness_sql, end)
+                self.assertEqual((mu[("dated_shift_one_day", "firm_open_dated")].witness_sql,
+                                  mu[("dated_shift_one_day", "firm_open_dated")].witness_params), (dated.witness_sql, {}))
 
     def test_selection_by_configuration(self):
         self.cfg.verify.mutation_operators = ["closure_end_swap", "closure_depth_shift"]
@@ -271,6 +266,14 @@ class OperatorTest(unittest.TestCase):
         self.cfg.verify.mutation_operators = ["dated_shift_one_day"]
         with self.assertRaises(mutate.MutationError):
             mutate.operators(self.cfg, stale)
+        self.cfg.verify.mutation_operators = ["measure_agg_to_max"]
+        with self.assertRaises(mutate.MutationError):
+            mutate.operators(self.cfg, stale)
+        for patch in ({"type": "max"}, {"sql": "sum({CUBE}.value)"}):
+            stale = copy.deepcopy(self.model)
+            element(stale, ("cubes", "m_on_hand", "measures", "value")).update(patch)
+            with self.subTest(patch=patch), self.assertRaises(mutate.MutationError):
+                mutate.operators(self.cfg, stale)
 
     def test_witness_runs_in_a_read_only_transaction(self):
         mu = self.mutants()[("dated_shift_one_day", "firm_open_dated")]
@@ -283,11 +286,19 @@ class OperatorTest(unittest.TestCase):
         self.assertEqual(sqls[3], "ROLLBACK")
 
 
+CLOSURE_CHECKS = ["v4:closure_depth_shift:has_component", "v4:closure_path_count_one:has_component",
+                  "v4:closure_qty_single_path:has_component", "v4:closure_join_swap:firm_open",
+                  "v4:closure_end_swap:has_component"]
+BUILT = {"has_component": "pass"}
+
+
 class RunMutantsTest(unittest.TestCase):
     """run_mutants control flow with a stubbed witness, Cube runner and suite."""
 
-    def run_with(self, model, witnesses: dict, fail_startup: str = "", suite_error: str = "", survivors: tuple = ()):
+    def run_with(self, model, witnesses: dict, fail_startup: str = "", suite_error: str = "", item_error: str = "",
+                 survivors: tuple = (), closure=BUILT, build_status: str = ""):
         cfg = config.load(pgfixture.DEMO_CONFIG)
+        self.served = []
 
         def fake_witness(conn, cfg_, mu):
             n = witnesses.get(mu.operator, 3)
@@ -298,6 +309,7 @@ class RunMutantsTest(unittest.TestCase):
         @contextlib.contextmanager
         def fake_serve(cfg_, run_dir, log_path=None):
             run_dir = Path(run_dir)
+            self.served.append(run_dir.name)
             self.assertTrue(list((run_dir / "model").glob("*.yml")))
             if run_dir.name == fail_startup:
                 raise StageError("Cube adapter exited during startup (code 1)", 3)
@@ -307,15 +319,21 @@ class RunMutantsTest(unittest.TestCase):
             name = client.run_dir.name
             if name == suite_error:
                 raise CubeError("HTTP 500")
+            if name == item_error:
+                return "error", "v2:q01_explosion:top[1]"
             if name.startswith(survivors):
-                return False, ""
-            return True, "v1:q01_explosion"
+                return "pass", ""
+            return "fail", "v1:q01_explosion"
 
         tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.addCleanup(tmp.cleanup)
         out = Path(tmp.name)
+        if build_status:
+            build = Result("build")
+            build.add("closure:has_component", build_status, "hierarchies.has_component")
+            build.write(out)
         with mock.patch.object(mutate, "witness", fake_witness), mock.patch.object(cube_run, "serve", fake_serve):
-            checks, not_proven = mutate.run_mutants(cfg, out, None, model, suite)
+            checks, not_proven = mutate.run_mutants(cfg, out, None, model, suite, closure=closure)
         return out, {cid: (st, ref, det) for cid, st, ref, det in checks}, checks, not_proven
 
     def test_outcomes_details_and_summary(self):
@@ -337,17 +355,47 @@ class RunMutantsTest(unittest.TestCase):
         self.assertEqual((st, det["reason"], det["exit_code"], det["log"]),
                          ("error", "startup", 3, "verify/mutants/closure_end_swap__has_component/server.log"))
         st, _ref, det = by_id["v4:closure_join_swap:firm_open"]
-        self.assertEqual((st, det["reason"], det["exception"]), ("error", "suite", "CubeError"))
+        self.assertEqual((st, det["reason"], det["exception"]), ("error", "suite_error", "CubeError"))
         self.assertEqual(not_proven, ["v4:measure_normalization_drop:on_hand equivalent on this data",
                                       "v4:measure_normalization_drop:consigned equivalent on this data"])
         statuses = [st for st, _r, _d in by_id.values()]
         summary = {"killed": statuses.count("pass"), "survived": statuses.count("fail"), "equivalent": 2,
-                   "error": statuses.count("error"), "not_applicable": 0}
-        self.assertEqual(summary, {"killed": 5, "survived": 4, "equivalent": 2, "error": 3, "not_applicable": 0})
+                   "error": statuses.count("error"), "not_applicable": 0, "not_run": 0}
+        self.assertEqual(summary, {"killed": 5, "survived": 4, "equivalent": 2, "error": 3, "not_applicable": 0, "not_run": 0})
         self.assertTrue(all(det["summary"] == summary for _st, _r, det in by_id.values()))
         yml = out / "verify" / "mutants" / "closure_depth_shift__has_component" / "model" / f"{CLOSURE}.yml"
         self.assertIn('"({CUBE}.min_depth) + 1"', yml.read_text(encoding="utf-8"))
         self.assertTrue((yml.parents[1] / "model.json").is_file())
+
+    def test_an_item_error_leaves_the_mutant_unjudged_never_killed(self):
+        _cfg, model = demo_model()
+        _out, by_id, _checks, _np = self.run_with(model, {}, item_error="closure_depth_shift__has_component")
+        st, ref, det = by_id["v4:closure_depth_shift:has_component"]
+        self.assertEqual((st, ref, det["reason"], det["item"], det["witness"]),
+                         ("error", "hierarchies.has_component", "suite_error", "v2:q01_explosion:top[1]", 3))
+        self.assertNotIn("killed_by", det)
+        self.assertEqual(det["summary"]["error"], 1)
+        self.assertEqual(mutate.verdict("fail", "v1:a"), ("pass", {"killed_by": "v1:a"}))
+        self.assertEqual(mutate.verdict("pass", ""), ("fail", {"killed_by": ""}))
+        for status in ("error", "not_run", None):
+            self.assertEqual(mutate.verdict(status, "v3:x")[0], "error", status)
+
+    def test_closure_operators_follow_the_build_closure_check(self):
+        _cfg, model = demo_model()
+        for closure, build_status, seen in (({"has_component": "fail"}, "", "fail"), (None, "fail", "fail"),
+                                            (None, "", "missing"), ({}, "", "missing")):
+            with self.subTest(closure=closure, build=build_status):
+                _out, by_id, _checks, not_proven = self.run_with(model, {}, closure=closure, build_status=build_status)
+                for cid in CLOSURE_CHECKS:
+                    st, ref, det = by_id[cid]
+                    self.assertEqual((st, ref, det["reason"], det["hierarchy"], det["build_check"]),
+                                     ("not_run", "hierarchies.has_component", "closure_not_passed", "has_component", seen))
+                    self.assertIn(f"{cid}: closure:has_component did not pass in build ({seen})", not_proven)
+                self.assertFalse([name for name in self.served if name.startswith("closure_")], "no closure mutant served")
+                self.assertEqual(by_id["v4:measure_filter_drop:firm_open"][0], "pass")
+                self.assertEqual(by_id["v4:measure_filter_drop:firm_open"][2]["summary"]["not_run"], 5)
+        _out, by_id, _checks, _np = self.run_with(model, {}, closure=None, build_status="pass")
+        self.assertTrue(all(by_id[cid][0] == "pass" for cid in CLOSURE_CHECKS))
 
     def test_unbuilt_closure_and_stale_model(self):
         _cfg, model = demo_model(closure_exists=False)
@@ -358,10 +406,7 @@ class RunMutantsTest(unittest.TestCase):
         self.assertEqual(by_id["v4:measure_filter_drop:firm_open"][2]["reason"], "model_mismatch")
         self.assertEqual(by_id["v4:measure_filter_drop:firm_open_dated"][0], "pass")
         skipped = [n for n in not_proven if " not run: " in n]
-        self.assertEqual([n.split(" ")[0] for n in skipped],
-                         ["v4:closure_depth_shift:has_component", "v4:closure_path_count_one:has_component",
-                          "v4:closure_qty_single_path:has_component", "v4:closure_join_swap:firm_open",
-                          "v4:closure_end_swap:has_component"])
+        self.assertEqual([n.split(" ")[0] for n in skipped], CLOSURE_CHECKS)
         self.assertTrue(all(det["summary"]["not_applicable"] == 5 for _st, _r, det in by_id.values()))
 
 
@@ -449,18 +494,22 @@ class CleanDemoTest(unittest.TestCase):
                              regenerated_sql(self.cfg, target, cols, **change))
 
     def test_witnesses_against_the_demo_reference(self):
-        mu, exp = self.mutants(), self.fx.data["expected"]
+        mu, data = self.mutants(), self.fx.data
+        exp = data["expected"]
+        dated = sum(1 for o in data["orders"] if o["status"] == "FIRM" and o["part_id"] and o["due_date"])
         self.assertEqual(mutate.witness(self.conn, self.cfg, mu["v4:closure_depth_shift:has_component"]), exp["closure_pairs"])
         self.assertEqual(mutate.witness(self.conn, self.cfg, mu["v4:closure_path_count_one:has_component"]), exp["multi_path_pairs"])
+        self.assertEqual(mutate.witness(self.conn, self.cfg, mu["v4:closure_end_swap:has_component"]), exp["closure_pairs"],
+                         "every clean pair joins two different part rows")
+        self.assertEqual(mutate.witness(self.conn, self.cfg, mu["v4:dated_shift_one_day:firm_open_dated"]), dated)
         for cid in ("v4:closure_qty_single_path:has_component", "v4:measure_filter_drop:firm_open",
-                    "v4:measure_agg_to_max:on_hand", "v4:dated_shift_one_day:firm_open_dated",
-                    "v4:closure_join_swap:firm_open", "v4:closure_end_swap:has_component"):
+                    "v4:measure_agg_to_max:on_hand", "v4:measure_agg_to_max:firm_open_dated", "v4:closure_join_swap:firm_open"):
             self.assertGreater(mutate.witness(self.conn, self.cfg, mu[cid]), 0, cid)
 
     def test_normalization_drop_is_equivalent_on_clean_data(self):
         self.cfg.verify.mutation_operators = ["measure_normalization_drop"]
         out = self.tmpdir()
-        checks, not_proven = mutate.run_mutants(self.cfg, out, self.conn, self.model, lambda client: (True, "unused"))
+        checks, not_proven = mutate.run_mutants(self.cfg, out, self.conn, self.model, lambda client: ("pass", ""))
         self.assertEqual(checks, [])
         self.assertEqual(not_proven, ["v4:measure_normalization_drop:on_hand equivalent on this data",
                                       "v4:measure_normalization_drop:consigned equivalent on this data"])
@@ -488,7 +537,7 @@ class CleanDemoTest(unittest.TestCase):
                                 ("q03_stock", {"part_class": "component"}), ("q04_depth_histogram", {}),
                                 ("q05_firm_window", window)):
                 g = gold[gid]
-                rows = db.rows(self.conn, g.sql_path(cfg).read_text(encoding="utf-8"), **params)
+                rows = db.rows(self.conn, g.sql_path(cfg).read_text(encoding="utf-8-sig"), **params)
                 self.assertTrue(rows, gid)
                 cases.append((f"v1:{gid}", g, params, rows))
         return cases
@@ -502,17 +551,17 @@ class CleanDemoTest(unittest.TestCase):
                 try:
                     got = client.load(subst(g.cube_query, params))
                 except CubeError:
-                    return True, f"{case_id}:query_error"
+                    return "error", case_id
                 if not same_rows(g, rows, got):
-                    return True, case_id
-            return False, ""
+                    return "fail", case_id
+            return "pass", ""
 
         out = self.tmpdir()
         cube_gen.write_model(self.model, out / "original" / "model")
         with cube_run.serve(self.cfg, out / "original", out / "original" / "server.log") as client:
-            self.assertEqual(suite(client), (False, ""), "the unmutated model must pass the suite")
+            self.assertEqual(suite(client), ("pass", ""), "the unmutated model must pass the suite")
 
-        checks, not_proven = mutate.run_mutants(self.cfg, out, self.conn, self.model, suite)
+        checks, not_proven = mutate.run_mutants(self.cfg, out, self.conn, self.model, suite, closure=BUILT)
         by_id = {cid: (st, ref, det) for cid, st, ref, det in checks}
         for cid, (st, _ref, det) in sorted(by_id.items()):
             print(f"  {cid}: {st} witness={det.get('witness')} killed_by={det.get('killed_by', det.get('reason'))}")
@@ -526,7 +575,7 @@ class CleanDemoTest(unittest.TestCase):
             st, _ref, det = by_id[cid]
             self.assertEqual(st, "pass", cid)
             self.assertGreater(det["witness"], 0, cid)
-            self.assertTrue(det["killed_by"].startswith("v1:") and not det["killed_by"].endswith(":query_error"), cid)
+            self.assertTrue(det["killed_by"].startswith("v1:"), cid)
         for target in ("on_hand", "consigned"):
             self.assertIn(f"v4:measure_normalization_drop:{target} equivalent on this data", not_proven)
             self.assertNotIn(f"v4:measure_normalization_drop:{target}", by_id)
@@ -535,7 +584,7 @@ class CleanDemoTest(unittest.TestCase):
             self.assertEqual(by_id[f"v4:measure_agg_to_max:{target}"][0], "fail")
         statuses = [st for st, _r, _d in by_id.values()]
         self.assertEqual(checks[0][3]["summary"], {"killed": statuses.count("pass"), "survived": statuses.count("fail"),
-                                                   "equivalent": 2, "error": 0, "not_applicable": 0})
+                                                   "equivalent": 2, "error": 0, "not_applicable": 0, "not_run": 0})
         for cid in by_id:
             _v4, op, target = cid.split(":")
             run_dir = out / "verify" / "mutants" / f"{op}__{target}"

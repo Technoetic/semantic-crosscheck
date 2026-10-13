@@ -6,7 +6,7 @@
   "license": "MIT",
   "main": "server.js",
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "dependencies": {
     "@cubejs-backend/postgres-driver": "1.8.3",

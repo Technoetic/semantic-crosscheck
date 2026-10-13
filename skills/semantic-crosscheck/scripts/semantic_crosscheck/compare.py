@@ -1,14 +1,17 @@
 """V1/V2 strict comparison of one gold-query binding: gold SQL rows against Cube rows (design section 7).
 
-Gold rows come from the gold SQL file (trusted code from the configuration), executed as one prepared statement
-with bound parameters inside db.read_only. The extended protocol accepts a single statement only, so a gold file
-cannot end the read-only transaction. Cube rows come from gold.cube_query after every string equal to
-":<param>" (also inside lists and dicts) is replaced by the bound value; gold.map renames them to gold columns.
+Gold rows come from the gold SQL file (trusted code from the configuration, read as UTF-8 with or without a BOM),
+executed as one prepared statement with bound parameters inside db.read_only. The extended protocol accepts a single
+statement only, so a gold file cannot end the read-only transaction. Cube rows come from gold.cube_query after every
+string equal to ":<param>" (also inside lists and dicts) is replaced by the bound value; gold.map renames them to
+gold columns.
 
-Rows are matched on the canonical key (canon.canon of the key columns) and a duplicate key on either side fails.
-Matched rows must be canonically identical in every mapped column. The only declared equivalence is
-zero_if_null: a Cube NULL counts as 0 in the listed columns, because the gold SQL coalesces them. Both sides
-empty is a pass flagged `empty`.
+Rows are matched on the canonical key and a duplicate key on either side fails. Matched rows must be canonically
+identical in every mapped column. Canonical forms follow the type of each column's Cube member (gold_kinds of
+member_kinds of the model; canon.canon(v, kind)): text is compared exactly, numbers as exact decimals, dates and
+timestamps in one UTC form, booleans as booleans. A caller without a model compares untyped (canon.canon(v)). The
+only declared equivalence is zero_if_null: a Cube NULL counts as 0 in the listed columns, because the gold SQL
+coalesces them. Both sides empty is a pass flagged `empty`.
 
 The comparison dict holds counts only. Errors are reported by exception type, SQLSTATE or HTTP status: database
 and Cube messages can quote row values, so they are never kept.
@@ -23,6 +26,7 @@ from .cube_client import CubeError
 
 _PLACEHOLDER = re.compile(r"^:([a-z_][a-z0-9_]*)$")
 RESERVED_PARAMS = frozenset({"stream", "types"})   # keyword arguments pg8000 uses for other purposes
+VALUE_KINDS = ("string", "time", "boolean")        # Cube measure types that are not numbers
 
 
 class UnboundParameter(ValueError):
@@ -57,12 +61,30 @@ def cube_query(gold, params: dict) -> dict:
     return subst(gold.cube_query, {k: _json_value(v) for k, v in params.items()})
 
 
+def member_kinds(model: dict) -> dict[str, str]:
+    """Comparison kind (canon.KINDS) of every member of a generated model: a dimension's own type, and for a measure
+    'number' unless its type is string, time or boolean. Dimensions of another type (geo) are left out."""
+    kinds = {}
+    for cube in model.get("cubes", []):
+        for d in cube.get("dimensions", []):
+            if d.get("type") in canon.KINDS:
+                kinds[f"{cube.get('name')}.{d.get('name')}"] = d["type"]
+        for m in cube.get("measures", []):
+            kinds[f"{cube.get('name')}.{m.get('name')}"] = m["type"] if m.get("type") in VALUE_KINDS else "number"
+    return kinds
+
+
+def gold_kinds(gold, kinds: dict) -> dict[str, str]:
+    """Kind of every gold column whose Cube member has one in member_kinds; other columns are compared untyped."""
+    return {col: kinds[member] for col, member in gold.map.items() if member in kinds}
+
+
 def gold_rows(conn, cfg, gold, params: dict) -> list[dict]:
     """Rows of the gold SQL for one binding (bound parameters, READ ONLY, statement timeout)."""
     reserved = sorted(RESERVED_PARAMS & set(params))
     if reserved:
         raise ValueError(f"gold {gold.id}: parameter names {reserved} are reserved by pg8000; rename them")
-    sql = gold.sql_path(cfg).read_text(encoding="utf-8")
+    sql = gold.sql_path(cfg).read_text(encoding="utf-8-sig")
     with db.read_only(conn, cfg.source.statement_timeout_ms):
         ps = conn.prepare(sql)
         try:
@@ -79,11 +101,11 @@ def cube_rows(client, gold, params: dict) -> list[dict]:
     return [{col: r.get(member) for col, member in gold.map.items()} for r in data]
 
 
-def _index(rows: list[dict], key: list) -> tuple[dict, int]:
+def _index(rows: list[dict], key: list, types: dict) -> tuple[dict, int]:
     """Rows by canonical key (the first row of a key wins) and the number of keys that occur more than once."""
     idx, dups = {}, set()
     for r in rows:
-        k = tuple(canon.canon(r.get(c)) for c in key)
+        k = tuple(canon.canon(r.get(c), types.get(c)) for c in key)
         if k in idx:
             dups.add(k)
         else:
@@ -91,8 +113,12 @@ def _index(rows: list[dict], key: list) -> tuple[dict, int]:
     return idx, len(dups)
 
 
-def compare_rows(gold, g_rows: list[dict], c_rows: list[dict]) -> dict:
-    """Strict comparison of gold rows with Cube rows (already renamed to gold columns). Counts only."""
+def compare_rows(gold, g_rows: list[dict], c_rows: list[dict], types: dict | None = None) -> dict:
+    """Strict comparison of gold rows with Cube rows (already renamed to gold columns). Counts only.
+
+    types maps gold columns to the Cube member type of their member (gold_kinds); a column without one, or every
+    column when types is None, is compared untyped."""
+    types = types or {}
     cols = list(gold.map)
     zero = [c for c in gold.zero_if_null if c in gold.map]
     declared = 0
@@ -104,8 +130,8 @@ def compare_rows(gold, g_rows: list[dict], c_rows: list[dict]) -> dict:
                 r[col] = 0
                 declared += 1
         cube.append(r)
-    g_idx, g_dup = _index(g_rows, gold.key)
-    c_idx, c_dup = _index(cube, gold.key)
+    g_idx, g_dup = _index(g_rows, gold.key, types)
+    c_idx, c_dup = _index(cube, gold.key, types)
     mismatched: dict[str, int] = {}
     matched = 0
     for k, g in g_idx.items():
@@ -114,7 +140,7 @@ def compare_rows(gold, g_rows: list[dict], c_rows: list[dict]) -> dict:
             continue
         matched += 1
         for col in cols:
-            if canon.canon(g.get(col)) != canon.canon(c.get(col)):
+            if not canon.same(g.get(col), c.get(col), types.get(col)):
                 mismatched[col] = mismatched.get(col, 0) + 1
     missing = sum(1 for k in g_idx if k not in c_idx)
     extra = sum(1 for k in c_idx if k not in g_idx)
@@ -174,9 +200,10 @@ def status(r: dict) -> str:
     return "pass" if r["pass"] else "fail"
 
 
-def run_binding(conn, client, cfg, gold, params: dict, cache: dict | None = None) -> dict:
+def run_binding(conn, client, cfg, gold, params: dict, cache: dict | None = None, types: dict | None = None) -> dict:
     """Compare one binding. Errors become {'pass': False, 'error': type, ...}; `cache` keeps gold rows for replays
-    (the mutation suite queries the same bindings against every mutant, and gold rows do not change)."""
+    (the mutation suite queries the same bindings against every mutant, and gold rows do not change); `types` as in
+    compare_rows."""
     errors = expected_errors()
     key = (gold.id, json.dumps(params, sort_keys=True, default=str))
     try:
@@ -192,4 +219,4 @@ def run_binding(conn, client, cfg, gold, params: dict, cache: dict | None = None
         c = cube_rows(client, gold, params)
     except errors as e:
         return {"pass": False, "side": "cube", "gold_rows": len(g), **error_detail(e)}
-    return compare_rows(gold, g, c)
+    return compare_rows(gold, g, c, types)

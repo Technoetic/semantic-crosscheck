@@ -10,13 +10,19 @@ any integrity check. This installer runs no package scripts and verifies everyth
 3. Only the regular file native/index.node is extracted (the `native` directory entry is tolerated; any other
    member, any link, absolute or parent path rejects the archive) into node_modules/@cubejs-backend/native/,
    where the package loader looks for <package>/native/index.node.
-4. A node smoke test loads the native module and the server packages from the install home.
+4. A node smoke test loads the native module and the server packages from the install home (its output goes to
+   cube_install/smoke.log).
 5. server.js and installed.json are written last, so a failed install never looks installed to
-   cube_run.installed() (which keys on server.js); a reinstall removes both first.
+   cube_run.installed() (which needs server.js, the native module and a record of the current adapter files); a
+   reinstall removes both first.
 
 A later run is skipped while installed.json still matches: same platform, the pinned tarball hash, the same
 index.node hash on disk and the same adapter files (server.js, package.json, package-lock.json). --force
-reinstalls. Results carry check ids, counts, versions and hashes only.
+reinstalls. node and npm are looked up on PATH only (never in the current directory). On Linux the glibc version
+is checked first: the pinned native modules need glibc symbols up to 2.34 (x64) and 2.30 (arm64), and an older
+glibc would otherwise fail only at the smoke step. Results carry check ids, counts, versions, hashes and paths
+relative to the output directory only; the other stages find a --home install only through SXC_CUBE_HOME, so the
+next action says so.
 """
 
 import hashlib
@@ -37,20 +43,17 @@ import urllib.request
 import zlib
 from pathlib import Path
 
-from . import VERSION, config, cube_run
+from . import VERSION, config, cube_run, procutil
+from .cube_run import ADAPTER_FILES, INDEX_NODE, MIN_NODE, NATIVE_DIR, RECORD, adapter_hashes, sha256_file  # noqa: F401
 from .result import EXIT_CONFIG, EXIT_ENV, Result, StageError
 
 PINS_FILE = "native-sha256.json"
-ADAPTER_FILES = ("server.js", "package.json", "package-lock.json")
 PACKAGES = ("@cubejs-backend/server-core", "@cubejs-backend/postgres-driver", "@cubejs-backend/native", "express")
 PLATFORMS = ("win32-x64-unknown", "linux-x64-glibc", "linux-arm64-glibc", "darwin-x64-unknown", "darwin-arm64-unknown")
+GLIBC_MIN = {"linux-x64-glibc": (2, 34), "linux-arm64-glibc": (2, 30)}   # highest GLIBC_ symbol index.node needs
 STEPS = ("npm_ci", "native_sha256", "extract", "smoke")
 MEMBER = "native/index.node"
 MEMBER_DIR = "native"
-NATIVE_DIR = Path("node_modules") / "@cubejs-backend" / "native"
-INDEX_NODE = NATIVE_DIR / "native" / "index.node"
-RECORD = "installed.json"
-MIN_NODE = 20
 MAX_INDEX_BYTES = 512 << 20
 CHUNK = 1 << 20
 NPM_TIMEOUT_S = 1800
@@ -86,6 +89,26 @@ def platform_key(system: str | None = None, machine: str | None = None, libc: st
     return key
 
 
+def glibc_version() -> tuple[int, int] | None:
+    """(major, minor) of the running glibc, or None when it cannot be determined (not Linux, or not glibc)."""
+    try:
+        text = os.confstr("CS_GNU_LIBC_VERSION") or ""
+    except (AttributeError, ValueError, OSError):
+        text = ""
+    m = re.search(r"(\d+)\.(\d+)", text) or re.search(r"(\d+)\.(\d+)", platform.libc_ver()[1] or "")
+    return (int(m.group(1)), int(m.group(2))) if m else None
+
+
+def check_glibc(key: str, have: tuple[int, int] | None) -> None:
+    """StageError(exit 3) when this platform's native module needs a newer glibc than `have`; an unknown version
+    is left to the smoke test."""
+    need = GLIBC_MIN.get(key)
+    if need is None or have is None or tuple(have) >= need:
+        return
+    raise StageError(f"glibc {have[0]}.{have[1]} is too old: the Cube {config.CUBE_VERSION} native module for {key} "
+                     f"needs glibc {need[0]}.{need[1]} or newer (use a newer Linux distribution or container)", EXIT_ENV)
+
+
 def load_pins(adapter_dir: Path = cube_run.ADAPTER_DIR) -> dict:
     return json.loads((Path(adapter_dir) / PINS_FILE).read_text(encoding="utf-8"))
 
@@ -102,19 +125,7 @@ def pinned_asset(pins: dict, key: str) -> dict:
     return a
 
 
-# ---- hashes and the install record ------------------------------------------------------------------
-def sha256_file(path: Path) -> str:
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(CHUNK), b""):
-            h.update(chunk)
-    return h.hexdigest()
-
-
-def adapter_hashes(adapter_dir: Path = cube_run.ADAPTER_DIR) -> dict:
-    return {name: sha256_file(Path(adapter_dir) / name) for name in ADAPTER_FILES}
-
-
+# ---- the install record -----------------------------------------------------------------------------
 def installed_record(home: Path, key: str, asset: dict, files: dict) -> dict | None:
     """installed.json of a complete install that still matches the pins and the adapter files, else None."""
     if not cube_run.installed(home):
@@ -273,7 +284,7 @@ def install_native(res: Result, home: Path, asset: dict, native_file: str = "") 
 
 # ---- node and npm -----------------------------------------------------------------------------------
 def _tools() -> tuple[str, str]:
-    node, npm = shutil.which("node"), shutil.which("npm")
+    node, npm = procutil.which("node"), procutil.which("npm")
     if not node or not npm:
         raise StageError(f"Node.js >= {MIN_NODE} with npm must be on PATH to install the Cube adapter", EXIT_ENV)
     return node, npm
@@ -308,26 +319,32 @@ def npm_ci(npm: str, home: Path, log: Path) -> int:
     return p.returncode
 
 
-def smoke(node: str, home: Path) -> dict:
-    """Load the native module (fallback build) and the server packages from the install home."""
+def smoke(node: str, home: Path, log: Path | None = None) -> dict:
+    """Load the native module (fallback build) and the server packages from the install home; the output (a loader
+    error such as a missing GLIBC symbol) goes to the log file only."""
     env = {**os.environ, "CUBEJS_TELEMETRY": "false"}
     try:
         p = subprocess.run([node, "-e", _SMOKE], cwd=str(home), env=env, capture_output=True, text=True, encoding="utf-8",
                            errors="replace", timeout=NODE_TIMEOUT_S, stdin=subprocess.DEVNULL)
     except subprocess.TimeoutExpired:
+        if log is not None:
+            log.write_text(f"the smoke test did not finish within {NODE_TIMEOUT_S} s\n", encoding="utf-8")
         return {"ok": False, "reason": "timeout"}
+    if log is not None:
+        log.write_text(p.stdout + p.stderr, encoding="utf-8")
     marks = [ln.split() for ln in p.stdout.splitlines() if ln.startswith("SXC_SMOKE_OK ")]
     build = marks[0][1] if marks and len(marks[0]) == 2 else None
     return {"ok": p.returncode == 0 and build == "fallback", "exit_code": p.returncode, "build": build}
 
 
 # ---- stage ------------------------------------------------------------------------------------------
-def check_home(home: Path) -> None:
-    """Refuse a directory that is neither empty nor an adapter install (npm ci replaces node_modules there)."""
+def check_home(home: Path, where: str = "the install directory") -> None:
+    """Refuse a directory that is neither empty nor an adapter install (npm ci replaces node_modules there).
+    Messages name the directory by `where`, never by its local path."""
     if not home.exists():
         return
     if not home.is_dir():
-        raise StageError(f"{home} is not a directory", EXIT_CONFIG)
+        raise StageError(f"{where} is not a directory", EXIT_CONFIG)
     ours = json.loads((cube_run.ADAPTER_DIR / "package.json").read_text(encoding="utf-8"))["name"]
     pkg = home / "package.json"
     if pkg.is_file():
@@ -337,9 +354,18 @@ def check_home(home: Path) -> None:
             name = None
         if name == ours:
             return
-        raise StageError(f"{home} holds another package.json; install the Cube adapter into an empty directory", EXIT_CONFIG)
+        raise StageError(f"{where} holds another package.json; install the Cube adapter into an empty directory", EXIT_CONFIG)
     if any(home.iterdir()):
-        raise StageError(f"{home} is not empty and is not a Cube adapter install; choose an empty directory", EXIT_CONFIG)
+        raise StageError(f"{where} is not empty and is not a Cube adapter install; choose an empty directory", EXIT_CONFIG)
+
+
+def home_hint(given: str, home: Path, version: str) -> str:
+    """For --home outside the location the other stages look in: the SXC_CUBE_HOME setting they need, with the
+    path as the user gave it (results never get a local path the user did not type)."""
+    if not given or home == cube_run.cube_home(version):
+        return ""
+    relative = "" if Path(given).expanduser().is_absolute() else " (relative to the directory you run sxc.py from)"
+    return f"set SXC_CUBE_HOME={given}{relative} for every later stage (doctor, cube, verify), then "
 
 
 def _progress(args, text: str) -> None:
@@ -362,15 +388,27 @@ def _next_action(res: Result) -> str:
         "cube_install:native_sha256": "the native module was not accepted: check access to the Cube GitHub release "
                                       "(or pass a verified --native-file) and rerun `sxc.py cube-install`",
         "cube_install:extract": "the native tarball layout is unexpected and was not used: report it and do not bypass the check",
-        "cube_install:smoke": "node could not load the adapter: check Node.js (>= 20, same architecture), then rerun "
+        "cube_install:smoke": f"node could not load the adapter: read cube_install/smoke.log, check Node.js (>= {MIN_NODE}, "
+                              "built for this machine's architecture) and on Linux the glibc version, then rerun "
                               "`sxc.py cube-install --force`",
     }.get(failed, "rerun `sxc.py cube-install --force`")
+
+
+def _finish(res: Result, args, hint: str, home: Path, action: str) -> None:
+    if hint:
+        _progress(args, f"the other stages find this install only with SXC_CUBE_HOME={home}")
+    res.next_safe_action = hint + action
 
 
 def run(cfg, args, out: Path) -> Result:
     res = Result("cube_install")
     version = cfg.cube.version if cfg else config.CUBE_VERSION
-    home = Path(getattr(args, "home", "") or cube_run.cube_home(version)).expanduser().resolve()
+    native_file = getattr(args, "native_file", "") or ""
+    if native_file and not Path(native_file).is_file():
+        raise StageError(f"--native-file {Path(native_file).name}: no such file", EXIT_CONFIG)
+    given = getattr(args, "home", "") or ""
+    home = Path(given).expanduser().resolve() if given else cube_run.cube_home(version)
+    hint = home_hint(given, home, version)
     key = platform_key()
     asset = pinned_asset(load_pins(), key)
     files = adapter_hashes()
@@ -379,12 +417,10 @@ def run(cfg, args, out: Path) -> Result:
         if rec is not None:
             res.add("cube_install:already_installed", "pass", "", platform=key, cube_version=rec.get("cube_version"),
                     index_node_sha256=rec["native"].get("index_node_sha256"))
-            res.next_safe_action = "run `sxc.py cube` (use --force to reinstall the adapter)"
+            _finish(res, args, hint, home, "run `sxc.py cube` (use --force to reinstall the adapter)")
             return res
-    native_file = getattr(args, "native_file", "") or ""
-    if native_file and not Path(native_file).is_file():
-        raise StageError(f"--native-file {native_file} is not a file", EXIT_CONFIG)
-    check_home(home)
+    check_glibc(key, glibc_version())
+    check_home(home, "the --home directory" if given else f"the install directory ({cube_run.home_label()})")
     node, npm = _tools()
     node_version = check_node(node, key)
 
@@ -409,9 +445,9 @@ def run(cfg, args, out: Path) -> Result:
         _progress(args, f"native module {key}: " + ("verifying --native-file" if native_file else "downloading and verifying"))
         native = install_native(res, home, asset, native_file)
         if native is not None:
-            sm = smoke(node, home)
+            sm = smoke(node, home, logs / "smoke.log")
             ok = sm.pop("ok")
-            res.add("cube_install:smoke", "pass" if ok else "fail", "", node=node_version, **sm)
+            res.add("cube_install:smoke", "pass" if ok else "fail", "", node=node_version, log="cube_install/smoke.log", **sm)
             if ok:
                 shutil.copyfile(cube_run.ADAPTER_DIR / "server.js", home / "server.js")
                 record = {"installer": f"semantic-crosscheck {VERSION}", "cube_version": config.CUBE_VERSION,
@@ -421,5 +457,6 @@ def run(cfg, args, out: Path) -> Result:
                           "installed_at": time.strftime("%Y-%m-%dT%H:%M:%S%z")}
                 (home / RECORD).write_text(json.dumps(record, indent=1) + "\n", encoding="utf-8", newline="\n")
     _mark_rest(res)
-    res.next_safe_action = _next_action(res)
+    action = _next_action(res)
+    _finish(res, args, hint if res.status == "pass" else "", home, action)
     return res

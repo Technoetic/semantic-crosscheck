@@ -124,9 +124,6 @@ seed = 7
 mutation_operators = "default"
 mutant_bindings = 3
 
-[output]
-show_rows = 0
-
 [[gold]]
 id = "q01_explosion"
 sql = "gold/q01_explosion.sql"

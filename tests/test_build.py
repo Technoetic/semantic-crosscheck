@@ -217,9 +217,17 @@ class BuildCleanTest(_BuildCase):
                                                  child="parent_id", quantity="qty_per")
         res = stage_build.run(cfg, args("has_component"), self.tmp / "one")
         self.assertEqual({c.id for c in res.checks if c.id.startswith("closure")},
-                         {"closure:has_component", "closure_apply:has_component"})
+                         {"closure:has_component", "closure_apply:has_component", "closure:uses_part"})
+        self.assertEqual(get_check(res, "closure:has_component").status, "pass")
+        excluded = get_check(res, "closure:uses_part")
+        self.assertEqual((excluded.status, excluded.config_ref, excluded.detail["reason"]),
+                         ("not_run", "hierarchies.uses_part", "excluded_by_option"))
+        self.assertEqual(res.status, "not_run")                 # a partial build is not a pass
+        self.assertIn("rerun build without --hierarchy", res.next_safe_action)
+        self.assertFalse(self.relation_exists(naming.closure_table(cfg, "uses_part")))
         res = stage_build.run(cfg, args(), self.tmp / "both")
         self.assertEqual(get_check(res, "closure:uses_part").detail["pairs"], self.fx.data["expected"]["closure_pairs"])
+        self.check_role(f"DROP TABLE IF EXISTS {ident.qualified(naming.closure_table(cfg, 'uses_part'))}", write=True)
 
     def test_cli_passes_without_row_values(self):
         code, console, out = self.run_cli()

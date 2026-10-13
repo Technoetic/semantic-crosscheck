@@ -18,7 +18,8 @@ is compared (plan() names them "shared_path").
 
 Counting, exporting and reading the views happen in one READ ONLY transaction at REPEATABLE READ, so the RDF and
 the views see the same snapshot; pySHACL then runs without inference after the transaction has ended. Keys are
-compared in canonical form (canon), which is also what rdf_node encodes, so a focus node maps back with rdf_key.
+compared in canon.key form (text exactly, other values canonical), which is also what rdf_node encodes, so a focus
+node maps back with rdf_key and two text keys such as '1.10' and '1.1' never share an IRI.
 rdflib and pyshacl are imported lazily: only the reason stage needs them.
 """
 
@@ -147,12 +148,12 @@ def fetch(conn, cfg, planned) -> tuple[dict, dict]:
 
 
 def sql_keys(conn, cfg, shape) -> set | None:
-    """Canonical key tuples in the shape's view, or None when the view does not exist."""
+    """Key tuples (canon.key form, as rdf_node encodes them) in the shape's view, or None when the view does not exist."""
     view = naming.shape_view(cfg, shape.id)
     if not db.scalar(conn, "SELECT to_regclass(:v) IS NOT NULL", v=view):
         return None
     cols = ", ".join(ident.quote(k) for k in cfg.entities[shape.target].key)
-    return {tuple(canon.canon(v) for v in r) for r in conn.run(f"SELECT {cols} FROM {ident.qualified(view)}") or []}
+    return {tuple(canon.key(v) for v in r) for r in conn.run(f"SELECT {cols} FROM {ident.qualified(view)}") or []}
 
 
 def _limited_export(conn, cfg, planned) -> tuple[object, int]:
@@ -184,7 +185,7 @@ def validate(data_graph, shapes_ttl_text: str):
 
 
 def focus_keys(cfg, planned, results) -> dict[str, set]:
-    """{shape id: canonical key tuples of the focus nodes} from sh:sourceShape (the property shape IRI) and
+    """{shape id: key tuples (canon.key form) of the focus nodes} from sh:sourceShape (the property shape IRI) and
     sh:focusNode. Results of shapes that are not planned are ignored."""
     from rdflib import URIRef
     by_source = {naming.rdf_property_shape(cfg, s.id): s for s in planned}

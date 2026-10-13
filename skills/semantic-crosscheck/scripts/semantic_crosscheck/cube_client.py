@@ -3,6 +3,9 @@
 - HS256 JWT signed with the per-run API secret (kept in memory, passed to the Cube adapter by environment).
 - /cubejs-api/v1/load is polled while Cube answers {"error": "Continue wait"}.
 - Never sends renewQuery (Cube 1.8 rejects it) and always sets an explicit limit (the default is 10,000 rows).
+- Talks to the loopback adapter directly. urllib's default opener applies HTTP_PROXY and the system proxy settings,
+  and does not bypass 127.0.0.1 unless NO_PROXY lists it, so the JWT and the query values (bound filter values from
+  the database) would go to the proxy; every request therefore uses an opener without proxies.
 """
 
 import base64
@@ -37,12 +40,13 @@ class CubeClient:
         self.base = base_url.rstrip("/")
         self.secret = secret
         self.timeout_s = timeout_s
+        self._opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
     def _req(self, path: str, payload: dict | None = None):
         data = json.dumps(payload).encode() if payload is not None else None
         req = urllib.request.Request(self.base + path, data=data, headers={"Content-Type": "application/json", "Authorization": jwt(self.secret)})
         try:
-            with urllib.request.urlopen(req, timeout=30) as r:
+            with self._opener.open(req, timeout=30) as r:
                 return json.loads(r.read())
         except urllib.error.HTTPError as e:
             body = e.read().decode("utf-8", "replace")[:500]
@@ -50,7 +54,7 @@ class CubeClient:
 
     def ready(self) -> bool:
         try:
-            with urllib.request.urlopen(self.base + "/readyz", timeout=5) as r:
+            with self._opener.open(self.base + "/readyz", timeout=5) as r:
                 return r.status == 200
         except Exception:  # noqa: BLE001
             return False

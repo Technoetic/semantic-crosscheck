@@ -132,7 +132,8 @@ class PinsTest(unittest.TestCase):
 
     def test_package_json_pins_exact_versions(self):
         self.assertIs(self.pkg["private"], True)
-        self.assertEqual(self.pkg["engines"], {"node": ">=20"})
+        self.assertEqual(self.pkg["engines"], {"node": f">={cube_install.MIN_NODE}"})
+        self.assertEqual(cube_install.MIN_NODE, 22, "packages in the locked tree declare engines.node >= 22")
         deps = self.pkg["dependencies"]
         self.assertEqual(set(deps), {"@cubejs-backend/server-core", "@cubejs-backend/postgres-driver", "express"})
         for name, version in deps.items():

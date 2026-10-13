@@ -7,7 +7,7 @@ semantic-crosscheck vendors no third-party code. Its dependencies are installed 
 - the Cube adapter's npm packages, installed by `sxc.py cube-install` into a per-user directory with
   `npm ci --ignore-scripts` from the committed `package-lock.json`;
 - the Cube native module, downloaded by `cube-install` from the Cube GitHub release and accepted only
-  when its SHA-256 matches `native-sha256.json`;
+  when its size and SHA-256 match `native-sha256.json`;
 - the runtimes (Java for HermiT, Node.js for Cube, the PostgreSQL server).
 
 Licence names below were read from the installed packages' metadata (Python) and from the licence fields
@@ -67,16 +67,26 @@ licence fields are mostly MIT, Apache-2.0, ISC and BSD-2-Clause or BSD-3-Clause,
 (codesandbox-import-utils, codesandbox-import-util-types and rechoir) record no licence field. The Cube
 packages (`@cubejs-backend/*`) are Apache-2.0.
 
-`npm ci --ignore-scripts` skips every install script. Two Cube packages declare one:
-`@cubejs-backend/native` (its script would download the native module without an integrity check; see
-below) and `@cubejs-backend/cubestore` (Cube Store is not used: the adapter runs with the in-memory cache
-and queue driver).
+`npm ci --ignore-scripts` skips every install script. Four packages in the lockfile declare one:
+
+| Package | Version | Note |
+|---|---|---|
+| `@cubejs-backend/native` | 1.8.3 | its script would download the native module without an integrity check; `cube-install` fetches and verifies it instead (below) |
+| `@cubejs-backend/cubestore` | 1.8.3 | Cube Store is not used: the adapter runs with the in-memory cache and queue driver |
+| `es5-ext` | 0.10.64 | a postinstall script (`_postinstall.js`); nothing in the adapter depends on it |
+| `fsevents` | 2.3.3 | an optional dependency installed on macOS only |
+
+Several packages in the locked tree declare `engines.node >= 22`, which is why the adapter's
+`package.json` and `cube-install` require Node.js 22 or later.
 
 ### Cube native module
 
 | Component | Version | Licence | Source |
 |---|---|---|---|
-| @cubejs-backend/native (`native/index.node`) | 1.8.3 | Apache-2.0 (package licence field) | `native-<platform>-fallback.tar.gz` assets of the Cube v1.8.3 GitHub release, downloaded at install time and pinned by SHA-256 in `native-sha256.json` |
+| @cubejs-backend/native (`native/index.node`) | 1.8.3 | Apache-2.0 (package licence field) | `native-<platform>-fallback.tar.gz` assets of the Cube v1.8.3 GitHub release, downloaded at install time and pinned by size and SHA-256 in `native-sha256.json` |
+
+On Linux the pinned modules need glibc 2.34 or later (x64) and 2.30 or later (arm64), the highest
+`GLIBC_` symbol versions they reference.
 
 ## Runtimes
 
@@ -84,6 +94,6 @@ and queue driver).
 |---|---|---|
 | PostgreSQL 17 or later | every database stage | PostgreSQL License |
 | A Java runtime, 11 or later (CI uses Eclipse Temurin 21) | HermiT in `reason` | GPL-2.0 with the Classpath Exception (OpenJDK builds) |
-| Node.js 20 or later | `cube-install`, `cube`, `verify` | MIT, with bundled third-party components |
+| Node.js 22 or later | `cube-install`, `cube`, `verify` | MIT, with bundled third-party components |
 
 These licence names for the runtimes come from their publishers, not from local metadata.

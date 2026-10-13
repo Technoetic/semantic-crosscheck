@@ -2,6 +2,10 @@
 
 The agent edits this file, never the generated SQL/YAML. Validation errors raise StageError(exit 2) and
 name the offending entry (config_ref) so failures can be traced back to the configuration.
+
+Credentials never live here: the *_dsn_env keys hold the NAME of an environment variable. A DSN pasted into one of
+them is refused without repeating it, because messages reach results, reports and the agent's console. Numbers are
+type-checked here so a wrong type is a configuration error naming its entry, not a crash in a later stage.
 """
 
 import re
@@ -17,11 +21,53 @@ AGGS = ("sum", "count", "min", "max")
 DEFINED_KINDS = ("has_child", "has_parent", "contains_class", "class_with_child", "class_used_as_part")
 STRATA = ("top", "mid", "leaf", "leaf_parent", "deep", "shared", "empty")
 CUBE_VERSION = "1.8.3"           # the adapter's package-lock and native hashes are pinned to this release
+TABLES = ("version", "source", "entities", "hierarchies", "shapes", "measures", "ontology", "cube", "verify", "gold")
 _MEMBER = re.compile(r"^[a-z_][a-z0-9_]{0,62}\.[a-z_][a-z0-9_]{0,62}$")
+_ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
 
 def _err(ref: str, msg: str):
     raise StageError(f"crosscheck.toml [{ref}]: {msg}", EXIT_CONFIG)
+
+
+def _int(ref: str, v, lo: int | None = None, hi: int | None = None) -> int:
+    """An integer setting (booleans and floats refused) within [lo, hi]."""
+    if lo is not None and hi is not None:
+        want = f"an integer {lo}..{hi}"
+    else:
+        want = "an integer" + (f" >= {lo}" if lo is not None else "")
+    if isinstance(v, bool) or not isinstance(v, int):
+        _err(ref, f"must be {want} (got {type(v).__name__})")
+    if (lo is not None and v < lo) or (hi is not None and v > hi):
+        _err(ref, f"must be {want}")
+    return v
+
+
+def _env_name(ref: str, v) -> str:
+    """The name of the environment variable holding a DSN; the value itself is never echoed (it may be a DSN)."""
+    if isinstance(v, str) and _ENV_NAME.fullmatch(v):
+        return v
+    looks = isinstance(v, str) and ("://" in v or "@" in v)
+    _err(ref, "must be the NAME of an environment variable that holds the DSN, for example \"SXC_PG_DSN\""
+              + (" (the value looks like a DSN: move it into that environment variable)" if looks else ""))
+
+
+def _credentials(raw: dict):
+    for section in ("source", "cube"):
+        table = raw.get(section, {})
+        for k in table if isinstance(table, dict) else ():
+            if "password" in k.lower() or k.lower() == "dsn":
+                _err(f"{section}.{k}", "credentials are never stored in the config: put the DSN in an environment "
+                                       "variable and set dsn_env to the NAME of that variable, for example "
+                                       "dsn_env = \"SXC_PG_DSN\"")
+
+
+def _top_level(raw: dict):
+    if "output" in raw:
+        _err("output", "the [output] table was removed (output.show_rows was never implemented): delete it")
+    unknown = sorted(set(raw) - set(TABLES))
+    if unknown:
+        _err(unknown[0], f"unknown top-level key (expected {', '.join(TABLES)})")
 
 
 def _decimal(ref: str, v) -> Decimal:
@@ -162,7 +208,6 @@ class Config:
     cube: Cube
     gold: list
     verify: Verify
-    output: dict
 
     def entity(self, name: str, ref: str) -> Entity:
         if name not in self.entities:
@@ -218,21 +263,23 @@ def load(path: str | Path) -> Config:
 def _load(path: str | Path) -> Config:
     p = Path(path)
     if not p.is_file():
-        raise StageError(f"config not found: {p}", EXIT_CONFIG)
+        raise StageError(f"config not found: {p.name}", EXIT_CONFIG)
     try:
-        raw = tomllib.loads(p.read_text(encoding="utf-8"))
+        raw = tomllib.loads(p.read_text(encoding="utf-8-sig"))   # editors and PowerShell 5.1 write a BOM
     except tomllib.TOMLDecodeError as e:
         raise StageError(f"crosscheck.toml: {e}", EXIT_CONFIG) from e
     if raw.get("version") != 1:
         _err("version", "only version = 1 is supported")
-    for k in raw.get("source", {}):
-        if "password" in k.lower() or k.lower() == "dsn":
-            _err(f"source.{k}", "credentials are never stored in the config; use dsn_env")
+    _top_level(raw)
+    _credentials(raw)
     try:
         src = Source(**raw.get("source", {}))
     except TypeError as e:
         _err("source", str(e))
-    if not src.schemas:
+    _env_name("source.dsn_env", src.dsn_env)
+    _env_name("source.owner_dsn_env", src.owner_dsn_env)
+    _int("source.statement_timeout_ms", src.statement_timeout_ms, 1000)
+    if not isinstance(src.schemas, list) or not src.schemas:
         _err("source.schemas", "list the source schemas")
     for s in src.schemas + [src.output_schema]:
         ident.check(s)
@@ -259,12 +306,21 @@ def _load(path: str | Path) -> Config:
         _err("cube/verify", str(e))
     if cube.version != CUBE_VERSION:
         _err("cube.version", f"this release pins Cube {CUBE_VERSION}")
-    if not 0 <= int(cube.port) <= 65535:
-        _err("cube.port", "port must be 0..65535")
-    if verify.sweep_k < 1 or verify.mutant_bindings < 1:
-        _err("verify", "sweep_k and mutant_bindings must be >= 1")
+    if cube.dsn_env != "":
+        _env_name("cube.dsn_env", cube.dsn_env)
+    _int("cube.port", cube.port, 0, 65535)
+    _int("cube.startup_timeout_s", cube.startup_timeout_s, 1)
+    _int("cube.query_timeout_s", cube.query_timeout_s, 1)
+    _int("verify.sweep_k", verify.sweep_k, 1)
+    _int("verify.seed", verify.seed)
+    _int("verify.mutant_bindings", verify.mutant_bindings, 1)
+    _int("verify.shacl_max_rows", verify.shacl_max_rows, 1)
+    _int("verify.owl_max_individuals", verify.owl_max_individuals, 1)
+    ops = verify.mutation_operators
+    if ops != "default" and not (isinstance(ops, list) and all(isinstance(op, str) for op in ops)):
+        _err("verify.mutation_operators", 'use "default" or a list of operator names')
 
-    cfg = Config(p.resolve(), 1, src, entities, {}, [], {}, Ontology(), cube, [], verify, raw.get("output", {"show_rows": 0}))
+    cfg = Config(p.resolve(), 1, src, entities, {}, [], {}, Ontology(), cube, [], verify)
 
     for name, h in raw.get("hierarchies", {}).items():
         ref = f"hierarchies.{name}"
@@ -281,8 +337,7 @@ def _load(path: str | Path) -> Config:
             ident.check(c)
         if hh.on_cycle not in ("error", "report"):
             _err(ref, "on_cycle must be error or report")
-        if not 1 <= hh.max_depth <= 64:
-            _err(ref, "max_depth must be 1..64")
+        _int(f"{ref}.max_depth", hh.max_depth, 1, 64)
         cfg.hierarchies[name] = hh
 
     seen = set()

@@ -1,0 +1,10 @@
+# E-mail addresses that are public on purpose. tools/leak_scan.py reads this file by default, so a fresh clone
+# (which has no user.email of its own) and CI pass --history over the published commits, while any other address
+# is still reported. One address, or @domain for a whole domain, per line; # starts a comment.
+
+# commit identity of the maintainer's published history
+technoetic@hotmail.com
+
+# GitHub: private-address commit identities, and the committer of commits made on github.com (web merges)
+@users.noreply.github.com
+noreply@github.com

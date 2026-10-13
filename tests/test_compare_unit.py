@@ -10,16 +10,13 @@ import argparse
 import datetime as dt
 import json
 import shutil
-import sys
 import tempfile
-import types
 import unittest
 from decimal import Decimal
 from pathlib import Path
 from unittest import mock
 
 import pgfixture  # noqa: F401  (puts the scripts directory on sys.path)
-import semantic_crosscheck
 from semantic_crosscheck import compare, config, cube_gen, shape_q, stage_verify, sweep
 from semantic_crosscheck.cube_client import CubeError
 from semantic_crosscheck.result import EXIT_CONFIG, Result, StageError
@@ -528,10 +525,13 @@ class StageVerifyUnitTest(unittest.TestCase):
                 mock.patch.object(stage_verify.cube_run, "serve", side_effect=AssertionError("Cube must not start")):
             res = stage_verify.run(self.cfg, argparse.Namespace(only=["v1", "v2"], gold=["q01_explosion"]), self.out)
         ids = [(c.id, c.status) for c in res.checks]
-        self.assertEqual(ids, [("v1:q01_explosion", "not_run")] + [(f"v2:q01_explosion:{s}", "not_run")
-                                                                  for s in ("top", "mid", "deep", "leaf_parent", "empty")])
+        gated = [("v1:q01_explosion", "not_run")] + [(f"v2:q01_explosion:{s}", "not_run")
+                                                     for s in ("top", "mid", "deep", "leaf_parent", "empty")]
+        scope = [("scope:v3", "not_run"), ("scope:v4", "not_run")] + [
+            (f"scope:gold:{g}", "not_run") for g in ("q02_where_used", "q03_stock", "q04_depth_histogram", "q05_firm_window")]
+        self.assertEqual(ids, gated + scope)
         self.assertTrue(all(c.detail["reason"] == "closure_not_passed" and c.config_ref == "hierarchies.has_component"
-                            for c in res.checks))
+                            for c in res.checks[:len(gated)]))
         self.assertEqual(len(res.not_proven), 6)
         self.assertEqual(res.status, "not_run")
         self.assertIn("did not run", res.next_safe_action)
@@ -563,22 +563,20 @@ class StageVerifyUnitTest(unittest.TestCase):
         v.baseline = {"v1:a": "pass", "v2:b:top[0]": "fail", "v2:b:top[1]": "pass", "v3:total:x": "pass"}
         seen = {}
 
-        def run_mutants(cfg, out, conn, model_arg, suite):
-            seen["model"] = model_arg is model
+        def run_mutants(cfg, out, conn, model_arg, suite, closure=None):
+            seen["model"], seen["closure"] = model_arg is model, closure
             seen["original"] = suite("original")
             seen["mutant"] = suite("mutant")
             seen["broken"] = suite("broken")
             return [("v4:op:t", "pass", "measures.t", {"witness": 1})], ["v4:op2:t equivalent on this data"]
 
-        fake = types.ModuleType("semantic_crosscheck.mutate")
-        fake.run_mutants = run_mutants
-        with mock.patch.dict(sys.modules, {"semantic_crosscheck.mutate": fake}), \
-                mock.patch.object(semantic_crosscheck, "mutate", fake, create=True):
+        with mock.patch.object(stage_verify.mutate, "run_mutants", run_mutants):
             v.v4(FakeConn())
         self.assertTrue(seen["model"])
-        self.assertEqual(seen["original"], (False, ""))
-        self.assertEqual(seen["mutant"], (True, "v1:a fail"))
-        self.assertEqual(seen["broken"], (True, "v2:b:top error"))
+        self.assertEqual(seen["closure"], {"has_component": "pass"})
+        self.assertEqual(seen["original"], ("pass", ""))
+        self.assertEqual(seen["mutant"], ("fail", "v1:a"))
+        self.assertEqual(seen["broken"], ("error", "v2:b:top[1]"), "an item that errors is not a kill")
         self.assertEqual([(c.id, c.status, c.config_ref, c.detail) for c in v.res.checks],
                          [("v4:op:t", "pass", "measures.t", {"witness": 1})])
         self.assertEqual(len(v.res.not_proven), 2)

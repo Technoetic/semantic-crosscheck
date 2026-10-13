@@ -33,7 +33,7 @@ import time
 import types
 from dataclasses import dataclass, field
 
-from . import canon, db, ident, naming
+from . import canon, db, ident, naming, procutil
 from .result import EXIT_CONFIG, StageError
 
 CLASS_KINDS = ("contains_class", "class_with_child", "class_used_as_part")
@@ -95,12 +95,13 @@ class _Model:
 
 
 # ---- configuration --------------------------------------------------------------------------------------
-def java_executable(env=None, which=shutil.which) -> str | None:
-    """The java executable for HermiT: SXC_JAVA (a file, or a command on PATH) when it is set, else java on PATH."""
+def java_executable(env=None, which=procutil.which) -> str | None:
+    """The java executable for HermiT: SXC_JAVA (an absolute file, or a command name looked up on PATH) when it is
+    set, else java on PATH. Lookups never search the current directory (procutil.which)."""
     env = os.environ if env is None else env
     configured = env.get("SXC_JAVA")
     if configured:
-        return configured if os.path.isfile(configured) else which(configured)
+        return configured if os.path.isabs(configured) and os.path.isfile(configured) else which(configured)
     return which("java")
 
 
@@ -197,12 +198,12 @@ def defined_sql(cfg, defined) -> tuple[str, dict]:
 def sql_defined_members(conn, cfg, defined) -> set:
     """Canonical node keys satisfying the SQL definition of a defined class (in the caller's transaction)."""
     sql, params = defined_sql(cfg, defined)
-    return {canon.canon(r[0]) for r in conn.run(sql, **params) or []}
+    return {canon.key(r[0]) for r in conn.run(sql, **params) or []}
 
 
 def sql_closure_pairs(conn, cfg) -> set:
     """Canonical (ancestor, descendant) pairs of the closure table built by build."""
-    return {(canon.canon(a), canon.canon(d)) for a, d in conn.run(closure_pairs_sql(cfg)) or []}
+    return {(canon.key(a), canon.key(d)) for a, d in conn.run(closure_pairs_sql(cfg)) or []}
 
 
 def closure_table_exists(conn, cfg) -> bool:
@@ -319,13 +320,13 @@ def hermit(world, java: str) -> tuple[bool, int]:
 def _closure(model: _Model, graph: Graph) -> set:
     """Canonical pairs: the inferred <h>_plus values united with the asserted <h> edges."""
     inferred = {(model.keys[a.iri], model.keys[b.iri]) for a, b in model.closure.get_relations()}
-    return {(canon.canon(a), canon.canon(d)) for a, d in inferred | set(graph.edges)}
+    return {(canon.key(a), canon.key(d)) for a, d in inferred | set(graph.edges)}
 
 
 def _members(model: _Model, cls) -> tuple[set, int]:
     """(canonical keys of the node-table members, number of members outside the node table) of a defined class."""
     found = {ind.iri for ind in cls.instances()}
-    return {canon.canon(model.keys[i]) for i in found & model.node_iris}, len(found - model.node_iris)
+    return {canon.key(model.keys[i]) for i in found & model.node_iris}, len(found - model.node_iris)
 
 
 def reason(cfg, graph: Graph, java: str) -> Reasoned:

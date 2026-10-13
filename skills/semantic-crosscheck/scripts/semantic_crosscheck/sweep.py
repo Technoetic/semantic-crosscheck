@@ -10,7 +10,8 @@
 Node ids are the node-entity keys plus the edge endpoints; edges with a NULL endpoint are ignored, as in the
 closure. The subtree depth that orders `deep` comes from the closure table when it exists, otherwise from a
 bottom-up recursion over the edges bounded by max_depth (so a cycle cannot make it run forever). The md5 text
-is ordered with the "C" collation, so the same configuration samples the same ids on every database.
+is ordered with the "C" collation, so the same configuration samples the same ids on every database; md5_order()
+gives that order to other samples (the V3 pair tests on large node entities).
 
 All strata of a gold query are sampled by one statement in a READ ONLY transaction. An empty stratum comes
 back as (stratum, None): the caller reports it as not proven instead of failing it.
@@ -29,7 +30,14 @@ PREDICATES = {
     "shared": "f.parents >= 2",
     "empty": "f.in_node_table AND f.children = 0",
 }
-_ORDER = 'md5(f.id::text || CAST(:seed AS text)) COLLATE "C", f.id'
+
+
+def md5_order(column: str) -> str:
+    """ORDER BY terms of the deterministic sample order of a column reference such as f.id; binds :seed (as text)."""
+    return f'md5({column}::text || CAST(:seed AS text)) COLLATE "C", {column}'
+
+
+_ORDER = md5_order("f.id")
 
 
 def _unique(names: list) -> list:

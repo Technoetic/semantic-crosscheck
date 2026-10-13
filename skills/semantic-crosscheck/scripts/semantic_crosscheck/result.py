@@ -2,10 +2,13 @@
 
 Each stage writes <out>/<stage>/result.json and returns an exit code:
   0 pass, 1 a check failed, 2 configuration error, 3 environment missing.
-Only statistics go into results (counts, pass/fail, check ids): never row values.
+Only statistics go into results (counts, pass/fail, check ids): never row values, secrets or local paths.
+A result file is replaced atomically and removed before its stage runs again, so a reader (report, an agent) never
+sees a half-written verdict or an earlier verdict left behind by an interrupted run.
 """
 
 import json
+import os
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -34,6 +37,7 @@ class Result:
     next_safe_action: str = ""
     started_at: str = field(default_factory=lambda: time.strftime("%Y-%m-%dT%H:%M:%S%z"))
     finished_at: str = ""
+    inputs: dict = field(default_factory=dict)   # inputs_fingerprint() of the configuration the stage ran with
 
     def add(self, check_id: str, status: str, config_ref: str = "", **detail) -> Check:
         c = Check(check_id, status, detail, config_ref)
@@ -67,7 +71,9 @@ class Result:
         p = Path(out_dir) / self.stage
         p.mkdir(parents=True, exist_ok=True)
         f = p / "result.json"
-        f.write_text(json.dumps(self.to_dict(), ensure_ascii=False, indent=1), encoding="utf-8")
+        part = p / "result.json.part"
+        part.write_text(json.dumps(self.to_dict(), ensure_ascii=False, indent=1), encoding="utf-8", newline="\n")
+        os.replace(part, f)
         return f
 
 
@@ -77,6 +83,29 @@ class StageError(Exception):
     def __init__(self, message: str, exit_code: int):
         super().__init__(message)
         self.exit_code = exit_code
+
+
+def inputs_fingerprint(cfg) -> dict:
+    """SHA-256 of the configuration file and of the gold SQL files (in gold order). report compares a stage's recorded
+    fingerprint with the current files, so editing crosscheck.toml or a gold query without rerunning makes the
+    earlier results stale instead of letting them pass."""
+    import hashlib
+
+    if cfg is None:
+        return {}
+    config = hashlib.sha256(Path(cfg.path).read_bytes()).hexdigest()
+    gold = hashlib.sha256()
+    for g in cfg.gold:
+        gold.update(g.id.encode("utf-8") + b"\0")
+        p = g.sql_path(cfg)
+        gold.update(p.read_bytes() if p.is_file() else b"<missing>")
+        gold.update(b"\0")
+    return {"config_sha256": config, "gold_sha256": gold.hexdigest()}
+
+
+def discard(out_dir: str | Path, stage: str) -> None:
+    """Remove a stage's previous result.json before the stage runs again."""
+    (Path(out_dir) / stage / "result.json").unlink(missing_ok=True)
 
 
 def load_result(out_dir: str | Path, stage: str) -> dict | None:
@@ -102,5 +131,5 @@ def require_stage(out_dir: str | Path, stage: str) -> dict:
     """Result of a prerequisite stage; raises StageError(exit 2) when that stage has not been run."""
     r = load_result(out_dir, stage)
     if r is None:
-        raise StageError(f"run `sxc.py {stage}` first (no {stage}/result.json in {out_dir})", EXIT_CONFIG)
+        raise StageError(f"run `sxc.py {stage}` first (no {stage}/result.json in the output directory)", EXIT_CONFIG)
     return r

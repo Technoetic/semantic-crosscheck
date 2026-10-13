@@ -14,6 +14,7 @@ which, per shape, per hierarchy and per defined class.
   v5:defined:<name>   the members of a defined class equal its SQL definition (owl.defined_sql); contains_class reads
                       the closure table and has the same precondition as v5:closure. A class without members on either
                       side passes vacuously and is listed in not_proven
+  scope:<part>        not_run (reason excluded_by_only) for the part --only leaves out, so a narrowed run never passes
 An inconsistent ontology entails every statement, so the V5 checks are then not_run and listed in not_proven.
 
 Prerequisites: build/result.json and build/shapes.ttl of a build of the same configuration (a shapes.ttl that differs
@@ -30,7 +31,7 @@ from . import db, ident, naming, owl, shacl_check, shapes, stage_build
 from .result import EXIT_CONFIG, EXIT_ENV, Result, StageError, require_stage
 
 PARTS = ("shacl", "owl")
-INSTALL = "pip install -r requirements/reason.txt"
+INSTALL = '<python> -m pip install -r "<plugin>/requirements/reason.txt"'
 BUILD_REASONS = ("shape_not_built", "view_missing", "closure_not_passed", "closure_table_missing")
 WHY = {   # why the closure table cannot be compared with OWL ({h}: the hierarchy)
     "closure_not_passed": "closure:{h} did not pass in build",
@@ -66,6 +67,9 @@ def run(cfg, args, out: Path) -> Result:
                 _owl(conn, cfg, build, java, res)
         finally:
             conn.close()
+    for part in PARTS:
+        if part not in only:
+            res.add(f"scope:{part}", "not_run", "", reason="excluded_by_only")
     res.next_safe_action = next_action(cfg, res)
     return res
 
@@ -83,7 +87,7 @@ def shapes_ttl(cfg, out: Path) -> str:
     """build/shapes.ttl, which must be what the configuration generates now (otherwise the views are stale too)."""
     f = Path(out) / "build" / "shapes.ttl"
     if not f.is_file():
-        raise StageError(f"run `sxc.py build` first (no build/shapes.ttl in {out})", EXIT_CONFIG)
+        raise StageError("run `sxc.py build` first (no build/shapes.ttl in the output directory)", EXIT_CONFIG)
     text = f.read_text(encoding="utf-8")
     if text != shapes.shapes_ttl(cfg)[0]:
         raise StageError("build/shapes.ttl does not match crosscheck.toml (the shapes changed after build): rerun "
@@ -286,13 +290,15 @@ def _error_action(c) -> str:
 
 def next_action(cfg, res: Result) -> str:
     """One sentence for the agent: the first error, else every disagreement to look at, else what blocks a check."""
-    if not res.checks:
+    checks = [c for c in res.checks if not c.id.startswith("scope:")]
+    narrowed = len(checks) < len(res.checks)
+    if not checks:
         return ("nothing was compared (see not_proven): add [[shapes]] with a SHACL form or an [ontology] section, or "
-                "raise the verify limits, then rerun reason")
-    errors = [c for c in res.checks if c.status == "error"]
+                "raise the verify limits, then rerun reason" + (" without --only" if narrowed else ""))
+    errors = [c for c in checks if c.status == "error"]
     if errors:
         return _error_action(errors[0])
-    failed = [c for c in res.checks if c.status == "fail"]
+    failed = [c for c in checks if c.status == "fail"]
     clauses = []
     if any(c.id == "owl:consistency" for c in failed):
         h = cfg.hierarchies[cfg.ontology.hierarchy]
@@ -314,10 +320,13 @@ def next_action(cfg, res: Result) -> str:
                        f"and the kind and class of {', '.join(refs)}")
     if clauses:
         return "; ".join(clauses) + "; then rerun reason"
-    reasons = {c.detail.get("reason") for c in res.checks if c.status == "not_run"}
+    reasons = {c.detail.get("reason") for c in checks if c.status == "not_run"}
     if reasons & set(BUILD_REASONS):
         return "some checks need a passing build: fix the build failures, rerun `sxc.py build`, then rerun reason"
     if "cycle_edges_dropped" in reasons:
         return ("the closure leaves out the edges inside cycles (on_cycle = report): fix the cycles in the data so V5 "
                 "compares the whole hierarchy, then rerun build and reason")
+    if narrowed:
+        return ("--only left a part of reason out (the scope:* check): rerun reason without --only before reporting a "
+                "result")
     return "run `sxc.py cube` to generate the Cube model and check that Cube serves it"

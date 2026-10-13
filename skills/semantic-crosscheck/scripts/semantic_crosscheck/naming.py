@@ -79,16 +79,18 @@ def rdf_predicate(cfg, entity: str, column: str) -> str:
 
 
 def rdf_node(cfg, entity: str, key_values: list) -> str:
-    """IRI of one row: entity + percent-encoded JSON array of the canonical key values (reversible)."""
+    """IRI of one row: entity + percent-encoded JSON array of the key values in canon.key form (reversible).
+
+    Text keys stay exact, so '1.10' and '1.1' are two rows; only values of other types are canonicalised."""
     import json
     import urllib.parse
 
     from . import canon
-    return f"{_iri(cfg)}{ident.check(entity)}/" + urllib.parse.quote(json.dumps([canon.canon(v) for v in key_values], ensure_ascii=False), safe="")
+    return f"{_iri(cfg)}{ident.check(entity)}/" + urllib.parse.quote(json.dumps([canon.key(v) for v in key_values], ensure_ascii=False), safe="")
 
 
 def rdf_key(cfg, entity: str, node_iri: str) -> list:
-    """Inverse of rdf_node: the canonical key values."""
+    """Inverse of rdf_node: the key values in canon.key form."""
     import json
     import urllib.parse
     prefix = f"{_iri(cfg)}{ident.check(entity)}/"

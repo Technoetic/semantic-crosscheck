@@ -14,6 +14,11 @@ For hierarchy h with edge entity E (parent P, child C, quantity Q):
    recomputed closure to the existing table and counts inserts/updates/deletes; an EXCEPT check in both directions
    then proves the table equals the recomputation.
 
+Creating the closure table when it is missing and the MERGE are a check-then-write on a shared table, so the caller's
+transaction must hold the output schema's build lock (stage_build.lock_output_schema): two builds of the same output
+schema then run one after the other instead of failing with a unique violation. The temporary tables are private to
+the session.
+
 Every SQL statement is collected in `sql_log` so the build stage can write it out for review.
 """
 
@@ -165,7 +170,7 @@ class ClosureBuilder:
 
 
 def build(conn, cfg, h) -> tuple[list[tuple], list[str]]:
-    """Build the closure of hierarchy h inside the caller's transaction.
+    """Build the closure of hierarchy h inside the caller's transaction (which holds the output schema's build lock).
 
     Returns (checks, sql_log) where checks are (check_id, status, config_ref, detail) tuples:
       closure:<h>        pass when acyclic (or on_cycle=report) and within max_depth

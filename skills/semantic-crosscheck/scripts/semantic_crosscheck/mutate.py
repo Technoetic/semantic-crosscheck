@@ -3,9 +3,9 @@
 A gold suite that passes proves little until it is shown to fail on a wrong model. Each operator patches
 one element of a deep copy of the model (a closure-cube member, the WHERE clause of a measure cube, a
 measure type, a join); a fresh Cube process serves the copy and the suite has to notice. Before Cube starts,
-a witness query counts the rows of the current data on which the mutation changes a result. Witness 0 means
-the mutant is equivalent on this data: no suite could kill it, so it goes to not_proven instead of being run.
-A mutant with a positive witness that survives fails its check: the gold suite does not observe that
+a witness query counts what the mutation changes on the current data, whatever the suite happens to query.
+Witness 0 means the mutant is equivalent on this data: no suite could kill it, so it goes to not_proven instead of
+being run. A mutant with a positive witness that survives fails its check: the gold suite does not observe that
 element, and the check names the configuration entry the element comes from.
 
   operator                    patched element                                  witness (current data)
@@ -14,39 +14,42 @@ element, and the check names the configuration entry the element comes from.
   closure_qty_single_path     <h>_closure.qty -> (qty) / (path_count)           pairs with path_count > 1 and qty <> 0
   measure_filter_drop         m_<m> SQL without the exact filter                rows the filter excludes
   measure_normalization_drop  m_<m> SQL comparing raw values                    rows only the normalised match keeps
-  measure_agg_to_max          m_<m>.value type -> max (sum and count only)      keys with a non-zero value, when >= 2
-  dated_shift_one_day         m_<m>.ts -> (ts) + interval '1 day'               rows dated on a gold window end or
-                                                                                the day before a window start
+  measure_agg_to_max          m_<m>.value type -> max (sum and count only)      groups of the cube's rows whose sum (or
+                                                                                count) differs from their max: each key,
+                                                                                the total, and two keys queried together
+  dated_shift_one_day         m_<m>.ts -> (ts) + interval '1 day'               rows with a ts (each moves to another day)
   closure_join_swap           <h>_closure join to m_<m> on the other pair end   pairs whose ends differ in the measure
-  closure_end_swap            <h>_closure join to <h>_descendant on ancestor    pairs whose ends differ in the ontology
-                                                                                class column (all pairs without one)
+  closure_end_swap            <h>_closure join to <h>_descendant on ancestor    pairs whose ends are different node rows
 
 The filter witnesses count only rows that can move the measure: a non-null value, non-zero for sums.
 Filter mutants replace cube_gen.where_sql(measure) inside the measure cube's SQL with where_sql of a copy
 changed by dataclasses.replace. That is exactly the SQL cube_gen.measure_cube generates for the copy, without
 needing column types. When the model's SQL does not contain the configured clause, the model came from
-another configuration and the mutant becomes an error check, never a silently different test.
+another configuration and the mutant becomes an error check, never a silently different test. The
+measure_agg_to_max and dated_shift_one_day witnesses read the measure cube's own row SQL from the model.
 
-The dated witness reads the date windows of the gold queries that filter that ts member (timeDimensions
-dateRange, inDateRange/notInDateRange filters) for every binding listed in the configuration. When a window
-cannot be listed without the database (a swept values_of or strata parameter, a relative range, another
-operator on ts), it counts every dated row instead, so that equivalence is never claimed without evidence.
+The closure operators (and closure_join_swap, through the closure its measure joins) are gated like the V1-V3
+checks: when build's closure:<h> did not pass, the closure table describes another graph than the source, so their
+checks are not_run and listed in not_proven instead of judged.
 
-Witness SQL is read-only, takes identifiers from ident/naming, binds window dates as parameters and repeats
-filter values only as the config-trusted literals of cube_gen.where_sql. Checks and notes carry counts and
-ids only: the suite's kill reason must be a check id, and errors keep an exception type or SQLSTATE.
+The suite reports the first item that did not pass. Only a failing item kills the mutant; an item that errors
+leaves the mutant unjudged (an error check with reason suite_error naming the item), because a query that could
+not run proves nothing about the mutant.
+
+Witness SQL is read-only, takes identifiers from ident/naming or the generated model, and repeats filter values
+only as the config-trusted literals of cube_gen.where_sql. Checks and notes carry counts and ids only: the
+suite's items must be check ids, and errors keep an exception type or SQLSTATE.
 """
 
 import copy
 import dataclasses
-import datetime as dt
 import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
 from . import cube_gen, cube_run, db, ident, naming
-from .result import EXIT_CONFIG, StageError
+from .result import EXIT_CONFIG, StageError, check_status
 
 OPERATORS = (
     "closure_depth_shift",
@@ -59,7 +62,10 @@ OPERATORS = (
     "closure_join_swap",
     "closure_end_swap",
 )
-WINDOW_FILTERS = ("inDateRange", "notInDateRange")
+CLOSURE_OPERATORS = frozenset({"closure_depth_shift", "closure_path_count_one", "closure_qty_single_path",
+                               "closure_join_swap", "closure_end_swap"})
+OUTCOMES = ("killed", "survived", "equivalent", "error", "not_applicable", "not_run")
+_CUBE_COLUMN = re.compile(r"^\{CUBE\}\.([a-z_][a-z0-9_]*)$")
 
 
 @dataclass
@@ -91,6 +97,7 @@ class _Target:
     config_ref: str
     subject: object        # the Hierarchy or Measure being mutated
     make: Callable         # (cfg, model, subject) -> Mutant
+    hierarchy: str = ""    # the hierarchy whose closure the mutant reads ("" for none)
 
     def build(self, cfg, model: dict) -> Mutant:
         return self.make(cfg, model, self.subject)
@@ -132,6 +139,14 @@ def _swap_end(join: dict, end: str, other: str, where: str) -> None:
     if len(pattern.findall(sql)) != 1:
         raise MutationError(where)
     join["sql"] = pattern.sub(lambda _m: "{CUBE}." + other, sql)
+
+
+def _row_sql(model: dict, cube: str) -> str:
+    """The row SQL of a measure cube in the model (what Cube aggregates)."""
+    sql = _cube(model, cube).get("sql")
+    if not sql:
+        raise MutationError(f"{cube}.sql")
+    return sql
 
 
 # ---- witness SQL helpers -------------------------------------------------------------------------
@@ -189,20 +204,17 @@ def _qty_single_path(cfg, model: dict, h) -> Mutant:
 
 
 def _end_swap(cfg, model: dict, h) -> Mutant:
+    """Every column of the descendant copy, its key included, then shows the ancestor's node row: each pair whose two
+    ends are different node rows (one of them may be missing from the node table) changes."""
     cube = _closure_cube(model, h)
     desc = naming.cube_descendant(h.name)
 
     def patch(mm):
         _swap_end(_element(mm, cube, "joins", desc), "descendant", "ancestor", f"{cube}.joins.{desc}")
-    closure = _closure_sql(cfg, h)
-    o = cfg.ontology
-    if o.class_column and o.hierarchy in cfg.hierarchies and cfg.hierarchies[o.hierarchy].node == h.node:
-        node = cfg.entity(h.node, f"hierarchies.{h.name}")
-        table, key, cls = ident.qualified(node.table), ident.quote(node.key[0]), ident.quote(o.class_column)
-        sql = (f"SELECT count(*) FROM {closure} p LEFT JOIN {table} a ON a.{key} = p.ancestor "
-               f"LEFT JOIN {table} d ON d.{key} = p.descendant WHERE a.{cls} IS DISTINCT FROM d.{cls}")
-    else:
-        sql = f"SELECT count(*) FROM {closure}"
+    node = cfg.entity(h.node, f"hierarchies.{h.name}")
+    table, key = ident.qualified(node.table), ident.quote(node.key[0])
+    sql = (f"SELECT count(*) FROM {_closure_sql(cfg, h)} p LEFT JOIN {table} a ON a.{key} = p.ancestor "
+           f"LEFT JOIN {table} d ON d.{key} = p.descendant WHERE a.{key} IS DISTINCT FROM d.{key}")
     return Mutant("closure_end_swap", h.name, _mutated(model, patch), sql, {}, f"hierarchies.{h.name}")
 
 
@@ -241,11 +253,26 @@ def _normalization_drop(cfg, model: dict, m) -> Mutant:
 
 
 def _agg_to_max(cfg, model: dict, m) -> Mutant:
+    """The cube's value measure aggregates the rows of its SQL (pre-aggregated: one row per key; dated: the source
+    rows). A query sees the mutation wherever the rows it aggregates give sum (count) != max: within one key, over
+    all rows, or over two keys queried together, which happens for two non-zero values or a negative value next to
+    another one. The witness counts such keys, plus one for the total and one for such a pair."""
     cube = naming.cube_measure(m.name)
+    value = _element(model, cube, "measures", naming.MEASURE_VALUE)
+    agg, column = value.get("type"), _CUBE_COLUMN.match(str(value.get("sql", "")))
+    if agg not in ("sum", "count") or not column:
+        raise MutationError(f"{cube}.measures.{naming.MEASURE_VALUE}")
+    rows = _row_sql(model, cube)
 
     def patch(mm):
         _element(mm, cube, "measures", naming.MEASURE_VALUE)["type"] = "max"
-    sql = f"SELECT CASE WHEN count(*) >= 2 THEN count(*) ELSE 0 END FROM ({_per_key(cfg, m)}) k WHERE k.v <> 0"
+    differs = f"{agg}(v) IS DISTINCT FROM max(v)"
+    sql = (f"WITH r AS (SELECT c.{ident.quote(naming.MEASURE_KEY)} AS k, c.{ident.quote(column.group(1))} AS v "
+           f"FROM ({rows}) c), g AS (SELECT {agg}(v) AS w, {differs} AS differs FROM r GROUP BY k) "
+           f"SELECT count(*) FILTER (WHERE differs)"
+           f" + (SELECT CASE WHEN count(*) > 0 AND {differs} THEN 1 ELSE 0 END FROM r)"
+           f" + CASE WHEN count(*) FILTER (WHERE w <> 0) >= 2"
+           f" OR (count(*) FILTER (WHERE w < 0) >= 1 AND count(w) >= 2) THEN 1 ELSE 0 END FROM g")
     return Mutant("measure_agg_to_max", m.name, _mutated(model, patch), sql, {}, f"measures.{m.name}")
 
 
@@ -263,107 +290,15 @@ def _join_swap(cfg, model: dict, m) -> Mutant:
     return Mutant("closure_join_swap", m.name, _mutated(model, patch), sql, {}, f"measures.{m.name}")
 
 
-# ---- dated shift ---------------------------------------------------------------------------------
-def _flat_filters(filters) -> list[dict]:
-    out = []
-    for f in filters or []:
-        if not isinstance(f, dict):
-            continue
-        for logical in ("or", "and"):
-            out.extend(_flat_filters(f.get(logical)))
-        if "member" in f or "dimension" in f:
-            out.append(f)
-    return out
-
-
-def _bindings(g) -> list[dict] | None:
-    """Parameter bindings listed in the configuration; None for a values_of or strata sweep (needs the database)."""
-    if g.param_sets:
-        return [dict(ps) for ps in g.param_sets]
-    if g.params:
-        (p,) = g.params.values()
-        return [{p.name: v} for v in p.values] if p.values else None
-    return [{}]
-
-
-def _subst(obj, binding: dict):
-    if isinstance(obj, str) and obj.startswith(":") and obj[1:] in binding:
-        return binding[obj[1:]]
-    if isinstance(obj, list):
-        return [_subst(x, binding) for x in obj]
-    return obj
-
-
-def _window(rng) -> tuple[str, str] | None:
-    """A bound [from, to] date range as ISO dates; None for relative ranges and unbound parameters."""
-    if not isinstance(rng, list) or len(rng) != 2:
-        return None
-    try:
-        start, end = (dt.date.fromisoformat(str(x)[:10]).isoformat() for x in rng)
-    except ValueError:
-        return None
-    return start, end
-
-
-def _gold_windows(cfg, ts_member: str) -> tuple[list[tuple[str, str]], bool, bool]:
-    """Date windows the gold queries apply to ts_member: (windows, used, unresolved)."""
-    found, used, unresolved = [], False, False
-    for g in cfg.gold:
-        q = g.cube_query
-        ranges = [td.get("dateRange") for td in q.get("timeDimensions", [])
-                  if td.get("dimension") == ts_member and "dateRange" in td]
-        for f in _flat_filters(q.get("filters")):
-            if f.get("member", f.get("dimension")) != ts_member:
-                continue
-            if f.get("operator") in WINDOW_FILTERS:
-                ranges.append(f.get("values"))
-            else:
-                used = unresolved = True
-        if ts_member in q.get("dimensions", []):
-            used = unresolved = True
-        if not ranges:
-            continue
-        used = True
-        bindings = _bindings(g)
-        if bindings is None:
-            unresolved = True
-            continue
-        for rng in ranges:
-            for b in bindings:
-                w = _window(_subst(rng, b))
-                if w is None:
-                    unresolved = True
-                else:
-                    found.append(w)
-    return found, used, unresolved
-
-
 def _dated_shift(cfg, model: dict, m) -> Mutant:
+    """Every row with a ts lands on another day, which a date window ending on that day (or a day grouping) sees."""
     cube = naming.cube_measure(m.name)
-    ts_member = naming.member(cube, naming.MEASURE_TS)
 
     def patch(mm):
         d = _element(mm, cube, "dimensions", naming.MEASURE_TS)
         d["sql"] = f"({d['sql']}) + interval '1 day'"
-    mutated = _mutated(model, patch)
-    found, used, unresolved = _gold_windows(cfg, ts_member)
-    params: dict = {}
-    if not used:
-        sql = "SELECT 0"
-    else:
-        rows_sql = _cube(model, cube).get("sql")
-        if not rows_sql:
-            raise MutationError(f"{cube}.sql")
-        ts = f"c.{ident.quote(naming.MEASURE_TS)}"
-        # the cube's own row SQL: its ts is a timestamptz already, so the UTC day needs no column type
-        base = f"SELECT count(*) FROM ({rows_sql}) c WHERE "
-        if unresolved:
-            sql = base + f"{ts} IS NOT NULL"
-        else:
-            day = f"({ts} AT TIME ZONE 'UTC')::date"
-            sql = base + f"{day} = ANY(CAST(:ends AS date[])) OR {day} + 1 = ANY(CAST(:starts AS date[]))"
-            params = {"ends": sorted({e for _s, e in found}), "starts": sorted({s for s, _e in found})}
-    return Mutant("dated_shift_one_day", m.name, mutated, sql, params, f"measures.{m.name}")
+    sql = f"SELECT count(*) FROM ({_row_sql(model, cube)}) c WHERE c.{ident.quote(naming.MEASURE_TS)} IS NOT NULL"
+    return Mutant("dated_shift_one_day", m.name, _mutated(model, patch), sql, {}, f"measures.{m.name}")
 
 
 # ---- selection -----------------------------------------------------------------------------------
@@ -381,7 +316,8 @@ _OPS = {
 
 
 def selected(cfg) -> tuple[str, ...]:
-    """Operators named by verify.mutation_operators ("default" = all), in catalogue order."""
+    """Operators named by verify.mutation_operators ("default" = all), in catalogue order; StageError (exit 2) for
+    anything else. The verify stage calls it before any check runs."""
     sel = cfg.verify.mutation_operators
     if sel == "default":
         return OPERATORS
@@ -399,9 +335,12 @@ def _plan(cfg) -> list[_Target]:
     for op in selected(cfg):
         applies, make = _OPS[op]
         if applies is None:
-            plan.extend(_Target(op, h.name, f"hierarchies.{h.name}", h, make) for h in cfg.hierarchies.values())
-        else:
-            plan.extend(_Target(op, m.name, f"measures.{m.name}", m, make) for m in cfg.measures.values() if applies(m))
+            plan.extend(_Target(op, h.name, f"hierarchies.{h.name}", h, make, h.name) for h in cfg.hierarchies.values())
+            continue
+        for m in cfg.measures.values():
+            if applies(m):
+                gate = cfg.hierarchy("", f"measures.{m.name}").name if op in CLOSURE_OPERATORS else ""
+                plan.append(_Target(op, m.name, f"measures.{m.name}", m, make, gate))
     return plan
 
 
@@ -427,6 +366,11 @@ def witness(conn, cfg, mutant: Mutant) -> int:
         return int(db.scalar(conn, mutant.witness_sql, **mutant.witness_params) or 0)
 
 
+def closure_status(cfg, out: Path) -> dict[str, str | None]:
+    """Status of build's closure:<h> for every hierarchy (None when build did not record it)."""
+    return {h: check_status(out, "build", f"closure:{h}") for h in cfg.hierarchies}
+
+
 def _sqlstate(e: BaseException) -> str:
     arg = e.args[0] if e.args else None
     return arg.get("C", "") if isinstance(arg, dict) else ""
@@ -437,6 +381,17 @@ def _rel(path: Path, out: Path) -> str:
         return path.relative_to(out).as_posix()
     except ValueError:
         return path.name
+
+
+def verdict(status: str, item: str) -> tuple[str, dict]:
+    """Check status and detail of a suite outcome: a failing item kills the mutant (pass), a suite that passes lets it
+    survive (fail), and anything else (an item that errored) leaves it unjudged (error)."""
+    item = str(item or "")[:200]
+    if status == "fail":
+        return "pass", {"killed_by": item}
+    if status == "pass":
+        return "fail", {"killed_by": ""}
+    return "error", {"reason": "suite_error", "item": item}
 
 
 def _judge(cfg, out: Path, mutant: Mutant, n: int, suite) -> tuple[str, dict]:
@@ -451,31 +406,43 @@ def _judge(cfg, out: Path, mutant: Mutant, n: int, suite) -> tuple[str, dict]:
     try:
         with cube_run.serve(cfg, run_dir, log) as client:
             try:
-                killed, reason = suite(client)
+                status, item = suite(client)
             except Exception as e:  # noqa: BLE001 - the suite failed to run, which is not a kill
-                return "error", {"witness": n, "reason": "suite", "exception": type(e).__name__}
+                return "error", {"witness": n, "reason": "suite_error", "exception": type(e).__name__}
     except StageError as e:
         return "error", {"witness": n, "reason": "startup", "exit_code": e.exit_code, "log": _rel(log, out)}
     except Exception as e:  # noqa: BLE001 - one broken Cube process must not stop the other mutants
         return "error", {"witness": n, "reason": "cube", "exception": type(e).__name__, "log": _rel(log, out)}
-    return ("pass" if killed else "fail"), {"witness": n, "killed_by": str(reason or "")[:200]}
+    check, detail = verdict(status, item)
+    return check, {"witness": n, **detail}
 
 
-def run_mutants(cfg, out: Path, conn, model: dict, suite) -> tuple[list[tuple], list[str]]:
+def run_mutants(cfg, out: Path, conn, model: dict, suite, closure: dict | None = None) -> tuple[list[tuple], list[str]]:
     """Witness, serve and judge every selected mutant.
 
-    suite(client) -> (killed, reason) runs the gold suite against one CubeClient and stops at the first
-    difference; reason must be a check id because it is stored in the result. Each observable mutant is
-    served from out/verify/mutants/<operator>__<target>/ (model/*.yml, model.json, server.log).
-    Returns (checks, not_proven); checks are (check_id, status, config_ref, detail) tuples as in closure.build,
-    and every detail carries the run's summary counts (killed, survived, equivalent, error, not_applicable).
+    suite(client) -> (status, item) runs the gold suite against one CubeClient and stops at the first item that does
+    not pass: ("fail", item) kills the mutant, ("error", item) leaves it unjudged, ("pass", "") means it survived.
+    item must be a check id because it is stored in the result. closure maps each hierarchy to the status of build's
+    closure:<h> (default: read from out/build/result.json); the operators on a hierarchy whose closure did not pass
+    are not_run. Each observable mutant is served from out/verify/mutants/<operator>__<target>/ (model/*.yml,
+    model.json, server.log). Returns (checks, not_proven); checks are (check_id, status, config_ref, detail) tuples as
+    in closure.build, and every detail carries the run's summary counts (OUTCOMES).
     """
     out = Path(out)
+    closure = closure_status(cfg, out) if closure is None else closure
     rows: list[tuple] = []
     not_proven: list[str] = []
-    tally = {"killed": 0, "survived": 0, "equivalent": 0, "error": 0, "not_applicable": 0}
+    tally = dict.fromkeys(OUTCOMES, 0)
     for t in _plan(cfg):
         cid = f"v4:{t.operator}:{t.target}"
+        built = closure.get(t.hierarchy) if t.hierarchy else "pass"
+        if built != "pass":
+            built = built or "missing"
+            rows.append((cid, "not_run", f"hierarchies.{t.hierarchy}",
+                         {"reason": "closure_not_passed", "hierarchy": t.hierarchy, "build_check": built}))
+            not_proven.append(f"{cid}: closure:{t.hierarchy} did not pass in build ({built})")
+            tally["not_run"] += 1
+            continue
         try:
             mutant = t.build(cfg, model)
         except NotApplicable as e:

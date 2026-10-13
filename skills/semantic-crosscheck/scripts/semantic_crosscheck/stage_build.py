@@ -11,7 +11,12 @@ Order of work:
      count. A database error in one view (a broken trusted predicate, a timeout) becomes an `error` check with
      its SQLSTATE while the other views still build (shapes.create_views).
   5. Each hierarchy closure in its own write transaction (closure:<h>, closure_apply:<h>; see closure.py), so a
-     failing hierarchy leaves the others built.
+     failing hierarchy leaves the others built. With --hierarchy h every other hierarchy gets closure:<other>
+     not_run (reason excluded_by_option): its closure was not rebuilt with the current data, so reason and verify
+     must not take a partial build for a full one, and the build itself is no pass.
+Two runs on the same output schema (two terminals, two agents) would otherwise race on the same views and closure
+tables and fail with a unique violation: every write transaction starts by taking a transaction-level advisory
+lock on the output schema, so concurrent builds wait for each other's transactions instead.
 build.sql records every statement executed, for review. Results keep counts and configuration ids only: the
 violating keys stay in the views and example cycles in naming.cycles_table.
 """
@@ -27,6 +32,9 @@ BUILD_SQL_HEADER = """\
 -- Statements with :name placeholders ran with bound parameters. A shape's sql_violation predicate is trusted
 -- SQL copied from the configuration.
 """
+LOCK_SQL = "SELECT pg_advisory_xact_lock(hashtext(:key))"
+EXCLUDED = "excluded_by_option"
+CONCURRENT_SQLSTATES = ("23505", "40001", "40P01", "42P06", "42P07")   # unique, serialization, deadlock, duplicates
 # exact-name catalog lookup: to_regclass() raises instead of answering when the role lacks USAGE on the schema
 SOURCE_SQL = """SELECT c.oid IS NOT NULL AS found, has_schema_privilege(n.oid, 'USAGE') AS usage,
        c.oid IS NOT NULL AND has_table_privilege(c.oid, 'SELECT') AS readable,
@@ -87,25 +95,41 @@ def _role_sql(name: str) -> str:
         return '"' + name.replace('"', '""') + '"'
 
 
+def lock_key(cfg) -> str:
+    return f"semantic-crosscheck build {cfg.source.output_schema}"
+
+
+def lock_output_schema(conn, cfg) -> str:
+    """Wait for the output schema's build lock, held until the current transaction ends; returns the statement as
+    build.sql records it. The wait counts against source.statement_timeout_ms like any statement."""
+    conn.run(LOCK_SQL, key=lock_key(cfg))
+    return f"{LOCK_SQL};  -- key = '{lock_key(cfg)}'"
+
+
 def ensure_output_schema(conn, cfg) -> list[str]:
     """Create the output schema when it is missing and the check role may; require USAGE and CREATE on it.
 
     Returns the statements executed. Raises StageError(exit 3) naming the statement an administrator should run.
+    A missing schema is created under the build lock, so two builds starting together do not both create it.
     """
     schema = cfg.source.output_schema
     role = _role_sql(str(db.scalar(conn, "SELECT current_user")))
     executed = []
     if not conn.run("SELECT 1 FROM pg_namespace WHERE nspname = :s", s=schema):
-        stmt = f"CREATE SCHEMA {ident.quote(schema)}"
-        try:
-            conn.run(stmt)
-        except Exception as e:
-            code = shapes.sqlstate(e)
-            if not code:
-                raise
-            raise StageError(f"output schema {schema} is missing and the check role cannot create it (SQLSTATE {code}); "
-                             f"create it for the check role: CREATE SCHEMA {schema} AUTHORIZATION {role}", EXIT_ENV) from e
-        executed.append(stmt + ";")
+        with db.write_tx(conn, cfg.source.statement_timeout_ms):
+            executed.append(lock_output_schema(conn, cfg))
+            if not conn.run("SELECT 1 FROM pg_namespace WHERE nspname = :s", s=schema):
+                stmt = f"CREATE SCHEMA {ident.quote(schema)}"
+                try:
+                    conn.run(stmt)
+                except Exception as e:
+                    code = shapes.sqlstate(e)
+                    if not code:
+                        raise
+                    raise StageError(f"output schema {schema} is missing and the check role cannot create it (SQLSTATE "
+                                     f"{code}); create it for the check role: CREATE SCHEMA {schema} AUTHORIZATION {role}",
+                                     EXIT_ENV) from e
+                executed.append(stmt + ";")
     usage, create = conn.run("SELECT has_schema_privilege(CAST(:s AS text), 'USAGE'), "
                              "has_schema_privilege(CAST(:s AS text), 'CREATE')", s=schema)[0]
     if not (usage and create):
@@ -115,12 +139,24 @@ def ensure_output_schema(conn, cfg) -> list[str]:
 
 
 def build_shapes(conn, cfg, res: Result, executed: list[str]) -> None:
-    """Every shape view in one write transaction; one shape:<id> check each."""
+    """Every shape view in one write transaction; one shape:<id> check each. A database error outside the views'
+    savepoints (the lock wait, the commit) rolls every view back and becomes an `error` check for each shape."""
     if not cfg.shapes:
         return
-    with db.write_tx(conn, cfg.source.statement_timeout_ms):
-        views = shapes.create_views(conn, cfg)
-    executed.append("-- shapes (one transaction)")
+    try:
+        with db.write_tx(conn, cfg.source.statement_timeout_ms):
+            lock = lock_output_schema(conn, cfg)
+            views = shapes.create_views(conn, cfg)
+    except Exception as e:
+        code = shapes.sqlstate(e)
+        if not code:
+            raise
+        executed.append(f"-- shapes: SQLSTATE {code}, transaction rolled back (its statements are not recorded)")
+        for shape in cfg.shapes:
+            res.add(f"shape:{shape.id}", "error", shapes.config_ref(cfg, shape), sqlstate=code, violations=None,
+                    severity=shape.severity, kind=shapes.kind(shape), view=naming.shape_view(cfg, shape.id))
+        return
+    executed += ["-- shapes (one transaction)", lock]
     for shape, view in zip(cfg.shapes, views):
         executed.append(view["sql"])
         detail = {"violations": view["violations"], "severity": shape.severity, "kind": shapes.kind(shape),
@@ -142,6 +178,7 @@ def build_closure(conn, cfg, h, res: Result, executed: list[str]) -> None:
     ref = f"hierarchies.{h.name}"
     try:
         with db.write_tx(conn, cfg.source.statement_timeout_ms):
+            lock = lock_output_schema(conn, cfg)
             checks, sql_log = closure.build(conn, cfg, h)
     except Exception as e:
         code = shapes.sqlstate(e)
@@ -150,13 +187,36 @@ def build_closure(conn, cfg, h, res: Result, executed: list[str]) -> None:
         res.add(f"closure:{h.name}", "error", ref, sqlstate=code, closure_applied=False)
         executed.append(f"-- hierarchy {h.name}: SQLSTATE {code}, transaction rolled back (its statements are not recorded)")
         return
-    executed.append(f"-- hierarchy {h.name} (one transaction)")
+    executed += [f"-- hierarchy {h.name} (one transaction)", lock]
     executed.extend(sql_log)
     for check_id, status, config_ref, detail in checks:
         res.add(check_id, status, config_ref, **detail)
         if detail.get("dropped_cycle_edges"):
             res.not_proven.append(f"closure:{h.name}: {detail['dropped_cycle_edges']} edges inside cycles are left out "
                                   f"of the closure (on_cycle = report)")
+
+
+def exclude_hierarchies(cfg, built: list, res: Result) -> None:
+    """closure:<h> not_run for every hierarchy that --hierarchy left out of this run."""
+    names = {h.name for h in built}
+    for name in cfg.hierarchies:
+        if name not in names:
+            res.add(f"closure:{name}", "not_run", f"hierarchies.{name}", reason=EXCLUDED, closure_applied=False)
+
+
+def error_hint(cfg, c) -> str:
+    """What to do about a database error of a shape or closure check, by SQLSTATE."""
+    code = c.detail.get("sqlstate", "")
+    if code == "57014":
+        return ("raise source.statement_timeout_ms or simplify the entry (waiting for another build of the same output "
+                "schema counts against the timeout too)")
+    if code in CONCURRENT_SQLSTATES:
+        return f"another run was writing output schema {cfg.source.output_schema} at the same time: rerun build"
+    if code == "42501":
+        needs = ("TEMPORARY on the database for the closure's temporary tables, " if c.id.startswith("closure:") else "")
+        return (f"the check role lacks a privilege the build needs ({needs}SELECT on the source tables or CREATE on the "
+                f"output schema): run `sxc.py doctor --config` to see which, or fix [{c.config_ref}] in crosscheck.toml")
+    return f"fix [{c.config_ref}] in crosscheck.toml or the check role's privileges"
 
 
 def next_action(cfg, res: Result) -> str:
@@ -166,10 +226,7 @@ def next_action(cfg, res: Result) -> str:
     errors = [c for c in res.checks if c.status == "error"]
     if errors:
         c = errors[0]
-        code = c.detail.get("sqlstate", "")
-        hint = ("raise source.statement_timeout_ms or simplify the entry" if code == "57014"
-                else f"fix [{c.config_ref}] in crosscheck.toml or the check role's privileges")
-        return f"{c.id} hit a database error (SQLSTATE {code}): {hint}, then rerun build"
+        return f"{c.id} hit a database error (SQLSTATE {c.detail.get('sqlstate', '')}): {error_hint(cfg, c)}, then rerun build"
     clauses = []
     for c in res.checks:
         kind, _, name = c.id.partition(":")
@@ -188,8 +245,14 @@ def next_action(cfg, res: Result) -> str:
     views = [c.detail["view"] for c in res.checks if c.status == "fail" and c.id.startswith("shape:")]
     if views:
         clauses.append(f"shapes failed: inspect the violating keys in {', '.join(views)}, then fix the data or the [[shapes]] entries")
+    excluded = [c.id.partition(":")[2] for c in res.checks if c.detail.get("reason") == EXCLUDED]
+    if clauses and excluded:
+        return "; ".join(clauses) + "; then rerun build without --hierarchy, so every closure is current"
     if clauses:
         return "; ".join(clauses) + "; then rerun build"
+    if excluded:
+        return (f"this run left {', '.join(excluded)} out (--hierarchy): rerun build without --hierarchy before reason, "
+                "cube and verify, so every closure is current")
     return "run `sxc.py reason` to cross-check the shapes and the hierarchy with SHACL and OWL, then `sxc.py cube`"
 
 
@@ -222,6 +285,7 @@ def run(cfg, args, out: Path) -> Result:
             build_closure(conn, cfg, h, res, executed)
     finally:
         conn.close()
+    exclude_hierarchies(cfg, hierarchies, res)
     write_files(out, executed, ttl, fk_sql)
     res.next_safe_action = next_action(cfg, res)
     return res

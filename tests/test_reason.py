@@ -69,7 +69,7 @@ def get_check(res, check_id: str):
 
 
 def key(*values) -> tuple:
-    return tuple(canon.canon(v) for v in values)
+    return tuple(canon.key(v) for v in values)
 
 
 def cli(*argv) -> tuple[int, str]:
@@ -83,17 +83,26 @@ def cli(*argv) -> tuple[int, str]:
 # ---- unit tests (no database) ---------------------------------------------------------------------------
 class RdfKeyTest(unittest.TestCase):
     KEYS = [["P-000001"], ["a b/c#d%e?f&g=h"], ["e" + chr(0x301), chr(0xE9), chr(0x1F600)],
-            ['quote"', "back" + chr(92) + "slash", "tab\tline\n"], [1, Decimal("2.50"), "007"], [True, None], ["1.50", "-0"]]
+            ['quote"', "back" + chr(92) + "slash", "tab\tline\n"], [1, Decimal("2.50"), "007"], [True, None], ["1.50", "-0"],
+            ["1.10", "1e3", "true"]]
 
     def setUp(self):
         self.cfg = demo_config()
 
-    def test_keys_round_trip_in_canonical_form(self):
+    def test_keys_round_trip_with_text_exact(self):
         for k in self.KEYS:
             iri = naming.rdf_node(self.cfg, "bom_line", k)
-            self.assertEqual(naming.rdf_key(self.cfg, "bom_line", iri), [canon.canon(v) for v in k], k)
+            self.assertEqual(naming.rdf_key(self.cfg, "bom_line", iri), [canon.key(v) for v in k], k)
             suffix = iri[len(naming.rdf_entity_class(self.cfg, "bom_line")) + 1:]
             self.assertRegex(suffix, r"^[A-Za-z0-9%._~-]+$")   # only IRI-unreserved characters and escapes
+        self.assertEqual(naming.rdf_key(self.cfg, "part", naming.rdf_node(self.cfg, "part", ["1.10"])), ["1.10"])
+        self.assertEqual(naming.rdf_key(self.cfg, "part", naming.rdf_node(self.cfg, "part", [Decimal("2.50")])), ["2.5"])
+
+    def test_two_text_keys_never_share_an_iri(self):
+        for a, b in (("1.10", "1.1"), ("1e3", "1000"), ("true", True), ("-0", "0"), ("2.50", "2.5")):
+            self.assertNotEqual(naming.rdf_node(self.cfg, "part", [a]), naming.rdf_node(self.cfg, "part", [b]), (a, b))
+        self.assertEqual(naming.rdf_node(self.cfg, "part", [Decimal("2.50")]), naming.rdf_node(self.cfg, "part", [Decimal("2.5")]),
+                         "numbers keep their canonical form")
 
     def test_an_iri_of_another_entity_is_rejected(self):
         with self.assertRaises(ValueError):
@@ -109,7 +118,7 @@ class RdfKeyTest(unittest.TestCase):
         for fmt in ("nt", "turtle"):
             back = rdflib.Graph().parse(data=g.serialize(format=fmt), format=fmt)
             keys = {tuple(naming.rdf_key(self.cfg, "bom_line", str(s))) for s in back.subjects()}
-            self.assertEqual(keys, {tuple(canon.canon(v) for v in k) for k in self.KEYS}, fmt)
+            self.assertEqual(keys, {tuple(canon.key(v) for v in k) for k in self.KEYS}, fmt)
 
 
 class LiteralTest(unittest.TestCase):
@@ -503,7 +512,7 @@ class ReasonCleanTest(_ReasonCase):
         cfg = copy.deepcopy(self.cfg)
         cfg.verify.shacl_max_rows = cfg.verify.owl_max_individuals = 10
         res = self.reason(cfg, self.copy_out("limits"))
-        self.assertEqual((res.checks, res.status), ([], "not_run"))
+        self.assertEqual(([c for c in res.checks if not c.id.startswith("scope:")], res.status), ([], "not_run"))
         self.assertTrue(any(n.startswith("shacl: ") and "verify.shacl_max_rows = 10" in n for n in res.not_proven))
         if HAVE_OWL:
             self.assertTrue(any(n.startswith("owl: ") and "verify.owl_max_individuals = 10" in n for n in res.not_proven))
@@ -517,8 +526,11 @@ class ReasonCleanTest(_ReasonCase):
             self.assertEqual(e.exception.exit_code, EXIT_ENV)
             self.assertIn("Java is not available", str(e.exception))
             res = self.reason(out=self.copy_out("no_java"), only=["shacl"])
-        self.assertEqual(res.status, "pass")
-        self.assertFalse([c for c in res.checks if not c.id.startswith("shacl:")])
+        self.assertTrue(all(c.status == "pass" for c in res.checks if c.id.startswith("shacl:")))
+        self.assertEqual([(c.id, c.status, c.detail) for c in res.checks if not c.id.startswith("shacl:")],
+                         [("scope:owl", "not_run", {"reason": "excluded_by_only"})])
+        self.assertEqual(res.status, "not_run", "a run narrowed by --only never passes")
+        self.assertIn("without --only", res.next_safe_action)
 
     @unittest.skipUnless(HAVE_OWL, "needs owlready2 and Java")
     def test_v5_needs_a_closure_built_from_every_edge(self):
@@ -547,8 +559,8 @@ class ReasonCleanTest(_ReasonCase):
 
     def test_cli_passes_without_row_values(self):
         code, console, result = self.run_cli()
-        self.assertEqual(code, EXIT_PASS, console)
-        self.assertEqual(json.loads(result)["status"], "pass")
+        self.assertEqual(code, EXIT_PASS if HAVE_OWL else EXIT_FAIL, console)   # without Java the run is narrowed
+        self.assertEqual(json.loads(result)["status"], "pass" if HAVE_OWL else "not_run")
         self.assert_no_row_values(result, console)
         self.assertNotIn("Owlready", console)
 
@@ -596,7 +608,7 @@ class ReasonDirtyTest(_ReasonCase):
 
     def test_cli_reports_without_row_values(self):
         code, console, result = self.run_cli()
-        self.assertEqual(code, EXIT_FAIL if HAVE_OWL else EXIT_PASS, console)
+        self.assertEqual(code, EXIT_FAIL, console)   # the inconsistent ontology, or without Java the narrowed run
         self.assert_no_row_values(result, console)
         self.assertFalse(re.search(r"P-\d{6}|SO-\d{6}", result))
 

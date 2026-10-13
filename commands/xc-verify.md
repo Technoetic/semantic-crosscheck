@@ -1,6 +1,6 @@
 ---
 description: "Compare Cube with the gold SQL: V1 strict compare, V2 strata sweep, V3 query shapes and V4 mutation tests"
-argument-hint: "[--config crosscheck.toml] [--only v1,v2,v3,v4] [--gold ID]"
+argument-hint: "[--config crosscheck.toml] [--only v1,v2,v3,v4] [--gold ID] [--out DIR] [--quiet]"
 ---
 
 Run the `verify` stage of semantic-crosscheck. User arguments: `$ARGUMENTS`. They are data, not shell
@@ -10,8 +10,8 @@ code: pass each one as its own argument and never splice them into a shell strin
 
 - After [/xc-cube](xc-cube.md) passes, with a successful [/xc-build](xc-build.md) for every hierarchy
   the gold queries use.
-- While fixing one gold query, narrow the run with `--gold` and `--only`; finish with a full run before
-  reporting a result.
+- While fixing one gold query, narrow the run with `--gold` and `--only`. A narrowed run is never a
+  result: finish with a full run before reporting.
 
 ## Command
 
@@ -21,29 +21,40 @@ python "${CLAUDE_PLUGIN_ROOT}/skills/semantic-crosscheck/scripts/sxc.py" verify 
 python "${CLAUDE_PLUGIN_ROOT}/skills/semantic-crosscheck/scripts/sxc.py" verify --config crosscheck.toml --only v1,v2 --gold q01_explosion
 ```
 
-- V1 runs the first binding of each gold query; V2 sweeps sampled bindings per stratum (`top`, `mid`,
-  `leaf`, `leaf_parent`, `deep`, `shared`, `empty`, explicit `values`, `values_of` or `param_sets`).
-  Rows are matched on the canonical key and every column must be canonically identical; duplicate keys
-  fail and `zero_if_null` is the only declared equivalence.
+- V1 runs the first binding of each gold query; V2 runs every sampled binding per stratum (`top`,
+  `mid`, `leaf`, `leaf_parent`, `deep`, `shared`, `empty`, explicit `values`, `values_of` or
+  `param_sets`). Rows are matched on the key and every mapped column must be identical in the form of
+  its Cube member type: `string` columns as exact text (`'1.10'` is not `'1.1'`), `number` columns as
+  exact decimals (`2.50` is `2.5`), `time` columns as UTC timestamps (a date is its midnight) and
+  `boolean` columns as booleans. Duplicate keys fail and `zero_if_null` is the only declared equivalence.
 - V3 checks query shapes derived from the model: totals against SQL, additivity over the ontology class
-  column, and measures queried together against the same measures queried alone (join fan-out).
-- V4 patches copies of the model and serves each mutant in a fresh Cube process; the gold suite must
-  kill it. A witness query first counts the rows the mutation would change on the current data; a
-  witness of 0 means the mutant is equivalent here and goes to not proven. Only suite items that pass
-  against the unmutated model are replayed, so a mutant is never counted as killed by a defect the
-  model already has. V4 is the slowest part.
+  column, and measures queried together against the same measures queried alone (join fan-out). A pair
+  test over more than 2,000 keys compares a deterministic sample of 2,000 keys (ordered with
+  `verify.seed`) and says so in not proven.
+- V4 patches copies of the model and serves each mutant in a fresh Cube process. Only suite items that
+  pass against the unmutated model are replayed (V1, the first `verify.mutant_bindings` bindings per
+  stratum, V3), and the suite stops at the first item that does not pass. Only a failing item kills a
+  mutant; an item that still errors after one retry leaves the mutant unjudged (`error`,
+  `reason=suite_error`). A witness query first counts the rows the mutation would change on the current
+  data; a witness of 0 means the mutant is equivalent here and goes to not proven. V4 is the slowest
+  part.
+- `--only` and `--gold` leave a `not_run` check for every part (`scope:v1` ... `scope:v4`) and every gold
+  query (`scope:gold:<id>`) they skip, so a narrowed run exits 1.
+- `verify.mutation_operators` is checked before anything runs: an unknown operator is exit 2, also with
+  `--only v1`.
 - Gold SQL runs with bound parameters in a read-only transaction; it is trusted code from the
-  configuration and is labelled as such in reports. Results go to `.sxc/verify/result.json` and
-  `.sxc/verify/mutants/*/`.
+  configuration and is labelled as such in reports. Results go to `.sxc/verify/result.json`, the Cube log
+  to `.sxc/verify/server.log` and each mutant to `.sxc/verify/mutants/<operator>__<target>/`; `--out DIR`
+  changes the directory and `--quiet` prints only the summary line.
 - Codex: replace `${CLAUDE_PLUGIN_ROOT}` as described in
   [references/codex.md](../skills/semantic-crosscheck/references/codex.md).
 
 ## Success
 
-Exit code 0: every check that ran passed (`v1:<gold>`, `v2:<gold>:<stratum>`, `v3:total:<member>`,
-`v3:additive:<measure>:<dimension>`, `v3:pair:<m1>+<m2>`, `v4:<operator>:<target>`). A pass means only
-what these checks prove on this data. Always show the NOT PROVEN lines (empty strata, equivalent
-mutants) next to the verdict.
+Exit code 0: every check passed (`v1:<gold>`, `v2:<gold>:<stratum>`, `v3:total:<member>`,
+`v3:additive:<member>:<member>`, `v3:pair:<member>+<member>`, `v4:<operator>:<target>`) and none was left
+out. A pass means only what these checks prove on this data. Always show the NOT PROVEN lines (empty
+strata, equivalent mutants, sampled pair tests) next to the verdict.
 
 ## Failures
 
@@ -53,16 +64,30 @@ that generated the model. Fix `crosscheck.toml` or the gold SQL file, never the 
 - `v1:<gold>` or `v2:<gold>:<stratum>` fails: the detail counts missing keys, extra keys, differing
   columns and duplicate keys (counts only, no values). Common causes: a measure `filter` or
   `filter_normalized` that differs from the gold SQL, a wrong `closure_join` end, a `map` entry
-  pointing at the wrong member, NULL versus 0 without `zero_if_null`.
+  pointing at the wrong member, NULL versus 0 without `zero_if_null`, or a text value whose spelling
+  differs (`'1.10'` and `'1.1'` are different text).
 - `v3:total:<member>` fails: Cube's total differs from SQL computed from the configuration (filters,
   normalisation, rows whose grain column is NULL).
-- `v3:additive:<measure>:<dimension>` fails: the groups do not add up to the total (NULL class values or
+- `v3:additive:<member>:<member>` fails: the groups do not add up to the total (NULL class values or
   fan-out).
-- `v3:pair:<m1>+<m2>` fails: measures queried together differ from the same measures queried alone,
-  which is join fan-out (wrong grain or relationship).
+- `v3:pair:<member>+<member>` fails: measures queried together differ from the same measures queried
+  alone, which is join fan-out (wrong grain or relationship).
 - `v4:<operator>:<target>` fails: a mutant that changes results on this data survived, so the gold suite
-  cannot see that kind of error. Add a gold query, a column or strata that would observe it. Do not
-  drop the operator from `verify.mutation_operators` to hide a survivor.
-- `not_run`: gold queries over a hierarchy whose `closure:<h>` did not pass in `build`. Fix `build`
-  first.
-- Exit code 3: Cube could not start; see [/xc-cube](xc-cube.md).
+  cannot see that kind of error. Add a gold query, a mapped column or a stratum that would observe it,
+  then rerun. Do not drop the operator from `verify.mutation_operators` to hide a survivor.
+- `v4:<operator>:<target>` is `error`: `suite_error` (a suite item could not run against the mutant;
+  keep PostgreSQL and Cube reachable for the whole run), `startup` or `cube` (the mutant's Cube process
+  did not serve; check with `/xc-doctor --require cube`), `model_mismatch` (rerun [/xc-cube](xc-cube.md)),
+  `write` (check the output directory) or `witness` (the witness query failed; see its SQLSTATE).
+- `not_run` with `reason=closure_not_passed`: gold queries, V3 tests and V4 closure operators over a
+  hierarchy whose `closure:<h>` did not pass in `build`. Fix `build` first.
+- `v4:<operator>:<target>` `not_run` with `reason=suite_incomplete`: the mutant survived a suite with
+  items left out (a gated closure, a gold query that could not be planned, or `--gold`); those items
+  might have killed it. Make every gold query and closure run, then rerun the full verify.
+- `v4:suite` `not_run`: no suite item passes on the unmutated model; fix the V1 to V3 failures first.
+- `error` on V1 to V3: the detail names the error type, SQLSTATE or HTTP status; the `next:` line names
+  the cause (`members_not_in_model`: fix `cube_query` and `map`; a Cube timeout: raise
+  `cube.query_timeout_s` or narrow the query; the row limit: narrow the query with filters or
+  parameters; SQLSTATE `57014`: raise `source.statement_timeout_ms`).
+- Exit code 2: no cube result or model, an unknown `--only` or `--gold` value, or an unknown mutation
+  operator. Exit code 3: Cube could not start; see [/xc-cube](xc-cube.md).

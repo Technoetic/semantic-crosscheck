@@ -12,14 +12,24 @@
             a relationship that multiplies rows shows up as a mismatch (join fan-out).
 
 Tests are derived once from the unmutated model and replayed against mutants, so they state what the
-configuration means rather than what a possibly mutated model does. Values are compared with canon (exact).
-A count over no rows is 0 in SQL but NULL as a sum of per-key counts, so a NULL count total counts as 0 and is
-reported as `null_as_zero`. Details hold counts and flags only, never totals or keys.
+configuration means rather than what a possibly mutated model does. Values are compared with canon (exact); the
+keys of a pair test in the form of their Cube member type (compare.member_kinds), so text keys such as '1.10' and
+'1.1' stay two keys. A count over no rows is 0 in SQL but NULL as a sum of per-key counts, so a NULL count total
+counts as 0 and is reported as `null_as_zero`.
+
+A pair test groups by every key of its node entity or closure end. Cube joins the per-cube results of such a query
+with a nested loop, so its cost grows with the square of the keys, and the client's row limit caps the answer.
+Above PAIR_KEY_CAP keys the test therefore compares a deterministic sample of PAIR_KEY_CAP keys (sweep.md5_order with
+verify.seed, read once from the node table or the closure table and reused by every replay), filtered in each of
+its queries, and its detail says how many keys were compared out of how many (sampled_keys, total_keys).
+Details hold counts and flags only, never totals or keys.
 """
 
 from decimal import Decimal, InvalidOperation
 
-from . import canon, compare, cube_gen, db, ident, naming
+from . import canon, compare, cube_gen, db, ident, naming, sweep
+
+PAIR_KEY_CAP = 2000
 
 
 def _m(cube: str, name: str) -> str:
@@ -29,10 +39,11 @@ def _m(cube: str, name: str) -> str:
 def tests(cfg, model: dict) -> list[dict]:
     """Every V3 test of the model: dicts with id, kind, members (every member queried) and kind-specific keys."""
     cubes = {c["name"]: c for c in model.get("cubes", [])}
+    kinds = compare.member_kinds(model)
     out = _totals(cfg, cubes)
     out += _additive(cfg, cubes)
-    out += _closure_pairs(cfg, cubes)
-    out += _node_pairs(cfg, cubes)
+    out += _closure_pairs(cfg, cubes, kinds)
+    out += _node_pairs(cfg, cubes, kinds)
     return out
 
 
@@ -78,7 +89,7 @@ def _additive(cfg, cubes: dict) -> list[dict]:
     return out
 
 
-def _closure_pairs(cfg, cubes: dict) -> list[dict]:
+def _closure_pairs(cfg, cubes: dict, kinds: dict) -> list[dict]:
     out = []
     for h in cfg.hierarchies.values():
         cc = naming.cube_closure(h.name)
@@ -91,11 +102,13 @@ def _closure_pairs(cfg, cubes: dict) -> list[dict]:
             end, key = _m(cc, m.closure_join), _m(mc, naming.MEASURE_KEY)
             out.append({"id": f"pair:{qty}+{value}", "kind": "pair", "members": [qty, value, end, key],
                         "measures": [qty, value], "group_by": end, "alone": {qty: end, value: key},
+                        "kinds": {k: kinds.get(k) for k in (end, key)},
+                        "keys_from": [naming.closure_table(cfg, h.name), m.closure_join],
                         "config_ref": f"measures.{m.name}"})
     return out
 
 
-def _node_pairs(cfg, cubes: dict) -> list[dict]:
+def _node_pairs(cfg, cubes: dict, kinds: dict) -> list[dict]:
     out = []
     by_cube = {naming.cube_measure(m.name): m for m in cfg.measures.values() if not m.date_column}
     for name, ent in cfg.entities.items():
@@ -111,6 +124,8 @@ def _node_pairs(cfg, cubes: dict) -> list[dict]:
                 ka, kb = _m(a, naming.MEASURE_KEY), _m(b, naming.MEASURE_KEY)
                 out.append({"id": f"pair:{va}+{vb}", "kind": "pair", "members": [va, vb, node_key, ka, kb],
                             "measures": [va, vb], "group_by": node_key, "alone": {va: ka, vb: kb},
+                            "kinds": {k: kinds.get(k) for k in (node_key, ka, kb)},
+                            "keys_from": [ent.table, ent.key[0]],
                             "config_ref": f"measures.{by_cube[a].name}, measures.{by_cube[b].name}"})
     return out
 
@@ -125,6 +140,20 @@ def measure_total_sql(cfg, m) -> str:
 def closure_total_sql(cfg, h: str, column: str) -> str:
     agg = f"sum({ident.quote('qty')})" if column == "qty" else "count(*)"
     return f"SELECT {agg} FROM {naming.closure_table(cfg, h)}"
+
+
+def pair_keys(conn, cfg, test: dict) -> tuple[int, list | None]:
+    """(distinct keys a pair test groups by, a deterministic sample of PAIR_KEY_CAP of them or None when there are not
+    more than that), read from test["keys_from"] (table, column) in one READ ONLY transaction."""
+    table, column = test["keys_from"]
+    col, source = f"t.{ident.quote(column)}", ident.qualified(table)
+    with db.read_only(conn, cfg.source.statement_timeout_ms):
+        total = int(db.scalar(conn, f"SELECT count(DISTINCT {col}) FROM {source} t") or 0)
+        if total <= PAIR_KEY_CAP:
+            return total, None
+        rows = conn.run(f"SELECT s.k FROM (SELECT DISTINCT {col} AS k FROM {source} t WHERE {col} IS NOT NULL) s "
+                        f"ORDER BY {sweep.md5_order('s.k')} LIMIT :n", seed=str(cfg.verify.seed), n=PAIR_KEY_CAP)
+    return total, [r[0] for r in rows or []]
 
 
 def run_test(conn, client, cfg, model: dict, test: dict) -> tuple[str, dict]:
@@ -186,10 +215,10 @@ def _run_additive(conn, client, cfg, test: dict) -> tuple[str, dict]:
     return ("pass" if equal else "fail"), detail
 
 
-def _keyed(rows: list[dict], key: str) -> tuple[dict, int]:
+def _keyed(rows: list[dict], key: str, kind: str | None) -> tuple[dict, int]:
     idx, dups = {}, set()
     for r in rows:
-        k = canon.canon(r.get(key))
+        k = canon.canon(r.get(key), kind)
         if k in idx:
             dups.add(k)
         else:
@@ -197,18 +226,51 @@ def _keyed(rows: list[dict], key: str) -> tuple[dict, int]:
     return idx, len(dups)
 
 
+def _sample(conn, cfg, test: dict) -> tuple[int | None, list | None]:
+    """pair_keys of the test, read once: the test dict keeps them in memory for the mutant replays. They are key
+    values, so they never go into a detail or a result."""
+    if "keys_from" not in test:
+        return None, None
+    if "sample_keys" not in test:
+        test["total_keys"], test["sample_keys"] = pair_keys(conn, cfg, test)
+    return test["total_keys"], test["sample_keys"]
+
+
+def sampled(test: dict) -> bool:
+    """Whether a pair test that has run compares a sample of its keys rather than every key."""
+    return test.get("sample_keys") is not None
+
+
+def _filter_text(v) -> str:
+    """A key as a Cube filter value: text exactly, any other value in canonical form."""
+    k = canon.key(v)
+    return str(k).lower() if isinstance(k, bool) else str(k)
+
+
+def _restricted(query: dict, member: str, sample: list | None) -> dict:
+    """The query limited to the sampled keys of `member` (unchanged when every key is compared)."""
+    if sample is None:
+        return query
+    return {**query, "filters": [{"member": member, "operator": "equals", "values": [_filter_text(v) for v in sample]}]}
+
+
 def _run_pair(conn, client, cfg, test: dict) -> tuple[str, dict]:
-    measures, group = test["measures"], test["group_by"]
-    together, dup = _keyed(client.load({"dimensions": [group], "measures": measures}), group)
+    measures, group, kinds = test["measures"], test["group_by"], test.get("kinds", {})
+    total, sample = _sample(conn, cfg, test)
+    together_q = _restricted({"dimensions": [group], "measures": measures}, group, sample)
+    together, dup = _keyed(client.load(together_q), group, kinds.get(group))
     mismatched, alone_only, alone_dups = {}, {}, 0
     for m in measures:
         dim = test["alone"][m]
-        alone, d = _keyed(client.load({"dimensions": [dim], "measures": [m]}), dim)
+        alone, d = _keyed(client.load(_restricted({"dimensions": [dim], "measures": [m]}, dim, sample)), dim, kinds.get(dim))
         alone_dups += d
         bad = sum(1 for k, row in together.items() if not canon.same(row.get(m), alone.get(k, {}).get(m)))
         if bad:
             mismatched[m] = bad
         alone_only[m] = sum(1 for k in alone if k not in together)
     ok = not (mismatched or dup or alone_dups)
-    return ("pass" if ok else "fail"), {"keys": len(together), "mismatched": mismatched, "duplicate_keys": dup + alone_dups,
-                                        "alone_only_keys": alone_only}
+    detail = {"keys": len(together), "mismatched": mismatched, "duplicate_keys": dup + alone_dups,
+              "alone_only_keys": alone_only}
+    if sample is not None:
+        detail.update(sampled_keys=len(sample), total_keys=total)
+    return ("pass" if ok else "fail"), detail

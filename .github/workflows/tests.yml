@@ -39,9 +39,9 @@ jobs:
         run: python -m compileall -q skills/semantic-crosscheck/scripts tests tools
 
   integration:
-    name: integration / PostgreSQL 17, HermiT, Cube
+    name: integration / PostgreSQL 17, HermiT, Cube, demo end to end
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     services:
       postgres:
         image: postgres:17
@@ -105,16 +105,66 @@ jobs:
           assert cube_run.installed(cube_run.cube_home()), "the Cube adapter is not installed"
           print("integration prerequisites: ok")
           EOF
+      # The roles template exactly as the README runs it: psql, a superuser, four psql variables. The two roles
+      # get the job's throw-away password afterwards (a person sets theirs with \password instead).
+      - name: Demo database and roles from docs/setup-roles.sql
+        env:
+          PGHOST: 127.0.0.1
+          PGPORT: '5432'
+          PGUSER: postgres
+        run: |
+          command -v psql >/dev/null || { sudo apt-get update && sudo apt-get install -y postgresql-client; }
+          psql --version
+          psql -d postgres -v ON_ERROR_STOP=1 -c "CREATE DATABASE sxc_demo_db"
+          psql -d sxc_demo_db -v loader_role=sxc_loader -v check_role=sxc_check \
+               -v source_schema=sxc_demo -v output_schema=sxc_out -f docs/setup-roles.sql
+          psql -d sxc_demo_db -v ON_ERROR_STOP=1 -v pw="$SXC_TEST_ROLE_PASSWORD" <<'SQL'
+          ALTER ROLE sxc_loader PASSWORD :'pw';
+          ALTER ROLE sxc_check PASSWORD :'pw';
+          SQL
       - name: Unit and integration tests
         run: python -m unittest discover -s tests -v
+      # The README quick start through the command line with the roles above: the clean demo passes every stage,
+      # the dirty variant fails build and report on purpose.
+      - name: Demo end to end
+        env:
+          SXC_PG_OWNER_DSN: postgresql://sxc_loader@127.0.0.1:5432/sxc_demo_db
+          SXC_PG_DSN: postgresql://sxc_check@127.0.0.1:5432/sxc_demo_db
+          PGPASSWORD: ci-${{ github.run_id }}-roles
+        run: |
+          expect() {
+            want=$1
+            shift
+            set +e
+            "$@"
+            got=$?
+            set -e
+            if [ "$got" -ne "$want" ]; then
+              echo "::error::exit code $got instead of $want: $*"
+              exit 1
+            fi
+          }
+          expect 0 python skills/semantic-crosscheck/scripts/sxc.py demo --config demo/crosscheck.toml --variant clean
+          expect 0 python skills/semantic-crosscheck/scripts/sxc.py doctor --config demo/crosscheck.toml --require core,reason,cube
+          expect 0 python skills/semantic-crosscheck/scripts/sxc.py build --config demo/crosscheck.toml
+          expect 0 python skills/semantic-crosscheck/scripts/sxc.py reason --config demo/crosscheck.toml
+          expect 0 python skills/semantic-crosscheck/scripts/sxc.py cube --config demo/crosscheck.toml
+          expect 0 python skills/semantic-crosscheck/scripts/sxc.py verify --config demo/crosscheck.toml
+          expect 0 python skills/semantic-crosscheck/scripts/sxc.py report --config demo/crosscheck.toml
+          expect 0 python skills/semantic-crosscheck/scripts/sxc.py demo --config demo/crosscheck.toml --variant dirty
+          expect 1 python skills/semantic-crosscheck/scripts/sxc.py build --config demo/crosscheck.toml
+          expect 1 python skills/semantic-crosscheck/scripts/sxc.py reason --config demo/crosscheck.toml
+          expect 1 python skills/semantic-crosscheck/scripts/sxc.py report --config demo/crosscheck.toml
 
   hygiene:
     name: whitespace and leak scan
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      # The whole history: the leak scan reads every commit, path and ref name, not only the last tree.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
@@ -123,8 +173,8 @@ jobs:
       # `git diff --check` only compares the working tree with the index, which is clean after checkout.
       - name: Whitespace validation (whole committed tree)
         run: git diff --check 4b825dc642cb6eb9a060e54bf8d69288fbee4904 HEAD
-      # Generic patterns only. A deny-list never exists in CI: SXC_DENYLIST is forced empty.
-      - name: Leak scan
+      # Generic patterns and tools/leak-allow.txt only. A deny-list never exists in CI: SXC_DENYLIST=none says so.
+      - name: Leak scan (working tree and whole history)
         env:
-          SXC_DENYLIST: ''
-        run: python tools/leak_scan.py
+          SXC_DENYLIST: none
+        run: python tools/leak_scan.py --worktree --history

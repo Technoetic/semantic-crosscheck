@@ -29,8 +29,13 @@ def redact(dsn: str) -> str:
     return f"{u.scheme}://{netloc}{u.path}"
 
 
-def connect(env_name: str):
-    """Open a connection from the DSN in env_name. Raises StageError(exit 3) if missing or unreachable."""
+MIN_SERVER_VERSION = 170000   # MERGE ... RETURNING merge_action(), WHEN NOT MATCHED BY SOURCE, COPY ON_ERROR
+
+
+def connect(env_name: str, require_pg17: bool = True):
+    """Open a connection from the DSN in env_name. Raises StageError(exit 3) if missing or unreachable, and
+    (unless require_pg17 is False, as in doctor which reports the version as a check) if the server is older
+    than PostgreSQL 17."""
     dsn = os.environ.get(env_name)
     if not dsn:
         raise StageError(f"environment variable {env_name} is not set (PostgreSQL DSN)", EXIT_ENV)
@@ -43,6 +48,11 @@ def connect(env_name: str):
     except Exception as e:  # noqa: BLE001 - surface connection problems as environment errors without the DSN
         raise StageError(f"cannot connect to {redact(dsn)}: {type(e).__name__}", EXIT_ENV) from e
     conn.run("SET application_name = 'semantic-crosscheck'")
+    if require_pg17:
+        version = server_version_num(conn)
+        if version < MIN_SERVER_VERSION:
+            conn.close()
+            raise StageError(f"PostgreSQL 17 or later is required (server_version_num {version})", EXIT_ENV)
     return conn
 
 

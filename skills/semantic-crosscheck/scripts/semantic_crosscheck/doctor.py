@@ -249,7 +249,7 @@ def _database(cfg, res: Result, hints: dict, have_pg8000: bool):
         return skip("no_pg8000")
     from pg8000.exceptions import DatabaseError, InterfaceError
     try:
-        conn = db.connect(env)
+        conn = db.connect(env, require_pg17=False)
     except (StageError, DatabaseError, InterfaceError) as e:
         cause = e.__cause__ if isinstance(e, StageError) else e
         state = _sqlstate(cause)

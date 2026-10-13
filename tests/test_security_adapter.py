@@ -55,7 +55,8 @@ class CubejsServerCore {
     log('Error querying db', { error: 'Error: ung\\u00fcltige Eingabesyntax f\\u00fcr Typ integer: \\u00bbP-000123\\u00ab' });
     log('Error querying db', { error: 'Error: syntaxe en entr\\u00e9e invalide pour le type integer : \\u00ab P-000456 \\u00bb' });
     log('Error querying db', { error: 'Error: canceling statement due to statement timeout' });
-    log('Compiling schema', { error: 'Error: Compile errors:\\nm_x cube: unknown member part.nope' });
+    log('Compiling schema', { error: 'Error: Compile errors:\\nm_x cube: unknown member part.nope\\n    at Compiler (C:\\\\Users\\\\someone\\\\x.js:1:2)' });
+    log('Error querying db', { error: 'Error: invalid input syntax for type numeric: \\u00bbP-000789 compile errors: zq\\u00ab' });
     log('Performing query', { query: 'SELECT 1', values: ['P-000789'] });
     console.log('pool says', 'FIRM', 4242);
     console.error('again FIRM');
@@ -99,12 +100,15 @@ class AdapterLogTest(unittest.TestCase):
         self.assertIn("SXC_CUBE_ERROR Error while querying: Error", lines)
         self.assertIn("SXC_CUBE_ERROR Orchestrator error: Error [22P02]", lines)
         self.assertIn("SXC_CUBE_ERROR Dropping Cache: Error", lines)
-        self.assertEqual(lines.count("SXC_CUBE_ERROR Error querying db: Error"), 2)
+        self.assertEqual(lines.count("SXC_CUBE_ERROR Error querying db: Error"), 3,
+                         "a value containing 'compile errors' does not make a query error verbatim")
         self.assertIn("SXC_CUBE_ERROR Error querying db: Error (timeout)", lines)
         self.assertIn("SXC_CUBE_ERROR Compiling schema: Error (model): Error: Compile errors: m_x cube: unknown member part.nope",
                       lines)
-        self.assertFalse([ln for ln in lines if "»" in ln or "«" in ln or "integer" in ln], "message text dropped")
-        self.assertEqual(sum(ln.startswith("SXC_CUBE_ERROR") for ln in lines), 7, "events without an error are dropped")
+        self.assertFalse([ln for ln in lines if "»" in ln or "«" in ln or "integer" in ln or "numeric" in ln],
+                         "message text dropped")
+        self.assertFalse([ln for ln in lines if "someone" in ln or "x.js" in ln], "stack frames of model errors dropped")
+        self.assertEqual(sum(ln.startswith("SXC_CUBE_ERROR") for ln in lines), 8, "events without an error are dropped")
         self.assertEqual([ln for ln in lines if ln.startswith("SXC_CONSOLE")],
                          ["SXC_CONSOLE console output of the Cube packages is hidden (SXC_CUBE_DEBUG=1 shows it)"])
         self.assertFalse([ln for ln in lines if "Parser" in ln or "x.js" in ln], "stack frames are dropped")
@@ -114,7 +118,7 @@ class AdapterLogTest(unittest.TestCase):
         code, lines = self.run_adapter(SXC_CUBE_DEBUG="1")
         self.assertEqual(code, 0, lines)
         debug = [ln for ln in lines if ln.startswith("SXC_DEBUG")]
-        self.assertEqual(len(debug), 7)
+        self.assertEqual(len(debug), 8)
         self.assertIn('"P-000123"', debug[0])
         self.assertIn("pool says FIRM 4242", lines)
         self.assertIn("SXC_CUBE_ERROR Error while querying: Error", lines,

@@ -564,10 +564,6 @@ class CleanDemoTest(unittest.TestCase):
 
         checks, not_proven = mutate.run_mutants(self.cfg, out, self.conn, self.model, suite, closure=BUILT)
         by_id = {cid: (st, ref, det) for cid, st, ref, det in checks}
-        for cid, (st, _ref, det) in sorted(by_id.items()):
-            print(f"  {cid}: {st} witness={det.get('witness')} killed_by={det.get('killed_by', det.get('reason'))}")
-        for note in not_proven:
-            print(f"  not proven: {note}")
 
         self.assertEqual({cid for cid, (st, _r, _d) in by_id.items() if st == "error"}, set())
         for cid in ("v4:closure_depth_shift:has_component", "v4:closure_path_count_one:has_component",

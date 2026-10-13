@@ -26,11 +26,16 @@ const errorClass = (err) => {
   const m = /^\s*([A-Za-z][A-Za-z0-9]*(?:Error|Exception))\b/.exec(err instanceof Error ? err.name : String(err));
   return m ? m[1] : 'Error';
 };
+// A model compile error is recognised by how Cube's compiler starts its message ("Compile errors:"), never by words
+// further in: a query error quotes the offending value after its own text, so a value that happens to contain those
+// words cannot switch the line to the verbatim form. Stack frames (which name local paths) are cut off.
+const COMPILE = /^\s*(?:[A-Za-z]*Error:\s*)?Compile errors:/;
 const summary = (err) => {
   const code = err && typeof err.code === 'string' && /^[A-Z0-9_]{2,40}$/.test(err.code) ? ` [${err.code}]` : '';
   const text = messageOf(err);
-  if (/compile errors/i.test(text)) {
-    return `${errorClass(err)}${code} (model): ${text.replace(/\s+/g, ' ').slice(0, 1500)}`;
+  if (COMPILE.test(text)) {
+    const body = text.split(/\r?\n\s+at\s/, 1)[0];
+    return `${errorClass(err)}${code} (model): ${body.replace(/\s+/g, ' ').slice(0, 1500)}`;
   }
   const category = /time ?out|timed out/i.test(text) ? ' (timeout)' : '';
   return `${errorClass(err)}${code}${category}`;

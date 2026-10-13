@@ -75,6 +75,15 @@ class FingerprintTiming(unittest.TestCase):
         self.assertFalse((self.out / "report.md").exists())
         self.assertFalse((self.out / "report.json").exists())
 
+    def test_a_report_that_cannot_find_its_config_removes_the_earlier_report_files(self):
+        self.out.mkdir()
+        for name in ("report.md", "report.json"):
+            (self.out / name).write_text("Overall: PASS", encoding="utf-8")
+        missing = self.tmp / "demo" / "crosscheck-typo.toml"
+        self.assertEqual(quiet_main(["report", "--config", str(missing), "--out", str(self.out)]), 2)
+        self.assertFalse((self.out / "report.md").exists())
+        self.assertFalse((self.out / "report.json").exists())
+
 
 class MeasureKinds(unittest.TestCase):
     def test_min_and_max_keep_their_column_kind(self):

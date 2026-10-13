@@ -139,7 +139,7 @@ exit 3, so one run lists everything to fix.
 - **Adapter logs are redacted.** `server.js` drops request logs (they contain filter values) and writes each
   error as one line, `SXC_CUBE_ERROR <event>: <class> [code] (category)`: no message text at all, because
   PostgreSQL quotes values in a style that depends on its message language ('x', »x«, « x »). The code is the
-  SQLSTATE when known; the category is `timeout` or `model`, and only model compile errors keep their text
+  SQLSTATE when Cube passes one (wrapped query errors usually carry none); the category is `timeout` or `model`, and only model compile errors keep their text
   (they quote the generated model, never rows). Startup, uncaught and
   unhandled errors use the prefix `SXC_ERROR`. Console output of the Cube packages is replaced by one
   `SXC_CONSOLE` notice. `SXC_CUBE_DEBUG=1` adds `SXC_DEBUG` lines with the full text and lets console output

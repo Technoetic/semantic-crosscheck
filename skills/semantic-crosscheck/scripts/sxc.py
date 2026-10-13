@@ -172,6 +172,14 @@ def _crash_note(e: BaseException) -> None:
           "quote row values: keep it local)", file=sys.stderr)
 
 
+def discard_report_files(out: Path | None) -> None:
+    """report.md and report.json of an earlier report: a report run that fails (even before the configuration is
+    found) must not leave an earlier verdict behind."""
+    if out is not None:
+        for name in ("report.md", "report.json"):
+            (out / name).unlink(missing_ok=True)
+
+
 def main(argv=None) -> int:
     args = parser().parse_args(argv)
     stage = args.stage
@@ -185,8 +193,7 @@ def main(argv=None) -> int:
         ensure_out(out)
         discard(out, result_name)
         if stage == "report":
-            for name in ("report.md", "report.json"):
-                (out / name).unlink(missing_ok=True)
+            discard_report_files(out)
         inputs = {}
         if cfg_file is not None:
             before = hashlib.sha256(cfg_file.read_bytes()).hexdigest()
@@ -200,18 +207,24 @@ def main(argv=None) -> int:
         res = mod.run(cfg, args, out)
         res.inputs = inputs
     except StageError as e:
+        if stage == "report":
+            discard_report_files(out)
         res = Result(result_name)
         res.add("stage", "error", "", message=str(e))
         res.next_safe_action = "fix the configuration or environment named in the message, then rerun this stage"
         print(_summary(res, _write(res, out), args.quiet), file=sys.stderr)
         return e.exit_code
     except KeyboardInterrupt:
+        if stage == "report":
+            discard_report_files(out)
         res = Result(result_name)
         res.add("stage", "error", "", reason="interrupted")
         res.next_safe_action = "the run was interrupted before it finished: rerun this stage"
         print(_summary(res, _write(res, out), args.quiet), file=sys.stderr)
         return EXIT_FAIL
     except Exception as e:  # noqa: BLE001 - unexpected failure: keep only the type and SQLSTATE in the result file
+        if stage == "report":
+            discard_report_files(out)
         res = Result(result_name)
         res.add("stage", "error", "", exception=type(e).__name__, sqlstate=_db_error_code(e))
         _crash_note(e)

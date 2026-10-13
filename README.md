@@ -340,8 +340,9 @@ the `scope:*` checks (reason, verify) and the `cube_install:*` checks complete t
   `PGOPTIONS=-c default_transaction_read_only=on` and a statement timeout of `cube.query_timeout_s`.
 - **No row values in outputs.** Results, console output and reports carry counts and ids only, never
   keys, names or quantities from the database. Database error messages are not stored (they can quote
-  values); the SQLSTATE is. Cube's error log keeps only each error's class and first line, with quoted
-  text, numbers and SQL replaced; `SXC_CUBE_DEBUG=1` adds the full text, for local debugging.
+  values); the SQLSTATE is. Cube's error log keeps only each error's class, code and a coarse category
+  (`timeout`), never its message text, whose quoting of values depends on the server's language; model
+  compile errors keep their text. `SXC_CUBE_DEBUG=1` adds the full text, for local debugging.
 - **Credentials only in the environment.** DSNs come from environment variables; the configuration
   refuses credentials and accepts only variable names. The Cube adapter listens on 127.0.0.1 only, with
   a random per-run API secret, and the client never sends its requests through a proxy.
@@ -429,7 +430,6 @@ Further limits of this release:
 - Cube 1.8.3 is pinned; PostgreSQL before 17 is not supported; client certificates are not supported.
 - V4 starts one Cube process per mutant and is the slowest stage; SHACL and OWL inputs are capped by
   `verify.shacl_max_rows` and `verify.owl_max_individuals`.
-- `report` cannot tell that `crosscheck.toml` or a gold SQL file changed after the last run.
 
 ## Uninstall
 

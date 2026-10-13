@@ -14,9 +14,9 @@ to the data.
 
 The catalog is read in a READ ONLY transaction and Cube runs read-only sessions (cube_run). Cube errors are
 recorded by HTTP status only, because response bodies can quote values. The adapter writes each error to
-cube/server.log as its class and first line with quoted text, numbers and SQL removed (the full text only when the
-user sets SXC_CUBE_DEBUG=1, and then the log can hold row values), so the next action points at the generated model
-and the configuration, not at the log.
+cube/server.log as its class, code and coarse category without message text (model compile errors keep theirs; the
+full text only when the user sets SXC_CUBE_DEBUG=1, and then the log can hold row values), so the next action points
+at the generated model and the configuration, not at the log.
 
 When a closure cube is missing, the next action follows build's closure:<h> result: rerunning build cannot help
 while that check fails on a cycle or the depth limit, so the agent is sent to the hierarchy entry instead.

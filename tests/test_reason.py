@@ -512,11 +512,15 @@ class ReasonCleanTest(_ReasonCase):
         cfg = copy.deepcopy(self.cfg)
         cfg.verify.shacl_max_rows = cfg.verify.owl_max_individuals = 10
         res = self.reason(cfg, self.copy_out("limits"))
-        self.assertEqual(([c for c in res.checks if not c.id.startswith("scope:")], res.status), ([], "not_run"))
+        checks = [c for c in res.checks if not c.id.startswith("scope:")]
+        self.assertTrue(checks)
+        self.assertEqual(res.status, "not_run")
+        self.assertTrue(all(c.status == "not_run" and c.detail.get("reason") == "resource_limit" for c in checks))
         self.assertTrue(any(n.startswith("shacl: ") and "verify.shacl_max_rows = 10" in n for n in res.not_proven))
         if HAVE_OWL:
             self.assertTrue(any(n.startswith("owl: ") and "verify.owl_max_individuals = 10" in n for n in res.not_proven))
-        self.assertIn("nothing was compared", res.next_safe_action)
+        self.assertIn("resource limit", res.next_safe_action)
+        self.assertIn("rerun reason", res.next_safe_action)
 
     @unittest.skipUnless(owlready2, "owlready2 is not installed")
     def test_missing_java_is_an_environment_error(self):

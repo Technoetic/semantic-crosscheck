@@ -469,7 +469,7 @@ class WorkflowTest(unittest.TestCase):
     def test_integration_runs_the_roles_template_then_the_tests_then_the_demo(self):
         job = jobs(self.text)["integration"]
         roles = job.find("-f docs/setup-roles.sql")
-        tests = job.find("python -m unittest discover -s tests")
+        tests = job.find('suite = unittest.defaultTestLoader.discover("tests")')
         clean = job.find("expect 0 python skills/semantic-crosscheck/scripts/sxc.py demo")
         self.assertTrue(0 < roles < tests < clean, "setup-roles.sql with psql, then the tests, then the demo")
         self.assertRegex(job[:roles], r"\bpsql\b[^\n]*$|\bpsql -d \S+ -v loader_role=")
@@ -481,6 +481,8 @@ class WorkflowTest(unittest.TestCase):
             with self.subTest(stage=stage, variant="dirty"):
                 self.assertRegex(job, rf"expect 1 python skills/semantic-crosscheck/scripts/sxc\.py {stage} ")
         self.assertIn("image: postgres:17", job)
+        self.assertIn("fetch-depth: 0", job)
+        self.assertIn("result.wasSuccessful() and result.testsRun > 0 and not result.skipped", job)
         self.assertIn("timeout-minutes:", job)
 
 

@@ -41,9 +41,13 @@ def _dec(text: str) -> str:
         d = Decimal(text)
     except InvalidOperation:
         return text
-    if d == 0:
+    if d.is_zero():
         return "0"
-    s = format(d.normalize(), "f")
+    if not d.is_finite():
+        return str(d)
+    # normalize() rounds under the ambient Decimal context. Formatting the coefficient exactly must not
+    # change a value or depend on the caller's precision, exponent limits or rounding traps.
+    s = format(d, "f")
     if "." in s:
         s = s.rstrip("0").rstrip(".")
     return s

@@ -4,6 +4,25 @@ All notable changes to this project are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.1] - 2026-10-14
+
+Release notes: [docs/releases/v0.1.1.md](docs/releases/v0.1.1.md).
+
+### Fixed
+
+- A selected SHACL or OWL check exceeding its resource limit now leaves explicit `not_run` checks, so
+  neither `reason` nor the full `report` can pass when only one engine was skipped. The next action
+  directs the user to review the limits and rerun reasoning.
+- Numeric canonicalisation preserves every decimal digit independently of the active Decimal context;
+  distinct high-precision values and numeric keys no longer compare equal through rounding.
+- Unknown option keys in entities, ontology definitions and gold parameter specifications stop with
+  a configuration error instead of silently dropping a rule. User-defined mapping keys remain supported.
+
+### Changed
+
+- Integration CI fetches the full history and fails if any test is skipped or no tests run.
+- Release document checks cover every published version, including this patch release.
+
 ## [0.1.0] - 2026-10-14
 
 First release. Release notes: [docs/releases/v0.1.0.md](docs/releases/v0.1.0.md).
@@ -59,4 +78,5 @@ First release. Release notes: [docs/releases/v0.1.0.md](docs/releases/v0.1.0.md)
   followed by the clean and dirty demo end to end through the command line; whitespace check and a leak
   scan of the working tree and the whole history.
 
+[0.1.1]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.1.1
 [0.1.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.1.0

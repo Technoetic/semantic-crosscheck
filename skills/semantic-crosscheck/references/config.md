@@ -6,10 +6,11 @@ data), never the generated output. The demo configuration `demo/crosscheck.toml`
 
 Validation runs before any stage does work. An invalid entry stops the run with exit code 2 and a
 message that names the entry where it can, for example `crosscheck.toml [measures.on_hand]: ...`.
-Unknown keys are rejected at the top level (only the tables below exist) and in `[source]`,
-`[hierarchies.*]`, `[[shapes]]`, `[measures.*]`, `[cube]`, `[verify]` and `[[gold]]`. In `[entities.*]`,
-`[ontology]`, `[[ontology.defined]]` and `[gold.params.*]` unknown keys are ignored, so check the
-spelling there. The file is read as UTF-8, with or without a byte order mark.
+Unknown option keys are rejected at the top level (only the tables below exist) and in `[source]`,
+`[entities.*]`, `[hierarchies.*]`, `[[shapes]]`, `[measures.*]`, `[ontology]`, `[[ontology.defined]]`,
+`[cube]`, `[verify]`, `[[gold]]` and `[gold.params.*]`. User-defined keys in mappings such as
+`ontology.classes`, measure filters, `gold.map` and parameter bindings remain supported; they are not option
+names. The file is read as UTF-8, with or without a byte order mark.
 
 ## Conventions
 
@@ -176,8 +177,8 @@ Defined classes compared with their SQL definition (`v5:defined:<name>`).
 | `seed` | integer | `7` | Seed of the deterministic sampling order `md5(id \|\| seed), id` (strata and the 2,000-key sample of large V3 pair tests). Any integer. |
 | `mutation_operators` | string or list | `"default"` | `"default"` or a list of V4 operator names: `closure_depth_shift`, `closure_path_count_one`, `closure_qty_single_path`, `measure_filter_drop`, `measure_normalization_drop`, `measure_agg_to_max`, `dated_shift_one_day`, `closure_join_swap`, `closure_end_swap`. An unknown name is exit 2 as soon as the verify stage starts, before any check runs. |
 | `mutant_bindings` | integer | `3` | Bindings per stratum replayed against each mutant. At least 1. |
-| `shacl_max_rows` | integer | `200000` | Upper bound on the rows exported to RDF for the SHACL comparison; at least 1. Above it no shape is compared and `reason` says so in not proven. |
-| `owl_max_individuals` | integer | `50000` | Upper bound on the individuals (node keys and edge endpoints) given to HermiT; at least 1. Above it the OWL checks do not run and `reason` says so in not proven. |
+| `shacl_max_rows` | integer | `200000` | Upper bound on the rows exported to RDF for the SHACL comparison; at least 1. Above it each planned shape is `not_run` (`resource_limit`), with an explanation in `not_proven`; reason and report cannot pass. |
+| `owl_max_individuals` | integer | `50000` | Upper bound on the individuals (node keys and edge endpoints) given to HermiT; at least 1. Above it OWL consistency and V5 checks are `not_run` (`resource_limit`), with an explanation in `not_proven`; reason and report cannot pass. |
 
 ## `[[gold]]`
 

@@ -243,9 +243,9 @@ configuration ids; `<member>` is a Cube member (`cube.member`); `<stratum>` is a
 | build | `shape:<id>` | no violations (a `warning` shape passes and reports its count) | `fail`; `error` (SQLSTATE; the view is dropped, the other views still build) |
 | build | `closure:<h>` | acyclic (or `on_cycle = "report"`) within `max_depth` | `fail` (`reason` `cycle` or `depth_limit`); `error` (SQLSTATE); `not_run` (`excluded_by_option`: left out by `--hierarchy`) |
 | build | `closure_apply:<h>` | after the MERGE the table equals the recomputation in both directions | `fail` |
-| reason | `shacl:<id>` | pySHACL's focus nodes equal the keys in `v_shape_<id>` | `fail` (`shacl_only`, `sql_only`); `error` (SQLSTATE or `validation_failure`); `not_run` (`shape_not_built`, `view_missing`) |
-| reason | `owl:consistency` | HermiT finds the ontology consistent | `fail`; `error` (SQLSTATE or `reasoner_error`) |
-| reason | `v5:closure:<h>` | the OWL closure pairs equal the closure table | `fail`; `not_run` (`closure_not_passed`, `cycle_edges_dropped`, `closure_table_missing`, `inconsistent`, `owl_not_run`) |
+| reason | `shacl:<id>` | pySHACL's focus nodes equal the keys in `v_shape_<id>` | `fail` (`shacl_only`, `sql_only`); `error` (SQLSTATE or `validation_failure`); `not_run` (`shape_not_built`, `view_missing`, `resource_limit`) |
+| reason | `owl:consistency` | HermiT finds the ontology consistent | `fail`; `error` (SQLSTATE or `reasoner_error`); `not_run` (`resource_limit`) |
+| reason | `v5:closure:<h>` | the OWL closure pairs equal the closure table | `fail`; `not_run` (`closure_not_passed`, `cycle_edges_dropped`, `closure_table_missing`, `inconsistent`, `owl_not_run`, `resource_limit`) |
 | reason | `v5:defined:<name>` | the members of the defined class equal its SQL definition (a class without members on either side passes and is listed in `not_proven`) | `fail`; `not_run` (as `v5:closure:<h>`; `contains_class` reads the closure table) |
 | reason | `scope:shacl`, `scope:owl` | never passes | `not_run` (`excluded_by_only`): the part `--only` left out |
 | cube | `cube:model` | the model was generated (a generator error is exit 2 instead) | none |
@@ -363,7 +363,9 @@ targeting the entity class, with one property shape (`sh:class`, `sh:minExclusiv
 `sh:maxInclusive`) and the configured severity. `reason` exports the needed rows as RDF in memory (target rows
 with the shape paths; referenced entities with their types) in one read-only `REPEATABLE READ` transaction,
 counting them first against `verify.shacl_max_rows`, runs pySHACL without inference and compares, per shape, the
-set of focus-node keys with the keys in `v_shape_<id>` (both in `canon.key` form). Three kinds of shape are not
+set of focus-node keys with the keys in `v_shape_<id>` (both in `canon.key` form). Above the row limit, every
+planned shape leaves a `not_run` check with `reason=resource_limit`; the explanation also appears in
+`not_proven`. Three kinds of shape are not
 compared and are listed in `not_proven` instead ("checked only in SQL"):
 
 - `sql_violation`: any shape with an `sql_violation` predicate, also when it has `class` or bounds as well
@@ -395,6 +397,8 @@ HermiT runs with `infer_property_values=True` in a private temporary directory t
 Pellet reasoner bundled with owlready2 is never called. The OWL closure is the inferred `<h>_plus` values united
 with the asserted `<h>` edges. `v5:closure:<h>` and `contains_class` need build's `closure:<h>` to have passed
 with no cycle edges dropped; an inconsistent ontology entails everything, so the V5 checks are then `not_run`.
+Above `verify.owl_max_individuals`, `owl:consistency` and every configured V5 comparison are `not_run` with
+`reason=resource_limit`. Size limits never turn a selected engine into a successful untested part of a run.
 
 ## 8. Report
 

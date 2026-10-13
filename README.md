@@ -84,7 +84,7 @@ rules of the harness.
 Register the release tag and add the plugin:
 
 ```text
-codex plugin marketplace add Technoetic/semantic-crosscheck --ref v0.1.0
+codex plugin marketplace add Technoetic/semantic-crosscheck --ref v0.1.1
 codex plugin add semantic-crosscheck@semantic-crosscheck-local
 ```
 
@@ -107,8 +107,8 @@ machine:
    ```
 
    `<plugin root>` is the installed plugin directory, for example
-   `~/.claude/plugins/cache/semantic-crosscheck/semantic-crosscheck/0.1.0` (Claude Code) or
-   `~/.codex/plugins/cache/semantic-crosscheck-local/semantic-crosscheck/0.1.0` (Codex); these are the
+   `~/.claude/plugins/cache/semantic-crosscheck/semantic-crosscheck/0.1.1` (Claude Code) or
+   `~/.codex/plugins/cache/semantic-crosscheck-local/semantic-crosscheck/0.1.1` (Codex); these are the
    locations current releases use. You do not have to find it yourself: when a package is missing,
    `/xc-doctor` prints the exact `pip install -r "..."` command with the interpreter and the
    requirements file as absolute paths.
@@ -472,7 +472,7 @@ that is not on the allowlist, add it there or commit with a GitHub noreply addre
 
 MIT, see [LICENSE](LICENSE). Runtime dependencies are not vendored; their licences are listed in
 [THIRD_PARTY.md](THIRD_PARTY.md). Changes are recorded in [CHANGELOG.md](CHANGELOG.md); the release notes
-are in [docs/releases/v0.1.0.md](docs/releases/v0.1.0.md).
+are in [docs/releases/v0.1.1.md](docs/releases/v0.1.1.md).
 
 ## 한국어 요약
 
@@ -483,7 +483,7 @@ OWL 온톨로지(HermiT), Cube 데이터 모델을 생성하고, 이 계층들�
 설정 항목을 알려 줍니다. 생성된 SQL이나 YAML은 고치지 않고 설정 파일을 고칩니다.
 
 - 설치: Claude Code는 `/plugin marketplace add Technoetic/semantic-crosscheck` 후
-  `/plugin install semantic-crosscheck@semantic-crosscheck`, Codex는 `--ref v0.1.0` 태그로 등록합니다.
+  `/plugin install semantic-crosscheck@semantic-crosscheck`, Codex는 `--ref v0.1.1` 태그로 등록합니다.
   Python 패키지는 플러그인 디렉터리의 `requirements/reason.txt`를 절대 경로로 설치합니다.
 - 데모 순서: `demo` → `doctor` → `build` → `reason` → `cube` → `verify` → `report`. Cube 어댑터는
   `cube-install`로 한 번 설치하고, 역할은 `docs/setup-roles.sql`을 psql로 superuser가 실행해 만듭니다.

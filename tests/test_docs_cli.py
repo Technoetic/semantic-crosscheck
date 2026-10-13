@@ -44,7 +44,7 @@ def read(path: Path) -> str:
 
 def documents() -> list[Path]:
     return [README, ROOT / "SECURITY.md", ROOT / "THIRD_PARTY.md", ROOT / "CHANGELOG.md", ROOT / "docs" / "design.md",
-            ROOT / "docs" / "releases" / "v0.1.0.md", SKILL_DIR / "SKILL.md", *sorted((SKILL_DIR / "references").glob("*.md")),
+            *sorted((ROOT / "docs" / "releases").glob("v*.md")), SKILL_DIR / "SKILL.md", *sorted((SKILL_DIR / "references").glob("*.md")),
             *sorted(COMMANDS.glob("*.md"))]
 
 

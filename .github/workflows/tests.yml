@@ -64,6 +64,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
@@ -122,8 +123,21 @@ jobs:
           ALTER ROLE sxc_loader PASSWORD :'pw';
           ALTER ROLE sxc_check PASSWORD :'pw';
           SQL
-      - name: Unit and integration tests
-        run: python -m unittest discover -s tests -v
+      - name: Unit and integration tests (no skips)
+        run: |
+          python - <<'EOF'
+          import sys
+          import unittest
+
+          suite = unittest.defaultTestLoader.discover("tests")
+          result = unittest.TextTestRunner(verbosity=2).run(suite)
+          print(f"integration tests: run={result.testsRun}, skipped={len(result.skipped)}, "
+                f"failures={len(result.failures)}, errors={len(result.errors)}")
+          if result.skipped:
+              for test, reason in result.skipped:
+                  print(f"::error::skipped {test.id()}: {reason}")
+          sys.exit(0 if result.wasSuccessful() and result.testsRun > 0 and not result.skipped else 1)
+          EOF
       # The README quick start through the command line with the roles above: the clean demo passes every stage,
       # the dirty variant fails build and report on purpose.
       - name: Demo end to end

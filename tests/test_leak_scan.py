@@ -54,8 +54,12 @@ def masked(name: str, kind: str = "path") -> str:
 
 def _rmtree(path: Path):
     def retry(func, p, _exc):
-        os.chmod(p, stat.S_IWRITE)
-        func(p)
+        # A file that vanished meanwhile (git's own maintenance lock, for one) is already gone, which is the goal.
+        try:
+            os.chmod(p, stat.S_IWRITE)
+            func(p)
+        except FileNotFoundError:
+            pass
     if sys.version_info >= (3, 12):
         shutil.rmtree(path, onexc=retry)
     else:
@@ -83,7 +87,7 @@ class RepoTest(unittest.TestCase):
         # composed, and the NFD fixtures would no longer be the names the scanner sees.
         for key, value in (("user.name", "Test Maintainer"), ("user.email", email),
                            ("commit.gpgsign", "false"), ("tag.gpgsign", "false"), ("core.autocrlf", "false"),
-                           ("core.precomposeunicode", "false")):
+                           ("core.precomposeunicode", "false"), ("gc.auto", "0"), ("maintenance.auto", "false")):
             self.git("config", key, value, cwd=repo)
 
     def git(self, *args, check=True, cwd: Path | None = None, env: dict | None = None,

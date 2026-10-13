@@ -1,0 +1,214 @@
+"""V3 query shapes derived from the generated model (design section 7).
+
+  total     each measure cube's `value` total equals SQL computed from the configuration (cube_gen.where_sql and
+            the measure's aggregate); the closure cube's `qty` and `pairs` equal the closure table.
+  additive  for sum/count measures joined one_to_one to their node cube, the groups by the ontology class column
+            add up to the measure's total: measure keys missing from the node table, or a join that fans out,
+            break the sum.
+  pair      measures of cubes joined to the same parent, queried together, equal the same measures queried
+            alone, per key: the closure `qty` with each closure-joined measure (grouped by the closure end the
+            measure is joined on, `ancestor` in the demo) and every two measures joined to the same node cube
+            (grouped by the node key). The alone value of a measure is read from its own cube by its own key, so
+            a relationship that multiplies rows shows up as a mismatch (join fan-out).
+
+Tests are derived once from the unmutated model and replayed against mutants, so they state what the
+configuration means rather than what a possibly mutated model does. Values are compared with canon (exact).
+A count over no rows is 0 in SQL but NULL as a sum of per-key counts, so a NULL count total counts as 0 and is
+reported as `null_as_zero`. Details hold counts and flags only, never totals or keys.
+"""
+
+from decimal import Decimal, InvalidOperation
+
+from . import canon, compare, cube_gen, db, ident, naming
+
+
+def _m(cube: str, name: str) -> str:
+    return naming.member(cube, name)
+
+
+def tests(cfg, model: dict) -> list[dict]:
+    """Every V3 test of the model: dicts with id, kind, members (every member queried) and kind-specific keys."""
+    cubes = {c["name"]: c for c in model.get("cubes", [])}
+    out = _totals(cfg, cubes)
+    out += _additive(cfg, cubes)
+    out += _closure_pairs(cfg, cubes)
+    out += _node_pairs(cfg, cubes)
+    return out
+
+
+def _joins(cube: dict | None) -> dict:
+    return {j["name"]: j for j in (cube or {}).get("joins", [])}
+
+
+def _totals(cfg, cubes: dict) -> list[dict]:
+    out = []
+    for m in cfg.measures.values():
+        mc = naming.cube_measure(m.name)
+        if mc in cubes:
+            member = _m(mc, naming.MEASURE_VALUE)
+            out.append({"id": f"total:{member}", "kind": "total", "members": [member], "measure": m.name,
+                        "config_ref": f"measures.{m.name}"})
+    for h in cfg.hierarchies.values():
+        cc = naming.cube_closure(h.name)
+        if cc in cubes:
+            for col in naming.CLOSURE_MEASURES:
+                member = _m(cc, col)
+                out.append({"id": f"total:{member}", "kind": "total", "members": [member], "hierarchy": h.name,
+                            "column": col, "config_ref": f"hierarchies.{h.name}"})
+    return out
+
+
+def _additive(cfg, cubes: dict) -> list[dict]:
+    col = cfg.ontology.class_column
+    if not col:
+        return []
+    out = []
+    for m in cfg.measures.values():
+        mc = naming.cube_measure(m.name)
+        if m.agg not in ("sum", "count") or m.date_column or not m.node or mc not in cubes:
+            continue
+        nc = naming.cube_entity(m.node)
+        join = _joins(cubes.get(nc)).get(mc)
+        dims = {d["name"] for d in cubes.get(nc, {}).get("dimensions", [])}
+        if not join or join.get("relationship") != "one_to_one" or col not in dims:
+            continue
+        measure, dim = _m(mc, naming.MEASURE_VALUE), _m(nc, col)
+        out.append({"id": f"additive:{measure}:{dim}", "kind": "additive", "members": [measure, dim],
+                    "measure": measure, "dimension": dim, "config_ref": f"measures.{m.name}"})
+    return out
+
+
+def _closure_pairs(cfg, cubes: dict) -> list[dict]:
+    out = []
+    for h in cfg.hierarchies.values():
+        cc = naming.cube_closure(h.name)
+        joins = _joins(cubes.get(cc))
+        for m in cfg.measures.values():
+            mc = naming.cube_measure(m.name)
+            if not m.closure_join or mc not in cubes or mc not in joins:
+                continue
+            qty, value = _m(cc, "qty"), _m(mc, naming.MEASURE_VALUE)
+            end, key = _m(cc, m.closure_join), _m(mc, naming.MEASURE_KEY)
+            out.append({"id": f"pair:{qty}+{value}", "kind": "pair", "members": [qty, value, end, key],
+                        "measures": [qty, value], "group_by": end, "alone": {qty: end, value: key},
+                        "config_ref": f"measures.{m.name}"})
+    return out
+
+
+def _node_pairs(cfg, cubes: dict) -> list[dict]:
+    out = []
+    by_cube = {naming.cube_measure(m.name): m for m in cfg.measures.values() if not m.date_column}
+    for name, ent in cfg.entities.items():
+        nc = naming.cube_entity(name)
+        if nc not in cubes or len(ent.key) != 1:
+            continue
+        joined = [j for j, spec in _joins(cubes[nc]).items()
+                  if j in by_cube and j in cubes and spec.get("relationship") == "one_to_one"]
+        node_key = _m(nc, ent.key[0])
+        for i, a in enumerate(joined):
+            for b in joined[i + 1:]:
+                va, vb = _m(a, naming.MEASURE_VALUE), _m(b, naming.MEASURE_VALUE)
+                ka, kb = _m(a, naming.MEASURE_KEY), _m(b, naming.MEASURE_KEY)
+                out.append({"id": f"pair:{va}+{vb}", "kind": "pair", "members": [va, vb, node_key, ka, kb],
+                            "measures": [va, vb], "group_by": node_key, "alone": {va: ka, vb: kb},
+                            "config_ref": f"measures.{by_cube[a].name}, measures.{by_cube[b].name}"})
+    return out
+
+
+def measure_total_sql(cfg, m) -> str:
+    """The configuration's definition of a measure's total (independent of the Cube model)."""
+    ent = cfg.entity(m.entity, f"measures.{m.name}")
+    return (f"SELECT {m.agg}(t.{ident.quote(m.column)}) FROM {ident.qualified(ent.table)} t"
+            f" WHERE {cube_gen.where_sql(m)}")
+
+
+def closure_total_sql(cfg, h: str, column: str) -> str:
+    agg = f"sum({ident.quote('qty')})" if column == "qty" else "count(*)"
+    return f"SELECT {agg} FROM {naming.closure_table(cfg, h)}"
+
+
+def run_test(conn, client, cfg, model: dict, test: dict) -> tuple[str, dict]:
+    """(status, detail) of one test; errors are reported by type, never by message."""
+    run = {"total": _run_total, "additive": _run_additive, "pair": _run_pair}[test["kind"]]
+    try:
+        return run(conn, client, cfg, test)
+    except compare.expected_errors() as e:
+        return "error", compare.error_detail(e)
+
+
+def _single(rows: list[dict], member: str):
+    if len(rows) != 1:
+        raise ValueError(f"expected one total row for {member}, got {len(rows)}")
+    return rows[0].get(member)
+
+
+def _sql_value(conn, cfg, sql: str):
+    with db.read_only(conn, cfg.source.statement_timeout_ms):
+        return db.scalar(conn, sql)
+
+
+def _run_total(conn, client, cfg, test: dict) -> tuple[str, dict]:
+    member = test["members"][0]
+    cube_v = _single(client.load({"measures": [member]}), member)
+    detail = {}
+    if "measure" in test:
+        m = cfg.measures[test["measure"]]
+        sql_v = _sql_value(conn, cfg, measure_total_sql(cfg, m))
+        if m.agg == "count" and cube_v is None:
+            cube_v, detail["null_as_zero"] = 0, True
+    else:
+        sql_v = _sql_value(conn, cfg, closure_total_sql(cfg, test["hierarchy"], test["column"]))
+    equal = canon.same(cube_v, sql_v)
+    return ("pass" if equal else "fail"), {"equal": equal, **detail}
+
+
+def _number(v) -> Decimal:
+    c = canon.canon(v)
+    try:
+        if not isinstance(c, str):
+            raise TypeError
+        return Decimal(c)
+    except (InvalidOperation, TypeError) as e:
+        raise ValueError("a measure returned a value that is not a number") from e
+
+
+def _sum(values: list):
+    present = [_number(v) for v in values if v is not None]
+    return sum(present, Decimal(0)) if present else None
+
+
+def _run_additive(conn, client, cfg, test: dict) -> tuple[str, dict]:
+    measure, dim = test["measure"], test["dimension"]
+    total = _single(client.load({"measures": [measure]}), measure)
+    groups = client.load({"dimensions": [dim], "measures": [measure]})
+    equal = canon.same(_sum([g.get(measure) for g in groups]), total)
+    detail = {"equal": equal, "groups": len(groups), "null_class_groups": sum(1 for g in groups if g.get(dim) is None)}
+    return ("pass" if equal else "fail"), detail
+
+
+def _keyed(rows: list[dict], key: str) -> tuple[dict, int]:
+    idx, dups = {}, set()
+    for r in rows:
+        k = canon.canon(r.get(key))
+        if k in idx:
+            dups.add(k)
+        else:
+            idx[k] = r
+    return idx, len(dups)
+
+
+def _run_pair(conn, client, cfg, test: dict) -> tuple[str, dict]:
+    measures, group = test["measures"], test["group_by"]
+    together, dup = _keyed(client.load({"dimensions": [group], "measures": measures}), group)
+    mismatched, alone_only, alone_dups = {}, {}, 0
+    for m in measures:
+        dim = test["alone"][m]
+        alone, d = _keyed(client.load({"dimensions": [dim], "measures": [m]}), dim)
+        alone_dups += d
+        bad = sum(1 for k, row in together.items() if not canon.same(row.get(m), alone.get(k, {}).get(m)))
+        if bad:
+            mismatched[m] = bad
+        alone_only[m] = sum(1 for k in alone if k not in together)
+    ok = not (mismatched or dup or alone_dups)
+    return ("pass" if ok else "fail"), {"keys": len(together), "mismatched": mismatched, "duplicate_keys": dup + alone_dups,
+                                        "alone_only_keys": alone_only}

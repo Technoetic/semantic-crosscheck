@@ -205,6 +205,17 @@ def _member(ref: str, m) -> str:
 
 
 def load(path: str | Path) -> Config:
+    """Parse and validate crosscheck.toml. Every malformed entry is a configuration error (exit 2), including
+    those found by ident.check, a missing required key or a value of the wrong shape."""
+    try:
+        return _load(path)
+    except KeyError as e:
+        raise StageError(f"crosscheck.toml: missing required key {e.args[0]!r}", EXIT_CONFIG) from e
+    except (ident.IdentError, TypeError, ValueError, AttributeError) as e:
+        raise StageError(f"crosscheck.toml: {e}", EXIT_CONFIG) from e
+
+
+def _load(path: str | Path) -> Config:
     p = Path(path)
     if not p.is_file():
         raise StageError(f"config not found: {p}", EXIT_CONFIG)

@@ -1,0 +1,5 @@
+# reason stage: SHACL with pySHACL/rdflib and OWL with HermiT through owlready2 (HermiT also needs Java 11+).
+-r core.txt
+owlready2==0.51
+pyshacl==0.40.1
+rdflib==7.6.0

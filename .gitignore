@@ -13,3 +13,13 @@ node_modules/
 # local secrets and deny-lists stay outside the repository
 .env
 *.denylist
+
+# OS, editor and tool caches
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp
+*~
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/

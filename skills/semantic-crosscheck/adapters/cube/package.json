@@ -1,0 +1,16 @@
+{
+  "name": "semantic-crosscheck-cube-adapter",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Cube Core adapter for semantic-crosscheck; installed by `sxc.py cube-install` with npm ci --ignore-scripts.",
+  "license": "MIT",
+  "main": "server.js",
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@cubejs-backend/postgres-driver": "1.8.3",
+    "@cubejs-backend/server-core": "1.8.3",
+    "express": "4.22.3"
+  }
+}

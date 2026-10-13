@@ -1,0 +1,13 @@
+#!/bin/sh
+# Refuse a push while any blob, commit or tag reachable from a ref contains a secret, an e-mail address outside
+# the allowlist or a deny-listed term (deny-list file named by SXC_DENYLIST, kept outside the repository).
+# A finding in history means rewriting those commits before pushing. Details: tools/leak_scan.py.
+# The maintainer enables the hooks once per clone: git config core.hooksPath .githooks
+cd "$(git rev-parse --show-toplevel)" || exit 2
+for py in python3 python; do
+  if "$py" -c 'import sys; sys.exit(sys.version_info < (3, 8))' >/dev/null 2>&1; then
+    exec "$py" tools/leak_scan.py --history
+  fi
+done
+echo "pre-push: no Python 3.8+ found as python3 or python, so the leak scan could not run" >&2
+exit 2

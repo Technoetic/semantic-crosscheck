@@ -1,0 +1,130 @@
+name: Tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  unit:
+    name: unit / ${{ matrix.os }} / Python ${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python: ['3.11', '3.13']
+    env:
+      PYTHONUTF8: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install core requirements
+        run: python -m pip install --disable-pip-version-check -r requirements/core.txt
+      - name: Command line starts
+        run: python skills/semantic-crosscheck/scripts/sxc.py --version
+      # Only the core requirements are installed here: database tests skip without SXC_TEST_ADMIN_DSN, and
+      # tests that need the reason packages or the Cube adapter skip when those are absent.
+      - name: Unit tests
+        run: python -m unittest discover -s tests -v
+      - name: Compile Python sources
+        run: python -m compileall -q skills/semantic-crosscheck/scripts tests tools
+
+  integration:
+    name: integration / PostgreSQL 17, HermiT, Cube
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          # Throw-away password for a container that exists only for this job. It is an expression so
+          # that no literal credential is committed (tools/leak_scan.py rejects literal passwords).
+          POSTGRES_PASSWORD: ci-${{ github.run_id }}-admin
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      PYTHONUTF8: '1'
+      PGPASSWORD: ci-${{ github.run_id }}-admin
+      SXC_TEST_ADMIN_DSN: postgresql://postgres@127.0.0.1:5432/postgres
+      SXC_TEST_ROLE_PASSWORD: ci-${{ github.run_id }}-roles
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: '21'
+          java-package: jre
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+      - name: Point the tests at Java and the Cube install directory
+        run: |
+          echo "SXC_JAVA=$JAVA_HOME/bin/java" >> "$GITHUB_ENV"
+          echo "SXC_CUBE_HOME=$RUNNER_TEMP/sxc-cube" >> "$GITHUB_ENV"
+      - name: Install reason requirements
+        run: python -m pip install --disable-pip-version-check -r requirements/reason.txt
+      - name: Install the pinned Cube adapter
+        run: python skills/semantic-crosscheck/scripts/sxc.py cube-install
+      # Fail here instead of letting the integration tests skip silently.
+      - name: Integration prerequisites are live
+        working-directory: tests
+        run: |
+          python - <<'EOF'
+          import os
+          from pathlib import Path
+
+          import pgfixture
+          from semantic_crosscheck import cube_run, db
+
+          os.environ["SXC_CI_PROBE_DSN"] = os.environ["SXC_TEST_ADMIN_DSN"]
+          conn = db.connect("SXC_CI_PROBE_DSN")
+          try:
+              assert db.server_version_num(conn) >= 170000, "PostgreSQL 17 or later is required"
+          finally:
+              conn.close()
+          assert Path(os.environ["SXC_JAVA"]).is_file(), "SXC_JAVA does not name a file"
+          assert cube_run.installed(cube_run.cube_home()), "the Cube adapter is not installed"
+          print("integration prerequisites: ok")
+          EOF
+      - name: Unit and integration tests
+        run: python -m unittest discover -s tests -v
+
+  hygiene:
+    name: whitespace and leak scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+      # Compare the committed tree with git's empty tree so every tracked file is checked; a bare
+      # `git diff --check` only compares the working tree with the index, which is clean after checkout.
+      - name: Whitespace validation (whole committed tree)
+        run: git diff --check 4b825dc642cb6eb9a060e54bf8d69288fbee4904 HEAD
+      # Generic patterns only. A deny-list never exists in CI: SXC_DENYLIST is forced empty.
+      - name: Leak scan
+        env:
+          SXC_DENYLIST: ''
+        run: python tools/leak_scan.py

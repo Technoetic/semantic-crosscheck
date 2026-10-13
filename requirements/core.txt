@@ -1,0 +1,2 @@
+# Core: every stage except reason. Exact pins; reason.txt includes this file.
+pg8000==1.31.5

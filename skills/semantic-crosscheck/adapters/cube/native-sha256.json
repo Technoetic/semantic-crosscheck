@@ -1,0 +1,33 @@
+{
+  "cube_version": "1.8.3",
+  "package": "@cubejs-backend/native",
+  "build": "fallback",
+  "member": "native/index.node",
+  "assets": {
+    "win32-x64-unknown": {
+      "url": "https://github.com/cube-js/cube/releases/download/v1.8.3/native-win32-x64-unknown-fallback.tar.gz",
+      "sha256": "fe2bf57b8b8df27d684522336278ac89f29b48178476fd2bdfcd41b9b19034f9",
+      "size": 19914228
+    },
+    "linux-x64-glibc": {
+      "url": "https://github.com/cube-js/cube/releases/download/v1.8.3/native-linux-x64-glibc-fallback.tar.gz",
+      "sha256": "ce1dbf27c3e990452731edec2dff91406d1cda42183646185bdfb3b132a11909",
+      "size": 22213579
+    },
+    "linux-arm64-glibc": {
+      "url": "https://github.com/cube-js/cube/releases/download/v1.8.3/native-linux-arm64-glibc-fallback.tar.gz",
+      "sha256": "e113ae52844e694ad7f38abdf37adcd473a463f6295100678c85d9c15786bac8",
+      "size": 22298112
+    },
+    "darwin-x64-unknown": {
+      "url": "https://github.com/cube-js/cube/releases/download/v1.8.3/native-darwin-x64-unknown-fallback.tar.gz",
+      "sha256": "ceec1e66d1c99f9967c1eaad9d867f0726b5039da6d4046247820e839a623f32",
+      "size": 20657370
+    },
+    "darwin-arm64-unknown": {
+      "url": "https://github.com/cube-js/cube/releases/download/v1.8.3/native-darwin-arm64-unknown-fallback.tar.gz",
+      "sha256": "052ada8b4e4fda6f50804edd646e35798c1f831fe648136c3211ad8f404cc14a",
+      "size": 19352304
+    }
+  }
+}

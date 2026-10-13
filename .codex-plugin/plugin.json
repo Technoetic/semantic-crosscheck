@@ -1,0 +1,38 @@
+{
+  "name": "semantic-crosscheck",
+  "version": "0.1.0",
+  "description": "Cross-layer verification for an ontology plus semantic layer on PostgreSQL 17, for Codex and Claude Code.",
+  "author": {
+    "name": "전문준"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Semantic Crosscheck",
+    "shortDescription": "Prove that a PostgreSQL closure, SHACL rules, OWL reasoning and a Cube model agree.",
+    "longDescription": "Release v0.1.0: generates a PostgreSQL 17 hierarchy closure, SQL and SHACL data rules, an OWL ontology checked with HermiT and a Cube data model from one crosscheck.toml, then checks that the layers agree with each other and with hand-written gold SQL (strict compare, strata sweep, query shapes, mutation tests). Source data is only read, results carry counts and ids but never row values, and whatever a run cannot prove is reported as not_proven instead of passing.",
+    "developerName": "Technoetic",
+    "category": "Coding",
+    "capabilities": [
+      "Read",
+      "Write"
+    ],
+    "websiteURL": "https://github.com/Technoetic/semantic-crosscheck",
+    "defaultPrompt": [
+      "Use semantic-crosscheck to run the synthetic demo end to end.",
+      "Use semantic-crosscheck to verify my crosscheck.toml against PostgreSQL and explain what is not proven."
+    ]
+  },
+  "homepage": "https://github.com/Technoetic/semantic-crosscheck",
+  "repository": "https://github.com/Technoetic/semantic-crosscheck",
+  "license": "MIT",
+  "keywords": [
+    "postgresql",
+    "ontology",
+    "owl",
+    "shacl",
+    "semantic-layer",
+    "cube",
+    "codex",
+    "claude-code"
+  ]
+}

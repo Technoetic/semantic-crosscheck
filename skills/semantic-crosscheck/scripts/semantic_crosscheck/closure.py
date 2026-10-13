@@ -183,6 +183,8 @@ def build(conn, cfg, h) -> tuple[list[tuple], list[str]]:
             checks.append((f"closure:{h.name}", "fail", ref, {**stats, "reason": "cycle", "closure_applied": False}))
             return checks, b.sql_log
         stats["dropped_cycle_edges"] = b.drop_cycle_edges()
+    else:
+        b.run(f"DROP TABLE IF EXISTS {b.cycles}")   # examples left by an earlier run describe cycles that are gone
     lv = b.levels()
     if lv.get("depth_limit_exceeded"):
         checks.append((f"closure:{h.name}", "fail", ref, {**stats, "reason": "depth_limit", "max_depth": h.max_depth, "closure_applied": False}))

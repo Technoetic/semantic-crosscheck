@@ -86,7 +86,7 @@ def serve(cfg, run_dir: Path, log_path: Path | None = None):
         raise StageError(f"Cube adapter is not installed in {home}: run `sxc.py cube-install`", EXIT_ENV)
     node = shutil.which("node")
     if not node:
-        raise StageError("node (Node.js >= 18) is not on PATH", EXIT_ENV)
+        raise StageError("node (Node.js >= 20) is not on PATH", EXIT_ENV)
     run_dir = Path(run_dir)
     if not (run_dir / "model").is_dir():
         raise StageError(f"no model directory in {run_dir}", EXIT_ENV)
@@ -132,5 +132,7 @@ def serve(cfg, run_dir: Path, log_path: Path | None = None):
         except subprocess.TimeoutExpired:
             proc.kill()
             proc.wait(timeout=10)
+        t.join(timeout=10)             # let the pump drain the pipe before its file and the log are closed
+        proc.stdout.close()
         if log:
             log.close()

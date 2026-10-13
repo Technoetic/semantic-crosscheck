@@ -13,7 +13,17 @@
 // local debugging; the log can then hold row values and must not be shared.
 process.env.CUBEJS_TELEMETRY = 'false';
 const DEBUG = process.env.SXC_CUBE_DEBUG === '1';
-const print = { log: console.log.bind(console), error: console.error.bind(console) };
+// Lines are written synchronously: process.exit() may follow at once, and on POSIX writes to a pipe are otherwise
+// asynchronous, so a buffered line could be lost.
+const fs = require('fs');
+const writeLine = (fd, text) => {
+  try {
+    fs.writeSync(fd, `${text}\n`);
+  } catch (e) {
+    (fd === 1 ? process.stdout : process.stderr).write(`${text}\n`);
+  }
+};
+const print = { log: (text) => writeLine(1, text), error: (text) => writeLine(2, text) };
 
 const firstLine = (text) => String(text).split(/\r?\n/, 1)[0];
 const scrub = (text) => firstLine(text)
@@ -94,10 +104,11 @@ Promise.resolve(core.initApp(app))
   .then(() => {
     const server = app.listen(Number(process.env.SXC_PORT || 0), '127.0.0.1', () => {
       print.log('SXC_READY ' + server.address().port);
+      // The runner keeps stdin open; when it closes (normal stop or the runner died) the adapter exits. Listening
+      // for that only after the ready line is written keeps an early end of input from cutting the line off.
+      process.stdin.on('end', () => process.exit(0));
+      process.stdin.resume();
     });
-    // The runner keeps stdin open; when it closes (normal stop or the runner died) the adapter exits.
-    process.stdin.on('end', () => process.exit(0));
-    process.stdin.resume();
   })
   .catch((e) => {
     report('SXC_ERROR', 'startup failed', e);

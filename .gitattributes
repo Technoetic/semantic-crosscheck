@@ -1,0 +1,4 @@
+# Keep LF everywhere so release archives and hashes are identical on every platform.
+* text=auto eol=lf
+*.gz binary
+*.png binary

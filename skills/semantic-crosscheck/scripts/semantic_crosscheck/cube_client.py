@@ -1,0 +1,78 @@
+"""Minimal Cube REST client using only the standard library.
+
+- HS256 JWT signed with the per-run API secret (kept in memory, passed to the Cube adapter by environment).
+- /cubejs-api/v1/load is polled while Cube answers {"error": "Continue wait"}.
+- Never sends renewQuery (Cube 1.8 rejects it) and always sets an explicit limit (the default is 10,000 rows).
+"""
+
+import base64
+import hashlib
+import hmac
+import json
+import time
+import urllib.error
+import urllib.request
+
+DEFAULT_LIMIT = 50000
+
+
+def _b64(b: bytes) -> str:
+    return base64.urlsafe_b64encode(b).rstrip(b"=").decode()
+
+
+def jwt(secret: str, ttl: int = 3600) -> str:
+    now = int(time.time())
+    head = _b64(json.dumps({"alg": "HS256", "typ": "JWT"}, separators=(",", ":")).encode())
+    body = _b64(json.dumps({"iat": now, "exp": now + ttl}, separators=(",", ":")).encode())
+    sig = _b64(hmac.new(secret.encode(), f"{head}.{body}".encode(), hashlib.sha256).digest())
+    return f"{head}.{body}.{sig}"
+
+
+class CubeError(Exception):
+    pass
+
+
+class CubeClient:
+    def __init__(self, base_url: str, secret: str, timeout_s: float = 120.0):
+        self.base = base_url.rstrip("/")
+        self.secret = secret
+        self.timeout_s = timeout_s
+
+    def _req(self, path: str, payload: dict | None = None):
+        data = json.dumps(payload).encode() if payload is not None else None
+        req = urllib.request.Request(self.base + path, data=data, headers={"Content-Type": "application/json", "Authorization": jwt(self.secret)})
+        try:
+            with urllib.request.urlopen(req, timeout=30) as r:
+                return json.loads(r.read())
+        except urllib.error.HTTPError as e:
+            body = e.read().decode("utf-8", "replace")[:500]
+            raise CubeError(f"HTTP {e.code}: {body}") from e
+
+    def ready(self) -> bool:
+        try:
+            with urllib.request.urlopen(self.base + "/readyz", timeout=5) as r:
+                return r.status == 200
+        except Exception:  # noqa: BLE001
+            return False
+
+    def meta(self) -> dict:
+        return self._req("/cubejs-api/v1/meta")
+
+    def load(self, query: dict) -> list[dict]:
+        q = dict(query)
+        q.pop("renewQuery", None)
+        q.setdefault("limit", DEFAULT_LIMIT)
+        deadline = time.time() + self.timeout_s
+        while True:
+            r = self._req("/cubejs-api/v1/load", {"query": q})
+            if r.get("error") == "Continue wait":
+                if time.time() > deadline:
+                    raise CubeError("timed out waiting for Cube")
+                time.sleep(0.25)
+                continue
+            if "error" in r:
+                raise CubeError(str(r["error"])[:500])
+            data = r.get("data", [])
+            if len(data) >= q["limit"]:
+                raise CubeError(f"result reached the limit ({q['limit']}); raise the limit or page the query")
+            return data

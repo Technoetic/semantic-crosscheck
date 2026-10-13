@@ -1,0 +1,214 @@
+# semantic-crosscheck demo configuration (synthetic parts / BOM / orders / stock).
+# Generated SQL and Cube YAML are derived from this file; fix this file, never the generated output.
+version = 1
+
+[source]
+dsn_env = "SXC_PG_DSN"              # check role: read-only on the source schema, writes only to output_schema
+owner_dsn_env = "SXC_PG_OWNER_DSN"  # loader role used by /xc-demo only
+schemas = ["sxc_demo"]
+output_schema = "sxc_out"
+statement_timeout_ms = 120000
+
+[entities.part]
+table = "sxc_demo.part"
+key = ["part_id"]
+
+[entities.bom_line]
+table = "sxc_demo.bom_line"
+key = ["parent_id", "child_id", "line_no"]
+
+[entities.sales_order]
+table = "sxc_demo.sales_order"
+key = ["order_id"]
+
+[entities.stock]
+table = "sxc_demo.stock"
+key = ["part_id", "location_id"]
+
+[hierarchies.has_component]
+edge = "bom_line"
+node = "part"
+parent = "parent_id"
+child = "child_id"
+quantity = "qty_per"
+max_depth = 32
+on_cycle = "error"
+
+[[shapes]]
+id = "child_exists"
+target = "bom_line"
+path = "child_id"
+class = "part"
+fk_ddl = "review_only"
+
+[[shapes]]
+id = "qty_positive"
+target = "bom_line"
+path = "qty_per"
+min_exclusive = 0
+
+[[shapes]]
+id = "stock_nonnegative"
+target = "stock"
+path = "qty"
+min_inclusive = 0
+severity = "warning"
+
+[[shapes]]
+id = "open_le_total"
+target = "sales_order"
+sql_violation = "t.qty_open > t.qty_total"
+
+[measures.firm_open]
+entity = "sales_order"
+column = "qty_open"
+agg = "sum"
+by = "part_id"
+filter = { status = ["FIRM"] }
+closure_join = "ancestor"
+
+[measures.firm_open_dated]
+entity = "sales_order"
+column = "qty_open"
+agg = "sum"
+by = "part_id"
+filter = { status = ["FIRM"] }
+date_column = "due_date"
+
+[measures.on_hand]
+entity = "stock"
+column = "qty"
+agg = "sum"
+by = "part_id"
+filter_normalized = { location_id = ["MAIN", "SUB"] }
+
+[measures.consigned]
+entity = "stock"
+column = "qty"
+agg = "sum"
+by = "part_id"
+filter_normalized = { location_id = ["CONSIGN"] }
+
+[ontology]
+iri = "https://example.org/sxc-demo#"
+hierarchy = "has_component"
+class_column = "part_class"
+classes = { product = "Product", assembly = "Assembly", component = "Component", raw = "RawMaterial" }
+no_children = ["raw"]
+
+[[ontology.defined]]
+name = "Composite"
+kind = "has_child"
+
+[[ontology.defined]]
+name = "UsedAsPart"
+kind = "has_parent"
+
+[[ontology.defined]]
+name = "ContainsRaw"
+kind = "contains_class"
+class = "raw"
+
+[[ontology.defined]]
+name = "ProductUsedAsPart"
+kind = "class_used_as_part"
+class = "product"
+
+[cube]
+version = "1.8.3"
+port = 0                # 0 = ephemeral port on 127.0.0.1
+
+[verify]
+sweep_k = 40
+seed = 7
+mutation_operators = "default"
+mutant_bindings = 3
+
+[output]
+show_rows = 0
+
+[[gold]]
+id = "q01_explosion"
+sql = "gold/q01_explosion.sql"
+key = "part_id"
+[gold.cube_query]
+dimensions = ["has_component_closure.descendant", "has_component_closure.min_depth", "has_component_closure.max_depth", "has_component_closure.path_count", "has_component_descendant.part_class"]
+measures = ["has_component_closure.qty"]
+filters = [{ member = "has_component_closure.ancestor", operator = "equals", values = [":root"] }]
+[gold.map]
+part_id = "has_component_closure.descendant"
+part_class = "has_component_descendant.part_class"
+min_depth = "has_component_closure.min_depth"
+max_depth = "has_component_closure.max_depth"
+path_count = "has_component_closure.path_count"
+qty = "has_component_closure.qty"
+[gold.params.root]
+strata = ["top", "mid", "deep", "leaf_parent", "empty"]
+
+[[gold]]
+id = "q02_where_used"
+sql = "gold/q02_where_used.sql"
+key = "part_id"
+zero_if_null = ["firm_open"]
+[gold.cube_query]
+dimensions = ["has_component_closure.ancestor", "has_component_closure.min_depth", "has_component_closure.max_depth", "has_component_closure.path_count", "has_component_ancestor.part_class"]
+measures = ["has_component_closure.qty", "m_firm_open.value"]
+filters = [{ member = "has_component_closure.descendant", operator = "equals", values = [":part"] }]
+[gold.map]
+part_id = "has_component_closure.ancestor"
+part_class = "has_component_ancestor.part_class"
+min_depth = "has_component_closure.min_depth"
+max_depth = "has_component_closure.max_depth"
+path_count = "has_component_closure.path_count"
+qty = "has_component_closure.qty"
+firm_open = "m_firm_open.value"
+[gold.params.part]
+strata = ["shared", "mid", "leaf", "top"]
+
+[[gold]]
+id = "q03_stock"
+sql = "gold/q03_stock.sql"
+key = "part_id"
+zero_if_null = ["on_hand", "consigned"]
+[gold.cube_query]
+dimensions = ["part.part_id", "part.part_class"]
+measures = ["m_on_hand.value", "m_consigned.value"]
+filters = [{ member = "part.part_class", operator = "equals", values = [":part_class"] }]
+[gold.map]
+part_id = "part.part_id"
+part_class = "part.part_class"
+on_hand = "m_on_hand.value"
+consigned = "m_consigned.value"
+[gold.params.part_class]
+values_of = "part.part_class"
+
+[[gold]]
+id = "q04_depth_histogram"
+sql = "gold/q04_depth_histogram.sql"
+key = "max_depth"
+[gold.cube_query]
+dimensions = ["has_component_closure.max_depth"]
+measures = ["has_component_closure.pairs"]
+[gold.map]
+max_depth = "has_component_closure.max_depth"
+pairs = "has_component_closure.pairs"
+
+[[gold]]
+id = "q05_firm_window"
+sql = "gold/q05_firm_window.sql"
+key = "part_id"
+param_sets = [
+  { date_from = "2026-01-01", date_to = "2026-03-31" },
+  { date_from = "2026-04-01", date_to = "2026-06-30" },
+  { date_from = "2026-07-01", date_to = "2026-12-31" },
+  { date_from = "2026-01-01", date_to = "2026-12-31" },
+  { date_from = "1990-01-01", date_to = "2100-12-31" },
+  { date_from = "2030-01-01", date_to = "2030-12-31" },
+]
+[gold.cube_query]
+dimensions = ["m_firm_open_dated.key"]
+measures = ["m_firm_open_dated.value"]
+timeDimensions = [{ dimension = "m_firm_open_dated.ts", dateRange = [":date_from", ":date_to"] }]
+[gold.map]
+part_id = "m_firm_open_dated.key"
+firm_open = "m_firm_open_dated.value"

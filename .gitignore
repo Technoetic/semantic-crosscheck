@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# harness output (results, generated model, logs, samples)
+.sxc/
+
+# Cube adapter installs live outside the repository; never commit node_modules
+node_modules/
+
+# local secrets and deny-lists stay outside the repository
+.env
+*.denylist

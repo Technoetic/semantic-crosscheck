@@ -20,8 +20,9 @@ An inconsistent ontology entails every statement, so the V5 checks are then not_
 Prerequisites: build/result.json and build/shapes.ttl of a build of the same configuration (a shapes.ttl that differs
 from what the configuration generates is exit 2: rerun build). A missing component is exit 3 naming it, unless --only
 leaves its part out: rdflib and pySHACL for shacl, owlready2 and Java (SXC_JAVA or PATH) for owl. The size limits
-verify.shacl_max_rows and verify.owl_max_individuals are checked by counting first; a part above its limit runs no
-checks and is listed in not_proven. Database reads are READ ONLY transactions; results keep counts and ids only.
+verify.shacl_max_rows and verify.owl_max_individuals are checked by counting first; a part above its limit leaves
+explicit not_run checks and a not_proven explanation. Database reads are READ ONLY transactions; results keep
+counts and ids only.
 """
 
 import importlib
@@ -172,6 +173,9 @@ def _shacl(conn, cfg, build: dict, planned: list, ttl: str, res: Result) -> None
     try:
         compared = shacl_check.run(conn, cfg, ttl)
     except shacl_check.TooManyRows as e:
+        for shape in planned:
+            res.add(f"shacl:{shape.id}", "not_run", shapes.config_ref(cfg, shape),
+                    reason="resource_limit", rows=e.rows, limit=e.limit)
         res.not_proven.append(f"shacl: {e.rows} rows to export exceed verify.shacl_max_rows = {e.limit}; no shape was "
                               "compared with SHACL")
         return
@@ -232,6 +236,9 @@ def _owl(conn, cfg, build: dict, java: str, res: Result) -> None:
     try:
         graph, sql_pairs, sql_members = owl.read(conn, cfg, closure_ready=not why)
     except owl.TooManyIndividuals as e:
+        res.add("owl:consistency", "not_run", "ontology", reason="resource_limit",
+                individuals=e.individuals, limit=e.limit)
+        _v5_not_run(cfg, res, "resource_limit")
         res.not_proven.append(f"owl: {e.individuals} individuals exceed verify.owl_max_individuals = {e.limit}; the OWL "
                               "checks were not run")
         return
@@ -323,6 +330,9 @@ def next_action(cfg, res: Result) -> str:
     reasons = {c.detail.get("reason") for c in checks if c.status == "not_run"}
     if reasons & set(BUILD_REASONS):
         return "some checks need a passing build: fix the build failures, rerun `sxc.py build`, then rerun reason"
+    if "resource_limit" in reasons:
+        return ("selected checks exceeded a resource limit: review verify.shacl_max_rows, verify.owl_max_individuals "
+                "and the input size, then rerun reason" + (" without --only" if narrowed else ""))
     if "cycle_edges_dropped" in reasons:
         return ("the closure leaves out the edges inside cycles (on_cycle = report): fix the cycles in the data so V5 "
                 "compares the whole hierarchy, then rerun build and reason")

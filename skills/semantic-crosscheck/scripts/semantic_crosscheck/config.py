@@ -70,6 +70,14 @@ def _top_level(raw: dict):
         _err(unknown[0], f"unknown top-level key (expected {', '.join(TABLES)})")
 
 
+def _known_keys(table: dict, allowed: tuple[str, ...], ref: str):
+    """Reject unimplemented options without echoing values or arbitrary quoted key text."""
+    if not isinstance(table, dict):
+        _err(ref, "must be a table")
+    if set(table) - set(allowed):
+        _err(ref, f"unknown configuration key (allowed: {', '.join(allowed)})")
+
+
 def _decimal(ref: str, v) -> Decimal:
     if isinstance(v, bool) or not isinstance(v, (int, float, str)):
         _err(ref, f"bound must be a number, got {v!r}")
@@ -290,6 +298,7 @@ def _load(path: str | Path) -> Config:
     for name, e in raw.get("entities", {}).items():
         ref = f"entities.{name}"
         ident.check(name)
+        _known_keys(e, ("table", "key"), ref)
         if not e.get("key"):
             _err(ref, "key is required")
         schema, _t = ident.split(e["table"])
@@ -408,6 +417,7 @@ def _load(path: str | Path) -> Config:
 
     o = raw.get("ontology", {})
     if o:
+        _known_keys(o, ("iri", "hierarchy", "class_column", "classes", "no_children", "defined"), "ontology")
         ont = Ontology(iri=o.get("iri", Ontology.iri), hierarchy=o.get("hierarchy", ""), class_column=o.get("class_column", ""),
                        classes=dict(o.get("classes", {})), no_children=list(o.get("no_children", [])))
         if not ont.hierarchy or ont.hierarchy not in cfg.hierarchies:
@@ -425,6 +435,7 @@ def _load(path: str | Path) -> Config:
             if v not in ont.classes:
                 _err("ontology.no_children", f"{v!r} is not a key of ontology.classes")
         for j, d in enumerate(o.get("defined", [])):
+            _known_keys(d, ("name", "kind", "class"), f"ontology.defined[{j}]")
             dd = Defined(name=d["name"], kind=d["kind"], cls=d.get("class", ""))
             if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", dd.name) or dd.name in ont.classes.values():
                 _err(f"ontology.defined[{j}]", f"bad or duplicate defined class name {dd.name!r}")
@@ -473,6 +484,7 @@ def _load(path: str | Path) -> Config:
                 _err(ref, "timeDimensions with granularity are not supported (use a dateRange filter)")
         for pname, spec in params.items():
             ident.check(pname)
+            _known_keys(spec, ("strata", "values_of", "values", "hierarchy"), f"{ref} params.{pname}")
             pp = Param(name=pname, strata=list(spec.get("strata", [])), values_of=spec.get("values_of", ""),
                        values=list(spec.get("values", [])), hierarchy=spec.get("hierarchy", ""))
             given = [bool(pp.strata), bool(pp.values_of), bool(pp.values)]

@@ -76,5 +76,5 @@ Fix `crosscheck.toml` (or the data), never `shapes.ttl` or the generated views.
 - Exit code 2: no build result, or `build/shapes.ttl` no longer matches the shapes in `crosscheck.toml`
   (rerun build first). Exit code 3: a missing package or Java for a part that runs (the message names it
   and offers `--only` for the other part), or no connection. Size limits come from
-  `verify.shacl_max_rows` and `verify.owl_max_individuals`: a part above its limit runs no checks and is
-  listed as not proven.
+  `verify.shacl_max_rows` and `verify.owl_max_individuals`: a part above its limit leaves explicit
+  `not_run` checks and an explanation in `not_proven`, so neither reason nor report can pass.

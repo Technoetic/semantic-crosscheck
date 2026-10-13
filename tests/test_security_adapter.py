@@ -1,9 +1,10 @@
 """The Cube adapter's log lines carry no row values: the real server.js against stand-ins for express and Cube.
 
 server.js prints into a server.log next to the results, and agents are pointed at results. PostgreSQL and Cube error
-messages quote the values they choke on (an id compared with a number column is echoed back), so the adapter logs an
-error only as its class and first line with quoted text, numbers and SQL removed, hides free-form console output of
-the Cube packages, and prints the full text only when SXC_CUBE_DEBUG=1. The stand-in modules make server.js call its
+messages quote the values they choke on (an id compared with a number column is echoed back) in a quoting style that
+depends on the server's language, so the adapter logs a query error only as its class, code and a coarse category,
+keeps model compile errors (they quote only the generated model), hides free-form console output of the Cube
+packages, and prints the full text only when SXC_CUBE_DEBUG=1. The stand-in modules make server.js call its
 logger with errors shaped like Cube's (a stack string, a pg error object, a message quoting SQL) and print console
 chatter; no database, Cube install or network is needed, only node on PATH.
 """
@@ -51,6 +52,10 @@ class CubejsServerCore {
     pg.code = '22P02';
     log('Orchestrator error', { error: pg });
     log('Dropping Cache', { error: "Error: SELECT * FROM t WHERE k = 'P-000789'" });
+    log('Error querying db', { error: 'Error: ung\\u00fcltige Eingabesyntax f\\u00fcr Typ integer: \\u00bbP-000123\\u00ab' });
+    log('Error querying db', { error: 'Error: syntaxe en entr\\u00e9e invalide pour le type integer : \\u00ab P-000456 \\u00bb' });
+    log('Error querying db', { error: 'Error: canceling statement due to statement timeout' });
+    log('Compiling schema', { error: 'Error: Compile errors:\\nm_x cube: unknown member part.nope' });
     log('Performing query', { query: 'SELECT 1', values: ['P-000789'] });
     console.log('pool says', 'FIRM', 4242);
     console.error('again FIRM');
@@ -84,15 +89,22 @@ class AdapterLogTest(unittest.TestCase):
             with self.subTest(value=value):
                 self.assertFalse([ln for ln in lines if value in ln], f"{value} reached the log")
 
-    def test_errors_are_logged_as_class_and_redacted_first_line(self):
+    def test_errors_are_logged_as_class_code_and_category_only(self):
+        """No message text of a query error survives, whatever quoting the server's language uses (German and French
+        guillemets included); model compile errors are kept because they quote only the generated model."""
         code, lines = self.run_adapter()
         self.assertEqual(code, 0, lines)
         self.assert_no_values(lines)
         self.assertIn("SXC_READY 4321", lines)
-        self.assertIn("SXC_CUBE_ERROR Error while querying: error: invalid input syntax for type integer: <v>", lines)
-        self.assertIn("SXC_CUBE_ERROR Orchestrator error: error: invalid input syntax for type integer: <v> [22P02]", lines)
-        self.assertIn("SXC_CUBE_ERROR Dropping Cache: Error: <sql>", lines)
-        self.assertEqual(sum(ln.startswith("SXC_CUBE_ERROR") for ln in lines), 3, "events without an error are dropped")
+        self.assertIn("SXC_CUBE_ERROR Error while querying: Error", lines)
+        self.assertIn("SXC_CUBE_ERROR Orchestrator error: Error [22P02]", lines)
+        self.assertIn("SXC_CUBE_ERROR Dropping Cache: Error", lines)
+        self.assertEqual(lines.count("SXC_CUBE_ERROR Error querying db: Error"), 2)
+        self.assertIn("SXC_CUBE_ERROR Error querying db: Error (timeout)", lines)
+        self.assertIn("SXC_CUBE_ERROR Compiling schema: Error (model): Error: Compile errors: m_x cube: unknown member part.nope",
+                      lines)
+        self.assertFalse([ln for ln in lines if "»" in ln or "«" in ln or "integer" in ln], "message text dropped")
+        self.assertEqual(sum(ln.startswith("SXC_CUBE_ERROR") for ln in lines), 7, "events without an error are dropped")
         self.assertEqual([ln for ln in lines if ln.startswith("SXC_CONSOLE")],
                          ["SXC_CONSOLE console output of the Cube packages is hidden (SXC_CUBE_DEBUG=1 shows it)"])
         self.assertFalse([ln for ln in lines if "Parser" in ln or "x.js" in ln], "stack frames are dropped")
@@ -102,15 +114,15 @@ class AdapterLogTest(unittest.TestCase):
         code, lines = self.run_adapter(SXC_CUBE_DEBUG="1")
         self.assertEqual(code, 0, lines)
         debug = [ln for ln in lines if ln.startswith("SXC_DEBUG")]
-        self.assertEqual(len(debug), 3)
+        self.assertEqual(len(debug), 7)
         self.assertIn('"P-000123"', debug[0])
         self.assertIn("pool says FIRM 4242", lines)
-        self.assertIn("SXC_CUBE_ERROR Error while querying: error: invalid input syntax for type integer: <v>", lines,
+        self.assertIn("SXC_CUBE_ERROR Error while querying: Error", lines,
                       "the redacted line stays, so the runner's startup message never quotes values")
 
     def test_startup_failures_are_redacted_too(self):
-        for mode, prefix in (("throw", "SXC_ERROR uncaught exception: Error: cannot load value <v> at <n>"),
-                             ("reject", "SXC_ERROR startup failed: Error: startup failed for <v>")):
+        for mode, prefix in (("throw", "SXC_ERROR uncaught exception: Error"),
+                             ("reject", "SXC_ERROR startup failed: Error")):
             with self.subTest(mode=mode):
                 code, lines = self.run_adapter(FAKE_MODE=mode)
                 self.assertEqual(code, 1, lines)

@@ -68,5 +68,5 @@ stages it depends on and passed.
   line names, in the order it gives, then `report`.
 - No stage results at all: check that `--config` and `--out` point at the directory the other stages
   wrote to.
-- Editing `crosscheck.toml` or a gold SQL file without rerunning any stage is not detected (the results
-  carry no fingerprint of their inputs): after such an edit rerun the pipeline before reporting.
+- Editing `crosscheck.toml` or a gold SQL file after a run makes the stages that read it stale
+  (`why=inputs_changed`): every result records a fingerprint of those files, taken before the stage ran.

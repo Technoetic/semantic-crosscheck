@@ -4,24 +4,36 @@
 //   CUBEJS_DB_* connection settings, CUBEJS_API_SECRET (random per run), SXC_PORT (0 = ephemeral),
 //   SXC_MODEL_DIR (relative to the working directory, default "model"), SXC_CUBE_DEBUG ("1" = full error text).
 // Everything printed here lands in a server.log next to the results. Request logs are dropped because they contain
-// query filter values, and PostgreSQL and Cube error messages quote values too (an id compared with a number column
-// is echoed back), so by default an error is logged as one line: its class and first line with quoted text, numbers
-// and SQL removed. Free-form console output of the Cube packages cannot be cleaned that way, so it is replaced by one
-// notice. SXC_CUBE_DEBUG=1 adds the full text for local debugging; the log can then hold row values and must not be
-// shared.
+// query filter values. PostgreSQL and Cube error messages quote values too (an id compared with a number column is
+// echoed back), in a quoting style that depends on the server's message language ('x', "x", »x«, « x », 「x」, ...),
+// so by default no message text of a query error is kept at all: a line names the error class, the SQLSTATE or error
+// code when there is one, and a coarse category (timeout). Model compile errors are the exception: they come from the
+// generated model (member names and configuration literals, never rows) and are kept so a bad model can be fixed.
+// Free-form console output of the Cube packages is replaced by one notice. SXC_CUBE_DEBUG=1 adds the full text for
+// local debugging; the log can then hold row values and must not be shared.
 process.env.CUBEJS_TELEMETRY = 'false';
 const DEBUG = process.env.SXC_CUBE_DEBUG === '1';
 const print = { log: console.log.bind(console), error: console.error.bind(console) };
 
 const firstLine = (text) => String(text).split(/\r?\n/, 1)[0];
 const scrub = (text) => firstLine(text)
-  .replace(/\b(?:SELECT|WITH|INSERT|UPDATE|DELETE|MERGE|VALUES|FROM|WHERE)\b[\s\S]*$/, '<sql>')
-  .replace(/'(?:[^'\\]|\\.)*'?|"(?:[^"\\]|\\.)*"?|`(?:[^`\\]|\\.)*`?/g, '<v>')
-  .replace(/\b0x[0-9a-fA-F]+\b|\b\d+(?:[.,:/-]\d+)*/g, '<n>')
-  .slice(0, 300);
+  .replace(/[^A-Za-z ]/g, ' ')
+  .replace(/\s+/g, ' ')
+  .trim()
+  .slice(0, 80);
+const messageOf = (err) => String(err instanceof Error ? err.message : err);
+const errorClass = (err) => {
+  const m = /^\s*([A-Za-z][A-Za-z0-9]*(?:Error|Exception))\b/.exec(err instanceof Error ? err.name : String(err));
+  return m ? m[1] : 'Error';
+};
 const summary = (err) => {
   const code = err && typeof err.code === 'string' && /^[A-Z0-9_]{2,40}$/.test(err.code) ? ` [${err.code}]` : '';
-  return scrub(err instanceof Error ? `${err.name}: ${err.message}` : err) + code;
+  const text = messageOf(err);
+  if (/compile errors/i.test(text)) {
+    return `${errorClass(err)}${code} (model): ${text.replace(/\s+/g, ' ').slice(0, 1500)}`;
+  }
+  const category = /time ?out|timed out/i.test(text) ? ' (timeout)' : '';
+  return `${errorClass(err)}${code}${category}`;
 };
 const report = (tag, msg, err) => {
   print.error(`${tag} ${scrub(msg)}: ${summary(err)}`);

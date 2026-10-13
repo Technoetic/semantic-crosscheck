@@ -27,8 +27,10 @@
 -- The harness never connects as the owner role: only `sxc.py demo` uses SXC_PG_OWNER_DSN, and the demo belongs in a
 -- throw-away database.
 --
--- Tested as a superuser on PostgreSQL 17. Without superuser rights (some managed services) an administrator needs
--- CREATEROLE, the right to SET ROLE to both roles and ownership of the database; that variant is not tested.
+-- Tested as a superuser on PostgreSQL 17 (CI runs it that way). Without superuser rights (some managed services) an
+-- administrator needs CREATEROLE with createrole_self_grant = 'set, inherit' (so it can SET ROLE to and inherit
+-- from the roles it creates) and ownership of the database; with 'set' alone the file stops at the grants on the
+-- loader's schema. That variant was checked by hand only; it is not tested in CI.
 
 \set ON_ERROR_STOP on
 

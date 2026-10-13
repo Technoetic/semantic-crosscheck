@@ -81,7 +81,7 @@ def _golds(cfg, args) -> list[tuple[int, object]]:
 
 def _model(out: Path) -> dict:
     if not (out / "cube" / "model").is_dir() or not (out / "cube" / "model.json").is_file():
-        raise StageError(f"run `sxc.py cube` first (no generated model in {out / 'cube'})", EXIT_CONFIG)
+        raise StageError("run `sxc.py cube` first (no generated model in the output directory)", EXIT_CONFIG)
     return cube_gen.load_model(out)
 
 

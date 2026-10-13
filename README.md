@@ -384,8 +384,9 @@ See [SECURITY.md](SECURITY.md) for the threat model, TLS (`sslmode`) and how to 
 - **`cube-install --home DIR`.** The other stages find that install only with `SXC_CUBE_HOME=DIR`; the
   `next:` line says so.
 - **Stale results.** `report` lists a stage as stale when a stage it depends on ran after it: rerun the
-  stages it names, in the order it gives, then `report`. Editing `crosscheck.toml` or a gold SQL file
-  without rerunning anything is not detected: rerun the pipeline after such an edit.
+  stages it names, in the order it gives, then `report`. Each result also records a fingerprint of
+  `crosscheck.toml` and the gold SQL taken before the stage ran, so editing either one makes the stages
+  that read it stale (`why=inputs_changed`) until they are rerun.
 - **`--config` mistyped.** Every stage exits 2 with `--config <name>: no such file`; nothing was run.
 - **Demo tables.** `demo` exits 2 when `sxc_demo` already holds tables with other columns than the
   demo defines; it never drops a table. Use a fresh database. When `demo:load` errors, the `next:` line

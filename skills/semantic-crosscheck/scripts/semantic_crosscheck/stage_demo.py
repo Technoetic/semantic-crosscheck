@@ -107,9 +107,9 @@ def run(cfg, args, out: Path) -> Result:
                                 f"schema {demo.SCHEMA}, then rerun demo")
     elif args.variant == "dirty":
         res.next_safe_action = ("run `sxc.py build` with the same --config and --out, then reason, cube and verify; the "
-                                "dirty variant fails on purpose, and demo/expected.json (planted_defects) names the check "
+                                "dirty variant fails on purpose, and demo/expected.json in the output directory (planted_defects) names the check "
                                 "that shows each planted defect")
     else:
         res.next_safe_action = ("run `sxc.py build` with the same --config and --out, then reason, cube and verify; "
-                                "demo/expected.json holds the reference numbers and the checks to compare them with")
+                                "demo/expected.json in the output directory holds the reference numbers and the checks to compare them with")
     return res

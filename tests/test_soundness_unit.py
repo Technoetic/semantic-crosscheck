@@ -58,7 +58,7 @@ class CanonKindTest(unittest.TestCase):
 
     def test_time_is_one_utc_form(self):
         cube = "2026-01-01T10:30:00.000"
-        self.assertEqual(canon.canon(cube, "time"), "2026-01-01T10:30:00.000000")
+        self.assertEqual(canon.canon(cube, "time"), "2026-01-01T10:30:00.000")
         self.assertTrue(canon.same(dt.datetime(2026, 1, 1, 10, 30), cube, "time"))
         self.assertTrue(canon.same(dt.datetime(2026, 1, 1, 19, 30, tzinfo=dt.timezone(dt.timedelta(hours=9))), cube, "time"))
         self.assertTrue(canon.same(dt.datetime(2026, 1, 1, 10, 30, tzinfo=UTC), "2026-01-01T10:30:00Z", "time"))
@@ -68,7 +68,9 @@ class CanonKindTest(unittest.TestCase):
         self.assertTrue(canon.same(dt.datetime(2026, 1, 5), "2026-01-05T00:00:00.000", "time"), "midnight timestamp")
         self.assertTrue(canon.same(dt.datetime(2026, 1, 5, 0, 0, 0, 500000), "2026-01-05T00:00:00.500", "time"))
         self.assertFalse(canon.same(dt.date(2026, 1, 5), "2026-01-05T00:00:01.000", "time"))
-        self.assertFalse(canon.same(dt.datetime(2026, 1, 5, 0, 0, 0, 1), "2026-01-05T00:00:00.000", "time"))
+        self.assertTrue(canon.same(dt.datetime(2026, 1, 5, 0, 0, 0, 1), "2026-01-05T00:00:00.000", "time"),
+                        "a microsecond is below the millisecond resolution Cube returns")
+        self.assertFalse(canon.same(dt.datetime(2026, 1, 5, 0, 0, 0, 1000), "2026-01-05T00:00:00.000", "time"))
         for bad in ("2026-13-01", "yesterday", "2026-01-01T10:30:00.1234567"):
             self.assertEqual(canon.canon(bad, "time"), canon.canon(bad), bad)
 

@@ -90,9 +90,9 @@ exit 3, so one run lists everything to fix.
   and exits 1.
 - `detail` holds counts, ids of configuration entries and small enums only. **Never row values** (no keys,
   names, quantities from the database), never DSNs or secrets, never local paths. Messages of database errors
-  are not stored (they can quote values); the SQLSTATE is. The one exception to "no local paths" are doctor's
-  install hints (its `next_safe_action` and `not_proven` lines): they name the interpreter, the requirements
-  file and `sxc.py` by absolute path so they work from any working directory.
+  are not stored (they can quote values); the SQLSTATE is. Install hints are stored with the placeholders
+  `<python>` and `<plugin>`, which `sxc.py` expands only when it prints, so a printed hint works from any
+  directory while result files stay path-free (a `--home` directory the user typed is repeated as typed).
 - `res.not_proven` lists what the run could not prove (an empty stratum, an equivalent mutant, a shape compared
   only in SQL, a vacuous defined class, a sampled pair test, a component that is not installed). It does not
   change the status; `report` shows every line.
@@ -137,8 +137,10 @@ exit 3, so one run lists everything to fix.
   proxy settings never see the JWT or filter values, and no `NO_PROXY` entry is needed. `cube-install` downloads
   still honour proxy settings (their content is hash-pinned).
 - **Adapter logs are redacted.** `server.js` drops request logs (they contain filter values) and writes each
-  error as one line, `SXC_CUBE_ERROR <event>: <class>: <first line>` with quoted text replaced by `<v>`, numbers
-  by `<n>` and SQL from its first keyword by `<sql>`, plus `[SQLSTATE]` when known. Startup, uncaught and
+  error as one line, `SXC_CUBE_ERROR <event>: <class> [code] (category)`: no message text at all, because
+  PostgreSQL quotes values in a style that depends on its message language ('x', »x«, « x »). The code is the
+  SQLSTATE when known; the category is `timeout` or `model`, and only model compile errors keep their text
+  (they quote the generated model, never rows). Startup, uncaught and
   unhandled errors use the prefix `SXC_ERROR`. Console output of the Cube packages is replaced by one
   `SXC_CONSOLE` notice. `SXC_CUBE_DEBUG=1` adds `SXC_DEBUG` lines with the full text and lets console output
   through; such a log can hold row values and must stay local. Results and startup error messages never include
@@ -419,8 +421,10 @@ never touches the database.
   `next_safe_action`. An unreadable `result.json` becomes a synthetic `result_file` error for that stage.
   `report.md` renders the same: a status table, missing or stale stages, the checks that did not pass, every
   not-proven line, every stage's next action and the trusted code (`sql_violation` shapes and gold SQL files).
-- Limitation: results carry no fingerprint of their inputs, so editing `crosscheck.toml` or a gold SQL file
-  without rerunning any stage is not detected; rerun the pipeline after such an edit.
+- Inputs: `sxc.py` records `result.inputs_fingerprint(cfg)` (SHA-256 of `crosscheck.toml` and of the gold SQL
+  files) in every result, taken before the stage runs. `report` marks build, reason and cube stale when the
+  configuration changed since they ran, and verify when the configuration or a gold file changed
+  (`reason=stale`, `why=inputs_changed`); a result without a fingerprint cannot be shown to be current.
 
 ## 9. Demo reference (`expected.json`)
 

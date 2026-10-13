@@ -24,6 +24,7 @@ if sys.version_info < (3, 11):   # checked before importing the package, which n
     sys.exit(3)
 
 import argparse  # noqa: E402
+import hashlib  # noqa: E402
 import importlib  # noqa: E402
 import os  # noqa: E402
 import traceback  # noqa: E402
@@ -183,11 +184,21 @@ def main(argv=None) -> int:
             out = (cfg_file.resolve().parent if cfg_file else Path.cwd()) / ".sxc"
         ensure_out(out)
         discard(out, result_name)
+        if stage == "report":
+            for name in ("report.md", "report.json"):
+                (out / name).unlink(missing_ok=True)
+        inputs = {}
         if cfg_file is not None:
+            before = hashlib.sha256(cfg_file.read_bytes()).hexdigest()
             cfg = config.load(cfg_file)
+            # The fingerprint is taken before the stage runs: an edit during the run then leaves the result recorded
+            # with the old inputs, so report sees it as stale instead of certifying files the stage never read.
+            inputs = inputs_fingerprint(cfg)
+            if inputs.get("config_sha256") != before:
+                raise StageError(f"{cfg_file.name} changed while the stage was starting; rerun it", EXIT_CONFIG)
         mod = importlib.import_module(f"semantic_crosscheck.{STAGES[stage]}")
         res = mod.run(cfg, args, out)
-        res.inputs = inputs_fingerprint(cfg)
+        res.inputs = inputs
     except StageError as e:
         res = Result(result_name)
         res.add("stage", "error", "", message=str(e))

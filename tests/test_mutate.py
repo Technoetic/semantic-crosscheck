@@ -186,7 +186,8 @@ class OperatorTest(unittest.TestCase):
                          f"SELECT count(*) FROM {closure_table} WHERE path_count > 1 AND qty <> 0")
         drop = mu[("measure_filter_drop", "firm_open")].witness_sql
         self.assertIn(cube_gen.where_sql(self.cfg.measures["firm_open"]), drop)
-        self.assertTrue(drop.endswith("""AND t."qty_open" IS NOT NULL AND t."qty_open" <> 0"""))
+        self.assertIn("""AND t."qty_open" IS NOT NULL AND t."qty_open" <> 0)""", drop)
+        self.assertEqual(drop.count(' EXCEPT SELECT t."part_id" FROM '), 2, "keys only one filtered row set has")
         self.assertEqual(mu[("closure_end_swap", "has_component")].witness_sql,
                          f'SELECT count(*) FROM {closure_table} p LEFT JOIN "sxc_demo"."part" a ON a."part_id" = p.ancestor '
                          'LEFT JOIN "sxc_demo"."part" d ON d."part_id" = p.descendant WHERE a."part_id" IS DISTINCT FROM d."part_id"')

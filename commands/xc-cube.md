@@ -27,8 +27,8 @@ python "${CLAUDE_PLUGIN_ROOT}/skills/semantic-crosscheck/scripts/sxc.py" cube --
   `default_transaction_read_only=on` and `statement_timeout`, plus `CUBEJS_DB_QUERY_TIMEOUT`). It
   connects with the check role, or with the variable named by `cube.dsn_env`, and gets no other DSN or
   `SXC_*` variable. The client talks to it directly, never through a proxy.
-- Adapter errors go to `.sxc/cube/server.log`, one line each with the error class and its first line,
-  quoted text, numbers and SQL replaced (`SXC_CUBE_ERROR`, `SXC_ERROR`); request logs and console output
+- Adapter errors go to `.sxc/cube/server.log`, one line each with only the error class, its SQLSTATE and a
+  coarse category (`SXC_CUBE_ERROR`, `SXC_ERROR`; model compile errors keep their text); request logs and console output
   of the Cube packages are dropped because they contain values. Cube is stopped when the stage ends.
 - `--out DIR` changes the output directory; `--quiet` prints only the summary line.
 - Codex: replace `${CLAUDE_PLUGIN_ROOT}` as described in

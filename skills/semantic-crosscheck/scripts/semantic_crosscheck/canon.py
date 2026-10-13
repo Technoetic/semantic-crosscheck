@@ -129,7 +129,10 @@ def _time(v):
             t = t.astimezone(_dt.timezone.utc)
     except (OverflowError, ValueError):
         return _untyped(v)
-    return t.replace(tzinfo=None).isoformat(timespec="microseconds")
+    # Cube reads timestamps with millisecond resolution (it truncates the microseconds), so both sides are
+    # compared at milliseconds; anything finer cannot be checked through Cube.
+    t = t.replace(tzinfo=None, microsecond=t.microsecond // 1000 * 1000)
+    return t.isoformat(timespec="milliseconds")
 
 
 def _boolean(v):

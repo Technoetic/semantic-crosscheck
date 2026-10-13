@@ -3,8 +3,8 @@
 
 Anything committed to a public repository is published for good, history included. This scanner runs before a
 commit (.githooks/pre-commit: --staged), before a push (.githooks/pre-push: --history --push-refs -) and in CI
-(--worktree --history on a full clone, plus --extra for a pull request body or downloaded logs). Run it from the
-repository:
+(--worktree --history on a full clone); --extra adds a pull request body or downloaded logs when the maintainer
+scans them. Run it from the repository:
 
     python tools/leak_scan.py                  working tree: tracked files and untracked files git does not ignore
     python tools/leak_scan.py --staged         only the staged blobs
@@ -514,7 +514,7 @@ def history_paths(root: Path, tips: bytes) -> dict[str, str]:
     """{path: a commit listing it} for every path a commit added, changed or deleted. Unlike the names of
     `rev-list --objects`, which name each object once, this lists a second path to the same blob too; -m includes
     paths that only a merge introduced."""
-    out = git(root, "log", "--all", "--stdin", "-m", "--no-renames", "--name-only", "-z", "--no-color",
+    out = git(root, "-c", "log.showRoot=true", "log", "--all", "--stdin", "-m", "--no-renames", "--name-only", "-z", "--no-color",
               "--no-show-signature", "--format=%x01%H", data=tips)
     paths: dict[str, str] = {}
     commit, header = "", False

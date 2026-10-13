@@ -111,6 +111,14 @@ def entity_cube(name: str, ent, cols: list, notes: list) -> dict:
     return {"name": name, "sql_table": ent.table, "dimensions": dims, "measures": [{"name": "count", "type": "count"}], "joins": []}
 
 
+def value_kind(m, cols: dict) -> str:
+    """Comparison kind of a measure value (canon.KINDS): sums and counts are numbers; min and max keep the kind of
+    their column, so a min over text codes is compared as text ('007' != '7') and over dates as time."""
+    if m.agg in ("sum", "count"):
+        return "number"
+    return cube_type(cols.get(m.column, "")) or "string"
+
+
 def measure_cube(cfg, m, cols: dict) -> dict:
     ent = cfg.entity(m.entity, f"measures.{m.name}")
     table = ident.qualified(ent.table)
@@ -128,14 +136,16 @@ def measure_cube(cfg, m, cols: dict) -> dict:
                     {"name": naming.PK, "sql": f"{{CUBE}}.{naming.PK}", "type": "string", "primary_key": True},
                     {"name": naming.MEASURE_KEY, "sql": f"{{CUBE}}.{naming.MEASURE_KEY}", "type": key_type},
                     {"name": naming.MEASURE_TS, "sql": f"{{CUBE}}.{naming.MEASURE_TS}", "type": "time"}],
-                "measures": [{"name": naming.MEASURE_VALUE, "sql": "{CUBE}.v", "type": m.agg}],
+                "measures": [{"name": naming.MEASURE_VALUE, "sql": "{CUBE}.v", "type": m.agg,
+                              "meta": {"sxc_kind": value_kind(m, cols)}}],
                 "joins": []}
     sql = f"SELECT {by} AS {naming.MEASURE_KEY}, {m.agg}({col}) AS {naming.MEASURE_VALUE} FROM {table} t WHERE {where_sql(m)} GROUP BY {by}"
     reagg = {"sum": "sum", "count": "sum", "min": "min", "max": "max"}[m.agg]
     return {"name": name, "sql": sql,
             "dimensions": [{"name": naming.MEASURE_KEY, "sql": f"{{CUBE}}.{naming.MEASURE_KEY}", "type": key_type,
                             "primary_key": True, "public": True}],
-            "measures": [{"name": naming.MEASURE_VALUE, "sql": f"{{CUBE}}.{naming.MEASURE_VALUE}", "type": reagg}],
+            "measures": [{"name": naming.MEASURE_VALUE, "sql": f"{{CUBE}}.{naming.MEASURE_VALUE}", "type": reagg,
+                          "meta": {"sxc_kind": value_kind(m, cols)}}],
             "joins": []}
 
 

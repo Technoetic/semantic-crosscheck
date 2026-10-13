@@ -38,7 +38,7 @@ disclosure.
 | Threat | Mitigation |
 |---|---|
 | A stage, a bug or a mutated model writes to source tables | Two roles: the loader (`SXC_PG_OWNER_DSN`) is used only by `demo`; the check role (`SXC_PG_DSN`) only reads the sources and owns a separate output schema. `doctor` fails when the check role holds INSERT, UPDATE, DELETE, TRUNCATE or TRIGGER on a source table, owns the table or its schema (or is a member of either owner's role, and so could `SET ROLE` to it), or has CREATE on the source schema. `doctor`, `reason`, `cube` and `verify` read in `READ ONLY` transactions. `build` reads the sources inside its write transactions (it counts the shape views and copies the edges into temporary tables there), so for `build` the protection is the check role's privileges, which `doctor` proves; it writes only to the output schema and to temporary tables. Cube sessions are forced read-only with `PGOPTIONS=-c default_transaction_read_only=on`. |
-| Row values leak through outputs | Results hold counts, check ids and configuration ids only. Database error messages are not stored (they can quote values); the SQLSTATE is. Cube errors reach results as HTTP status, error type or SQLSTATE. The adapter drops Cube's request logs (they contain filter values) and writes each error to `server.log` as one `SXC_CUBE_ERROR` (or `SXC_ERROR`) line with its class and first line, quoted text, numbers and SQL replaced; console output of the Cube packages is replaced by one `SXC_CONSOLE` notice. Unexpected exceptions print only their type and location. A new output directory gets a `.gitignore` of `*`, so results and logs are not committed by accident. |
+| Row values leak through outputs | Results hold counts, check ids and configuration ids only. Database error messages are not stored (they can quote values); the SQLSTATE is. Cube errors reach results as HTTP status, error type or SQLSTATE. The adapter drops Cube's request logs (they contain filter values) and writes each error to `server.log` as one `SXC_CUBE_ERROR` (or `SXC_ERROR`) line with only its class, its SQLSTATE or error code when there is one and a coarse category (`timeout`), because the quoting of values in messages depends on the server's language; model compile errors are kept (they quote only the generated model); console output of the Cube packages is replaced by one `SXC_CONSOLE` notice. Unexpected exceptions print only their type and location. A new output directory gets a `.gitignore` of `*`, so results and logs are not committed by accident. |
 | Credentials leak | DSNs come only from environment variables. `crosscheck.toml` holds the names of those variables (`source.dsn_env`, `source.owner_dsn_env`, `cube.dsn_env`); a value that looks like a DSN is refused without being echoed, and a key named `dsn` or containing `password` is refused in `[source]` and `[cube]`. A malformed DSN (for example an unencoded `/`, `#` or `?` in a password) is refused before anything prints it, and messages show a DSN as `postgresql://user@host:port/database` at most. The Cube API secret is random per run and exists only in the child process's environment. |
 | Secrets reach the Cube child or a proxy | The child gets the inherited environment minus every `PG*`, `CUBEJS_*` and `SXC_*` variable, `NODE_OPTIONS`, every variable whose value contains a `postgres://` or `postgresql://` URL and the configured DSN variable names; the runner then sets only what the adapter needs. The client sends its requests (the JWT and filter values) to 127.0.0.1 through an opener without proxies, whatever `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY` or the system settings say. |
 | A query runs on after it was abandoned | The Python stages read source data and write the output schema only in transactions with a `statement_timeout`: `source.statement_timeout_ms` (at least 1000), or 10 minutes for the demo load. Cube sessions get `statement_timeout` from `cube.query_timeout_s` twice, through `PGOPTIONS` and `CUBEJS_DB_QUERY_TIMEOUT` (Cube's driver sets it from the latter on every connection, and it is also Cube's queue execution timeout), so a query the client gave up on stops in PostgreSQL too. A Cube query returns at most 50,000 rows. |
@@ -75,9 +75,10 @@ current directory. Use `verify-full` (or `verify-ca`) whenever the connection le
 - **Debug output holds row values.** `SXC_CUBE_DEBUG=1` writes the full Cube error text, which can quote
   values, to `server.log`, and `SXC_DEBUG=1` prints full tracebacks. Use them locally, never paste or
   commit their output.
-- **doctor's install hints name local paths.** When a package or the Cube adapter is missing, `doctor`
-  prints the interpreter, the requirements file and `sxc.py` by absolute path, so the command works from
-  any directory. They are the only local paths in results; leave them out when you share a result.
+- **Install hints and local paths.** When a package or the Cube adapter is missing, results store the hint
+  with the placeholders `<python>` and `<plugin>`; `sxc.py` prints it with the interpreter and the plugin
+  directory filled in, so the command works from any directory while result files stay free of local paths
+  (the only path a result repeats is a `--home` directory the user typed).
 - **The database server itself** (authentication setup, `pg_hba.conf`, backups, its own logs) and a
   compromised local machine are out of scope. Depending on its settings (`log_statement`,
   `log_min_duration_statement`, error logging), PostgreSQL may log statements together with their bound
@@ -88,6 +89,8 @@ current directory. Use `verify-full` (or `verify-ca`) whenever the connection le
 ## Maintainer checklist for a public release
 
 - Turn on private vulnerability reporting in the repository settings, so the link above works.
+- Tag the release (`git tag -a v0.1.0`) and push the tag: README's Codex command pins `--ref v0.1.0`, and the
+  release archive is made from the tag with `git archive` and published with its SHA256SUMS.
 - Enable the hooks in the publishing clone with `git config core.hooksPath .githooks`, and set
   `SXC_DENYLIST` to the private deny-list (or `none`).
 - Before the first push, run `python tools/leak_scan.py --worktree --history` with the private

@@ -48,9 +48,14 @@ gold SQL and `crosscheck.toml` avoid them too.
   filter values to the proxy. The client uses an opener without proxies, so no `NO_PROXY` entry is
   needed.
 - **Error messages quote values.** PostgreSQL and Cube errors echo the values they could not handle (an
-  id compared with a number column, for example). The adapter therefore logs each error as its class and
-  first line with quoted text, numbers and SQL replaced, and results keep only the SQLSTATE or HTTP
-  status. `SXC_CUBE_DEBUG=1` shows the full text, locally.
+  id compared with a number column, for example), quoted in a style that depends on the server's message
+  language. The adapter therefore logs each error only as its class, SQLSTATE and a coarse category
+  (model compile errors keep their text), and results keep only the SQLSTATE or HTTP status.
+  `SXC_CUBE_DEBUG=1` shows the full text, locally.
+- **Cube reads timestamps to the millisecond.** Time values are compared at millisecond resolution
+  (truncated, as Cube's PostgreSQL type parser does); finer differences cannot be checked through Cube.
+- **min and max keep their column's kind.** A min or max over a text column is compared as text
+  (`'007'` is not `'7'`) and over a date or timestamp column as time; sums and counts as numbers.
 
 ## PostgreSQL 17
 

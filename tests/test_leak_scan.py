@@ -79,8 +79,11 @@ class RepoTest(unittest.TestCase):
 
     def init_repo(self, repo: Path, email: str = MAINTAINER):
         self.git("init", "-q", cwd=repo)
+        # core.precomposeunicode=false keeps decomposed (NFD) file names as written; git on macOS otherwise stores them
+        # composed, and the NFD fixtures would no longer be the names the scanner sees.
         for key, value in (("user.name", "Test Maintainer"), ("user.email", email),
-                           ("commit.gpgsign", "false"), ("tag.gpgsign", "false"), ("core.autocrlf", "false")):
+                           ("commit.gpgsign", "false"), ("tag.gpgsign", "false"), ("core.autocrlf", "false"),
+                           ("core.precomposeunicode", "false")):
             self.git("config", key, value, cwd=repo)
 
     def git(self, *args, check=True, cwd: Path | None = None, env: dict | None = None,

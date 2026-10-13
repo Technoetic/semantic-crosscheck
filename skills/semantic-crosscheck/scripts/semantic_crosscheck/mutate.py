@@ -21,7 +21,8 @@ element, and the check names the configuration entry the element comes from.
   closure_join_swap           <h>_closure join to m_<m> on the other pair end   pairs whose ends differ in the measure
   closure_end_swap            <h>_closure join to <h>_descendant on ancestor    pairs whose ends are different node rows
 
-The filter witnesses count only rows that can move the measure: a non-null value, non-zero for sums.
+The filter witnesses count rows that can move the measure (a non-null value, non-zero for sums) plus the grain
+keys (key and day for a dated measure) that only one of the two filtered row sets contains, whatever their value.
 Filter mutants replace cube_gen.where_sql(measure) inside the measure cube's SQL with where_sql of a copy
 changed by dataclasses.replace. That is exactly the SQL cube_gen.measure_cube generates for the copy, without
 needing column types. When the model's SQL does not contain the configured clause, the model came from
@@ -235,9 +236,17 @@ def _rewrite_where(model: dict, m, m2) -> dict:
 
 
 def _filter_witness(cfg, m, m2) -> str:
-    """Rows selected by exactly one of the two WHERE clauses that can move the measure."""
-    return (f"SELECT count(*) FROM {_table(cfg, m)} t "
-            f"WHERE ((({cube_gen.where_sql(m)}) IS TRUE) <> (({cube_gen.where_sql(m2)}) IS TRUE)) AND {_counted(m)}")
+    """Rows selected by exactly one of the two WHERE clauses that can move the measure, plus the result rows that only
+    one clause produces whatever their value: grain keys (and, for a dated measure, key and day pairs, since a date
+    window then shows a key it did not show before) present in one filtered row set and not in the other. A row worth
+    0 that adds a key changes the result as much as a row that changes a value."""
+    table, w1, w2 = _table(cfg, m), cube_gen.where_sql(m), cube_gen.where_sql(m2)
+    grain = [f"t.{ident.quote(m.by)}"] + ([f"(t.{ident.quote(m.date_column)})::date"] if m.date_column else [])
+    cols = ", ".join(grain)
+    only = ("(SELECT count(*) FROM (SELECT {c} FROM {t} t WHERE ({a}) IS TRUE "
+            "EXCEPT SELECT {c} FROM {t} t WHERE ({b}) IS TRUE) x)")
+    return (f"SELECT (SELECT count(*) FROM {table} t WHERE ((({w1}) IS TRUE) <> (({w2}) IS TRUE)) AND {_counted(m)})"
+            f" + {only.format(c=cols, t=table, a=w1, b=w2)} + {only.format(c=cols, t=table, a=w2, b=w1)}")
 
 
 def _filter_drop(cfg, model: dict, m) -> Mutant:
@@ -267,8 +276,15 @@ def _agg_to_max(cfg, model: dict, m) -> Mutant:
     def patch(mm):
         _element(mm, cube, "measures", naming.MEASURE_VALUE)["type"] = "max"
     differs = f"{agg}(v) IS DISTINCT FROM max(v)"
+    # A dated cube is queried through date windows, which aggregate any run of a key's rows: rows that cancel out
+    # over the whole range (5 and -5) still differ inside a window, so there every key with two rows that can move
+    # the value counts, not only keys whose rows differ in total.
+    window = ""
+    if m.date_column:
+        moving = "v IS NOT NULL" if agg == "count" else "v IS NOT NULL AND v <> 0"
+        window = f" OR count(*) FILTER (WHERE {moving}) >= 2" + (" OR count(v) >= 1" if agg == "count" else "")
     sql = (f"WITH r AS (SELECT c.{ident.quote(naming.MEASURE_KEY)} AS k, c.{ident.quote(column.group(1))} AS v "
-           f"FROM ({rows}) c), g AS (SELECT {agg}(v) AS w, {differs} AS differs FROM r GROUP BY k) "
+           f"FROM ({rows}) c), g AS (SELECT {agg}(v) AS w, ({differs}{window}) AS differs FROM r GROUP BY k) "
            f"SELECT count(*) FILTER (WHERE differs)"
            f" + (SELECT CASE WHEN count(*) > 0 AND {differs} THEN 1 ELSE 0 END FROM r)"
            f" + CASE WHEN count(*) FILTER (WHERE w <> 0) >= 2"

@@ -62,15 +62,20 @@ def cube_query(gold, params: dict) -> dict:
 
 
 def member_kinds(model: dict) -> dict[str, str]:
-    """Comparison kind (canon.KINDS) of every member of a generated model: a dimension's own type, and for a measure
-    'number' unless its type is string, time or boolean. Dimensions of another type (geo) are left out."""
+    """Comparison kind (canon.KINDS) of every member of a generated model: a dimension's own type; for a measure the
+    kind cube_gen recorded from its source column (meta.sxc_kind), else 'number' unless its type is string, time or
+    boolean. Dimensions of another type (geo) are left out."""
     kinds = {}
     for cube in model.get("cubes", []):
         for d in cube.get("dimensions", []):
             if d.get("type") in canon.KINDS:
                 kinds[f"{cube.get('name')}.{d.get('name')}"] = d["type"]
         for m in cube.get("measures", []):
-            kinds[f"{cube.get('name')}.{m.get('name')}"] = m["type"] if m.get("type") in VALUE_KINDS else "number"
+            recorded = (m.get("meta") or {}).get("sxc_kind")
+            if recorded in canon.KINDS:
+                kinds[f"{cube.get('name')}.{m.get('name')}"] = recorded
+            else:
+                kinds[f"{cube.get('name')}.{m.get('name')}"] = m["type"] if m.get("type") in VALUE_KINDS else "number"
     return kinds
 
 

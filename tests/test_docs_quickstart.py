@@ -102,7 +102,7 @@ def expected_output() -> dict[str, dict]:
 def promised_exit_codes() -> dict[str, int]:
     """{stage: exit code} from the README sentence about the dirty variant."""
     sentence = re.search(r"`demo`는 0[^.]*\.", quick_start()).group(0)
-    return {stage: int(code) for stage, code in re.findall(r"`(\w+)`는 (\d)", sentence)}
+    return {stage: int(code) for stage, code in re.findall(r"`(\w+)`(?:은|는) (\d)", sentence)}
 
 
 def defect_table() -> dict[str, str]:

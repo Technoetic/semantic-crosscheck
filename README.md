@@ -39,22 +39,22 @@
 
 ```mermaid
 flowchart TB
-    C["📄 crosscheck.toml<br/>모델·규칙·질의의 설정"]
-    D[("원본 PostgreSQL<br/>검사 역할은 읽기만")]
+    C["📄 crosscheck.toml<br/>모델·규칙·질의"]
+    D[("원본 PostgreSQL<br/>읽기 전용 검사")]
     subgraph L["네 계층 생성"]
         direction LR
-        P["🗃️ PostgreSQL<br/>계층 폐포 · SQL 위반 뷰"]
+        P["🗃️ PostgreSQL<br/>계층 폐포<br/>SQL 위반 뷰"]
         S["📏 SHACL<br/>데이터 규칙 검증"]
-        O["🧠 OWL + HermiT<br/>일관성 · 관계 · 분류"]
+        O["🧠 OWL + HermiT<br/>관계·분류·일관성"]
         Q["📊 Cube Core<br/>지표 · 조인 · 집계"]
     end
     C --> P & S & O & Q
     D --> P
     P <-->|"위반 키 대조"| S
     P <-->|"폐포·분류 대조"| O
-    G["✍️ gold SQL<br/>직접 작성한 기준 질의"] --> V["🔎 교차 검증 V1–V5"]
+    G["✍️ gold SQL<br/>독립 기준 질의"] --> V["🔎 교차 검증<br/>V1–V5"]
     P & S & O & Q --> V
-    V --> R["📋 report<br/>판정 + not_proven + 다음 행동"]
+    V --> R["📋 report<br/>판정·not_proven<br/>다음 행동"]
     classDef config fill:#eef2ff,stroke:#6366f1,color:#1e1b4b
     classDef data fill:#eff6ff,stroke:#3b82f6,color:#1e3a8a
     classDef rules fill:#f0fdf4,stroke:#22c55e,color:#14532d
@@ -359,7 +359,7 @@ python skills/semantic-crosscheck/scripts/sxc.py verify --config demo/crosscheck
 python skills/semantic-crosscheck/scripts/sxc.py report --config demo/crosscheck.toml
 ```
 
-이 순서에서는 `demo`는 0, `build`는 1, `reason`는 1, `cube`는 0, `verify`는 1, `report`는 1로 종료합니다. 오류 데이터를 적재하는 명령 자체는 성공하지만, 뒤의 검사가 심어 둔 결함을 찾아냅니다.
+이 순서에서는 `demo`는 0, `build`는 1, `reason`은 1, `cube`는 0, `verify`는 1, `report`는 1로 종료합니다. 오류 데이터를 적재하는 명령 자체는 성공하지만, 뒤의 검사가 심어 둔 결함을 찾아냅니다.
 
 <details>
 <summary><b>🔴 심어 둔 오류와 실제 검사 결과 펼치기</b></summary>
@@ -430,9 +430,9 @@ flowchart TD
     B -->|"있음"| E["ERROR · exit 1"]
     B -->|"없음"| C{"실패 fail?"}
     C -->|"있음"| F["FAIL · exit 1"]
-    C -->|"없음"| D{"미실행·누락·오래됨?"}
-    D -->|"있음"| N["NOT RUN · exit 1"]
-    D -->|"없음"| P["PASS · exit 0<br/>not_proven과 함께 읽기"]
+    C -->|"없음"| D{"미실행·누락<br/>또는 오래된 결과?"}
+    D -->|"있음"| N["NOT RUN<br/>exit 1"]
+    D -->|"없음"| P["PASS · exit 0<br/>not_proven<br/>범위도 확인"]
     classDef blocked fill:#fff1f2,stroke:#e11d48,color:#881337
     classDef passed fill:#f0fdf4,stroke:#16a34a,color:#14532d
     class E,F,N blocked

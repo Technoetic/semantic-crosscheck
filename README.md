@@ -26,6 +26,12 @@
 
 <br/><br/>
 
+<img src="docs/images/semantic-crosscheck-flow.gif" width="100%" alt="demo, doctor, build, reason, cube, verify, report의 일곱 단계를 순서대로 강조하고 각 역할을 한글로 설명하는 애니메이션"/>
+
+<sub>약 11초 동안 반복되는 동작 설명 애니메이션입니다. 실제 실행 기록이 아니며, 위 정적 도식과 아래 표에서도 같은 흐름을 확인할 수 있습니다.</sub>
+
+<br/><br/>
+
 **[빠른 시작](#quick-start-with-the-demo) · [설치](#install) · [단계별 명령](#stages) · [결과 읽기](#reading-results) · [검증 한계](#limitations-and-not-proven)**
 
 </div>

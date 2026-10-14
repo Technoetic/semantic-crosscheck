@@ -58,12 +58,13 @@ def render(font_path, bold_path, mono_path):
                 draw.text((centers[index]-text_width/2, 165), label,
                           font=fonts["label"], fill=INK if is_active else MUTED)
             draw.line((centers[0], 239, centers[-1], 239), fill="#475569", width=3)
-            # A gentle moving marker indicates the next stage, not a test verdict.
+            # A gentle moving marker travels from the previous stage and rests on the active stage
+            # during the hold, matching the highlighted tab and caption; it is not a test verdict.
             for center in centers:
                 draw.ellipse((center-4, 235, center+4, 243), fill="#64748b")
-            destination = centers[min(active+1, 6)]
+            origin, destination = centers[max(active-1, 0)], centers[active]
             fraction = (1-math.cos(math.pi*tick/7))/2
-            moving_x = centers[active]+(destination-centers[active])*fraction
+            moving_x = origin+(destination-origin)*fraction
             draw.ellipse((moving_x-7, 232, moving_x+7, 246), fill=ACCENT)
             draw.rounded_rectangle((40, 272, 1040, 402), radius=14,
                                    fill="#090f1c", outline="#475569", width=1)

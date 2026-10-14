@@ -44,7 +44,7 @@ def read(path: Path) -> str:
 
 
 def quick_start() -> str:
-    return read(README).split("## Quick start with the demo", 1)[1].split("\n## ", 1)[0]
+    return read(README).split("## 🚀 빠른 시작", 1)[1].split("\n## ", 1)[0]
 
 
 def code_blocks(text: str) -> list[list[str]]:
@@ -101,8 +101,8 @@ def expected_output() -> dict[str, dict]:
 
 def promised_exit_codes() -> dict[str, int]:
     """{stage: exit code} from the README sentence about the dirty variant."""
-    sentence = re.search(r"`demo` exits 0[^.]*\.", quick_start()).group(0)
-    return {stage: int(code) for stage, code in re.findall(r"`(\w+)`(?: exits)? (\d)", sentence)}
+    sentence = re.search(r"`demo`는 0[^.]*\.", quick_start()).group(0)
+    return {stage: int(code) for stage, code in re.findall(r"`(\w+)`(?:은|는) (\d)", sentence)}
 
 
 def defect_table() -> dict[str, str]:

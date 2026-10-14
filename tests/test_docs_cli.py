@@ -160,13 +160,13 @@ class VersionTest(unittest.TestCase):
         self.assertRegex(read(WORKFLOW), rf"node-version: '{cube_run.MIN_NODE}'")
 
     def test_java_python_and_postgresql_minimums(self):
-        for doc, major in self.mentions(r"Java (\d+) or later"):
+        for doc, major in self.mentions(r"Java (\d+) (?:or later|이상)"):
             with self.subTest(document=doc, runtime="java"):
                 self.assertEqual(int(major), doctor.MIN_JAVA)
-        for doc, minor in self.mentions(r"Python 3\.(\d+) or (?:later|newer)"):
+        for doc, minor in self.mentions(r"Python 3\.(\d+) (?:or (?:later|newer)|이상)"):
             with self.subTest(document=doc, runtime="python"):
                 self.assertEqual((3, int(minor)), doctor.MIN_PYTHON)
-        for doc, major in self.mentions(r"PostgreSQL (\d+) or later"):
+        for doc, major in self.mentions(r"PostgreSQL (\d+) (?:or later|이상)"):
             with self.subTest(document=doc, runtime="postgresql"):
                 self.assertEqual(int(major) * 10000, db.MIN_SERVER_VERSION)
         self.assertIn(f"'3.{doctor.MIN_PYTHON[1]}'", read(WORKFLOW))

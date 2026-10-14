@@ -91,8 +91,8 @@ class InstallCommandTest(unittest.TestCase):
     def test_python_requirements_are_installed_by_absolute_path_from_the_plugin(self):
         text = read(README)
         self.assertIn('python -m pip install -r "<plugin root>/requirements/reason.txt"', text)
-        self.assertIn("## Uninstall", text)
-        self.assertIn("## Troubleshooting", text)
+        self.assertIn("## 🧹 제거", text)
+        self.assertIn("## 🧰 문제 해결", text)
 
     def test_korean_summary_closes_the_readme(self):
         text = read(README)

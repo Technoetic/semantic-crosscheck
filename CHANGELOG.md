@@ -4,7 +4,9 @@ All notable changes to this project are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.2.0] - 2026-10-16
+
+Release notes: [docs/releases/v0.2.0.md](docs/releases/v0.2.0.md).
 
 ### Added
 
@@ -14,6 +16,15 @@ All notable changes to this project are recorded here. The format follows
 - Optional data-revision SQL probes bind stage evidence to hashed source revisions. Reports reject
   missing or changed bindings and changed engine/probe inputs. Legacy configurations explicitly
   report unbound data freshness without a database probe. No common cross-session snapshot is claimed.
+- Forty-nine tests cover the new counterexample and provenance capabilities, bringing the suite to
+  562 tests. The local PostgreSQL baseline completed 539 with 23 optional-engine skips; this is not
+  an all-engines CI result. Release-commit public CI evidence is recorded separately.
+
+### Changed
+
+- Evidence fingerprints include the harness/adapter inputs and selected Python runtime/dependency
+  metadata. Results without current fingerprints must be regenerated after upgrading. Actual
+  PostgreSQL, Java and Node.js runtime versions are not covered by this engine fingerprint.
 
 ## [0.1.1] - 2026-10-14
 
@@ -89,5 +100,6 @@ First release. Release notes: [docs/releases/v0.1.0.md](docs/releases/v0.1.0.md)
   followed by the clean and dirty demo end to end through the command line; whitespace check and a leak
   scan of the working tree and the whole history.
 
+[0.2.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.2.0
 [0.1.1]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.1.1
 [0.1.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.1.0

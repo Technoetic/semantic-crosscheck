@@ -21,11 +21,12 @@ from functools import lru_cache
 from pathlib import Path
 
 import pgfixture
+import sxc
 
 ROOT = pgfixture.ROOT
 DESIGN = ROOT / "docs" / "design.md"
 PACKAGE = ROOT / "skills" / "semantic-crosscheck" / "scripts" / "semantic_crosscheck"
-STAGE_NAMES = {"any", "doctor", "demo", "build", "reason", "cube", "verify", "report", "cube-install"}
+STAGE_NAMES = {"any", *sxc.STAGES}
 ID_SHAPE = re.compile(r"[a-z*][a-z0-9_*]*(?::[^\s:`'\"(){}]+)+")
 BACKTICKED = re.compile(r"`([^`\s]+)`")
 PLACEHOLDER = re.compile(r"<[^<>]*>")

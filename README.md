@@ -409,10 +409,11 @@ python skills/semantic-crosscheck/scripts/sxc.py <stage> [--config PATH] [--out 
 | `verify` | V1·V2·V3·V4 검증 | `--only v1,v2,v3,v4`, `--gold ID` | `verify/result.json`, `verify/server.log`, `verify/mutants/*/` |
 | `report` | 필수 단계의 실행·최신성·통과 여부 종합 | 별도 옵션 없음 | `report/result.json`, `report.md`, `report.json` |
 | `cube-install` | 사용자별 고정 Cube 어댑터 설치 | `--home DIR`, `--native-file PATH`, `--force` | `cube_install/result.json`, `cube_install/npm-ci.log`, `cube_install/smoke.log` |
+| `counterexample` | 합성 데이터에서 두 SQL의 차이를 찾고 행 삭제로 축소·재현 | `--reference-sql FILE`, `--candidate-sql FILE`, `--scenario nulls`, `--seed N`, `--max-examples N`, `--max-shrink-steps N`, `--dsn-env NAME`, `--statement-timeout-ms N`, `--replay FILE` | `counterexample/result.json`, `counterexample/fixture.json` |
 
 **공통 옵션**
 
-- `--config PATH`: 명시하면 반드시 존재해야 합니다. 없으면 exit 2이며 단계를 실행하지 않습니다. 생략하면 `./crosscheck.toml`을 찾습니다. 설정 없이 실행 가능한 단계는 `doctor`·`cube-install`입니다.
+- `--config PATH`: 명시하면 반드시 존재해야 합니다. 없으면 exit 2이며 단계를 실행하지 않습니다. 생략하면 `./crosscheck.toml`을 찾습니다. `doctor`·`cube-install`은 설정 없이도 실행합니다. 별도 합성 도구 `counterexample`은 설정을 읽지 않으며 `--config`를 거부합니다.
 - `--out DIR`: 기본 출력 위치는 설정 옆 `.sxc`입니다. 설정 없이 실행하면 `./.sxc`이며, 새 출력 디렉터리에는 내용 `*`의 `.gitignore`를 만듭니다.
 - `--quiet`: 요약 한 줄만 출력합니다. `sxc.py --version`은 버전을 표시합니다.
 
@@ -426,6 +427,22 @@ python skills/semantic-crosscheck/scripts/sxc.py <stage> [--config PATH] [--out 
 [설정 레퍼런스](skills/semantic-crosscheck/references/config.md) · [전체 설계 계약](docs/design.md)
 
 <a id="reading-results"></a>
+## 합성 반례와 데이터 버전 추적
+
+`counterexample`은 전용 시험 DB에서 두 SQL 파일을 같은 합성 CTE 데이터로 실행합니다.
+NULL·중복 조인·BOM 다중 경로·날짜 경계를 생성하고, 결과 차이가 유지되는 행만 남겨
+재현용 `fixture.json`을 만듭니다. 예제 SQL과 실행법은
+[반례 생성 안내](skills/semantic-crosscheck/references/counterexamples.md)에 있습니다.
+차이가 발견되면 비교 실패(exit 1), 예산 안에서 발견하지 못하면 `not_run`입니다.
+쿼리 오류는 반례로 세지 않고, 행 삭제에 대한 최소성과 전체 최소를 구분합니다.
+
+`[source]`의 선택 항목 `data_revision_sql_file`을 지정하면 검증 시작·종료와 보고서에서
+실제 DB의 버전을 조회해 해시로 연결합니다. 데이터 소유자가 관련 데이터 변경과 같은
+트랜잭션에서 버전을 갱신하고 과거 값을 재사용하지 않아야 합니다. 버전·검증 엔진·조회
+파일이 달라지거나 근거가 없으면 이전 결과를 최신 검증으로 인정하지 않습니다.
+미설정 시 기존 판정은 유지하되 데이터 최신성은 미확인으로 표시합니다. 이 계약이
+SQL과 Cube의 여러 세션에 공통 스냅샷을 제공하는 것은 아닙니다.
+
 ## 📋 결과 읽기
 
 각 단계의 `result.json`에는 `status`, `checks`의 ID·상태·`config_ref`·건수 정보, `not_proven`, `next_safe_action`이 들어갑니다.
@@ -481,6 +498,8 @@ flowchart TD
 | verify | `v3:total:<member>`, `v3:additive:<member>:<member>`, `v3:pair:<member>+<member>` | 합계·그룹 합·지표 조합 일치 |
 | verify | `v4:<operator>:<target>` | gold suite의 실패 항목이 변형 모델을 검출 |
 | report | `stage:<name>` | 단계가 실행되었고 최신이며 통과 |
+| build·reason·cube·verify / report | `data_revision:stable`, `data_revision:current` | 구성된 데이터 버전이 안정적이며 현재 근거와 일치; 조회 오류는 실패로 닫음 |
+| counterexample | `counterexample:search`, `counterexample:query`, `counterexample:recheck`, `counterexample:inputs` | 합성 SQL 차이와 축소·재현 범위; 오류·미발견은 동등성 증명 불가 |
 
 조기 중단의 `stage`, doctor의 `database`, demo의 `demo:load`, verify의 `v4:suite`, 범위를 나타내는 `scope:*`, 설치의 `cube_install:*`까지 포함한 전체 목록은 [설계 문서의 카탈로그](docs/design.md#6-check-catalogue)를 참고합니다.
 

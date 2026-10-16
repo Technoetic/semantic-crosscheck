@@ -38,6 +38,7 @@ class Result:
     started_at: str = field(default_factory=lambda: time.strftime("%Y-%m-%dT%H:%M:%S%z"))
     finished_at: str = ""
     inputs: dict = field(default_factory=dict)   # inputs_fingerprint() of the configuration the stage ran with
+    provenance: dict = field(default_factory=lambda: {"schema_version": 1, "binding": "unbound"})
 
     def add(self, check_id: str, status: str, config_ref: str = "", **detail) -> Check:
         c = Check(check_id, status, detail, config_ref)
@@ -90,6 +91,7 @@ def inputs_fingerprint(cfg) -> dict:
     fingerprint with the current files, so editing crosscheck.toml or a gold query without rerunning makes the
     earlier results stale instead of letting them pass."""
     import hashlib
+    from .provenance import engine_fingerprint, revision_query_fingerprint
 
     if cfg is None:
         return {}
@@ -100,7 +102,8 @@ def inputs_fingerprint(cfg) -> dict:
         p = g.sql_path(cfg)
         gold.update(p.read_bytes() if p.is_file() else b"<missing>")
         gold.update(b"\0")
-    return {"config_sha256": config, "gold_sha256": gold.hexdigest()}
+    return {"config_sha256": config, "gold_sha256": gold.hexdigest(),
+            "engine_sha256": engine_fingerprint(), "revision_query_sha256": revision_query_fingerprint(cfg)}
 
 
 def discard(out_dir: str | Path, stage: str) -> None:

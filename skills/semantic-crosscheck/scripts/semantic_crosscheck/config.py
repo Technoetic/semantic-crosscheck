@@ -94,6 +94,7 @@ class Source:
     schemas: list = field(default_factory=list)
     output_schema: str = "sxc_out"
     statement_timeout_ms: int = 60000
+    data_revision_sql_file: str = ""  # optional query returning exactly one nonempty text revision
 
 
 @dataclass
@@ -286,6 +287,8 @@ def _load(path: str | Path) -> Config:
         _err("source", str(e))
     _env_name("source.dsn_env", src.dsn_env)
     _env_name("source.owner_dsn_env", src.owner_dsn_env)
+    if not isinstance(src.data_revision_sql_file, str):
+        _err("source.data_revision_sql_file", "must be a SQL file name or an empty string")
     _int("source.statement_timeout_ms", src.statement_timeout_ms, 1000)
     if not isinstance(src.schemas, list) or not src.schemas:
         _err("source.schemas", "list the source schemas")

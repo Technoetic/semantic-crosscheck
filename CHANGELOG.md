@@ -4,6 +4,17 @@ All notable changes to this project are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Optional synthetic SQL counterexample generation, bounded row-deletion shrinking and hash-bound
+  replay. NULL, join fan-out, BOM diamond and date-boundary scenarios run in read-only PostgreSQL
+  transactions. Bounded agreement is not a proof; query errors are never mismatch witnesses.
+- Optional data-revision SQL probes bind stage evidence to hashed source revisions. Reports reject
+  missing or changed bindings and changed engine/probe inputs. Legacy configurations explicitly
+  report unbound data freshness without a database probe. No common cross-session snapshot is claimed.
+
 ## [0.1.1] - 2026-10-14
 
 Release notes: [docs/releases/v0.1.1.md](docs/releases/v0.1.1.md).

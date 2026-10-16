@@ -33,6 +33,7 @@ python skills/semantic-crosscheck/scripts/sxc.py --version
 | `verify` | V1 strict compare, V2 strata sweep, V3 query shapes, V4 mutation tests | `--only v1,v2,v3,v4` (default all), `--gold ID` (repeatable) | `verify/result.json`, `verify/server.log`, `verify/mutants/<operator>__<target>/` (`model/*.yml`, `model.json`, `server.log`) |
 | `report` | summary of every stage | none | `report/result.json`, `report.md`, `report.json` |
 | `cube-install` | installs the pinned Cube adapter once per user | `--home DIR`, `--native-file PATH`, `--force` | `cube_install/result.json`, `cube_install/npm-ci.log`, `cube_install/smoke.log` |
+| `counterexample` | optional synthetic SQL mismatch search and reduction | `--reference-sql`, `--candidate-sql`, `--scenario`, `--seed`, `--max-examples`, `--max-shrink-steps`, `--dsn-env`, `--statement-timeout-ms`, `--replay` | `counterexample/result.json`, `counterexample/fixture.json` |
 
 Common options:
 
@@ -225,6 +226,10 @@ configuration ids; `<member>` is a Cube member (`cube.member`); `<stratum>` is a
 | Stage | Check id | Passes when | Other outcomes |
 |---|---|---|---|
 | any | `stage` | never passes | `error`: the stage stopped before its own checks (`message` for exit 2 or 3, `reason=interrupted`, or `exception` and `sqlstate`) |
+| any | `data_revision:stable` | build/reason/cube/verify configured start/end source and Cube revision hashes agree | `fail` on change; `error` when a probe cannot run; omitted and explicitly unbound without a probe |
+| report | `data_revision:current` | error check only | `error` when the configured current revision cannot be read; missing or changed stage evidence is also stale |
+| counterexample | `counterexample:search` | never proves general equivalence | `fail` with a reduced successful mismatch; `not_run` when bounded examples agree |
+| counterexample | `counterexample:query`, `counterexample:recheck`, `counterexample:inputs` | error checks only | `error` on query failure, unstable witness or a SQL edit during execution; no new replay fixture |
 | doctor | `python` | Python >= 3.11 | `fail` |
 | doctor | `pg8000` | pg8000 can be imported | `fail`, with the absolute pip command as the next action |
 | doctor | `dsn` | the check-role DSN variable (`source.dsn_env`, or `SXC_PG_DSN` without a configuration) is set | `fail`; the database checks after it are `not_run` (`no_dsn`) |
@@ -429,6 +434,30 @@ never touches the database.
   files) in every result, taken before the stage runs. `report` marks build, reason and cube stale when the
   configuration changed since they ran, and verify when the configuration or a gold file changed
   (`reason=stale`, `why=inputs_changed`); a result without a fingerprint cannot be shown to be current.
+
+### Synthetic counterexamples and data provenance
+
+The optional `counterexample` command is independent of the configured pipeline. It always ignores
+the working-directory config and rejects an explicit `--config`. Two trusted SQL files run against
+generated CTE fixtures using bound values in PostgreSQL read-only transactions. NULLs, duplicate join
+keys, BOM diamond paths and date boundaries have deterministic generators. Successful unequal exact
+row multisets are witnesses; query errors cannot be witnesses. Bounded agreement is `not_run` and
+never proves equivalence. The shrinker preserves a mismatch while deleting rows and reports whether
+it completed a deletion-1-minimal pass or exhausted its budget. Only the separate synthetic replay
+artifact contains generated row values; results and reports contain statistics, IDs and hashes.
+See [counterexample reference](../skills/semantic-crosscheck/references/counterexamples.md).
+
+Optional `source.data_revision_sql_file` supplies a trusted, read-only single-text-scalar probe.
+The operator must advance a never-reused revision atomically with every relevant source change.
+Start/end probes bind build/reason/cube/verify evidence to the hashed revision; if Cube uses a different
+DSN, probes on both endpoints must agree. The report checks current bindings only when the probe is
+configured; otherwise it remains database-free and explicitly lists data freshness as unbound.
+Missing or different bindings and changed engine/probe inputs invalidate evidence. A revision contract
+does not provide a shared MVCC snapshot, and cannot detect omitted or reused revisions. SQL probes
+and reference queries remain trusted code, not a security boundary. The engine digest covers plugin
+Python/CLI sources, adapter files/pins and Python/direct Python package-version metadata; actual
+PostgreSQL/Node.js/Java executable versions are outside its current scope. Historical results without
+this digest must be rerun. This is freshness tracking, not cryptographic authentication of reports.
 
 ## 9. Demo reference (`expected.json`)
 

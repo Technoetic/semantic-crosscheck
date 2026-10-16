@@ -10,7 +10,9 @@ code: pass each one as its own argument and never splice them into a shell strin
 
 - At the end of a run, and whenever results are summarised for the user or for a review.
 - It reads the `result.json` of `doctor`, `demo`, `build`, `reason`, `cube` and `verify` in the output
-  directory and runs nothing else; it never touches the database.
+  directory. Without a revision probe it never touches the database. With
+  `source.data_revision_sql_file`, it reads the current revision in a fresh read-only transaction and
+  rejects missing or different revision bindings; it never writes to the database.
 
 ## Command
 
@@ -70,3 +72,5 @@ stages it depends on and passed.
   wrote to.
 - Editing `crosscheck.toml` or a gold SQL file after a run makes the stages that read it stale
   (`why=inputs_changed`): every result records a fingerprint of those files, taken before the stage ran.
+- Engine/probe changes also invalidate dependent evidence. Without a configured data-revision probe,
+  source-data freshness remains explicitly unproven; file timestamps alone cannot establish it.

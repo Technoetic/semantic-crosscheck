@@ -47,6 +47,20 @@ The other top-level keys are the tables `source`, `entities`, `hierarchies`, `sh
 | `schemas` | list of strings | required | Source schemas. Every entity table must be in one of them. |
 | `output_schema` | string | `"sxc_out"` | Schema owned by the check role, where closures, cycle examples and `v_shape_<id>` views are created. Must differ from every source schema. |
 | `statement_timeout_ms` | integer | `60000` | `statement_timeout` for the stages' database transactions; at least 1000. A build waiting for another build of the same output schema counts against it. |
+| `data_revision_sql_file` | string | `""` | Optional configuration-relative trusted SQL file returning exactly one nonempty text revision. Start/end probes and report freshness checks record only its hash. |
+
+When `data_revision_sql_file` is configured, the source owner must update a never-reused, monotonically
+advancing revision in the same transaction as **every** relevant data change. The probe must cover all
+referenced source data; a partial counter or a manually changed environment value is insufficient.
+If Cube uses a different DSN, both endpoints must return the same revision. Changed/missing bindings
+invalidate evidence; probe failure cannot certify freshness. The contract does not share an MVCC
+snapshot between independent SQL/Cube sessions and depends on the owner's revision discipline.
+Without a probe, existing verdicts remain compatible and data freshness is explicitly `unbound` /
+`not_proven`. Engine and probe-file fingerprints also participate in evidence freshness.
+The engine fingerprint covers plugin Python/CLI sources, adapter source/lock inputs, Python version
+and direct Python package-version metadata. It does not identify the actual PostgreSQL, Node.js or
+Java executable version, or establish an authenticated/tamper-proof evidence chain. Results produced
+before this fingerprint existed must be rerun; compatibility applies to new runs without a revision probe.
 
 A DSN may carry the password in the URL (percent-encoded: reserved characters such as `/ # ? @ : %` in the
 user name or password must be encoded); when it does not, `PGPASSWORD` is used. TLS settings go in the

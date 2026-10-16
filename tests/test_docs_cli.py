@@ -28,7 +28,8 @@ WORKFLOW = ROOT / ".github" / "workflows" / "tests.yml"
 SKILL_DIR = ROOT / "skills" / "semantic-crosscheck"
 CONFIG_MD = SKILL_DIR / "references" / "config.md"
 COMMAND_DOC = {"doctor": "xc-doctor.md", "demo": "xc-demo.md", "build": "xc-build.md", "reason": "xc-reason.md",
-               "cube": "xc-cube.md", "verify": "xc-verify.md", "report": "xc-report.md", "cube-install": "xc-install.md"}
+               "cube": "xc-cube.md", "verify": "xc-verify.md", "report": "xc-report.md", "cube-install": "xc-install.md",
+               "counterexample": "xc-counterexample.md"}
 OPTION = re.compile(r"(?<![\w-])--[a-z][a-z-]*")
 UNESCAPED_PIPE = re.compile(r"(?<!\\)\|")
 TOML_SECTION = {"[source]": "source", "[hierarchies.<name>]": "hierarchies.h", "[cube]": "cube", "[verify]": "verify"}

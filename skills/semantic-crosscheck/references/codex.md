@@ -41,6 +41,7 @@ default.
 | `verify` | [xc-verify.md](../../../commands/xc-verify.md) | `sxc.py verify --config crosscheck.toml` |
 | `report` | [xc-report.md](../../../commands/xc-report.md) | `sxc.py report --config crosscheck.toml` |
 | `install` or `cube-install` | [xc-install.md](../../../commands/xc-install.md) | `sxc.py cube-install` |
+| `counterexample` | [xc-counterexample.md](../../../commands/xc-counterexample.md) | `sxc.py counterexample --reference-sql reference.sql --candidate-sql candidate.sql` |
 
 ## Arguments and execution
 

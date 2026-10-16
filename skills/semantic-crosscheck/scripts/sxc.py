@@ -3,7 +3,7 @@
 
     python sxc.py <stage> [--config crosscheck.toml] [--out DIR] [options]
 
-Stages: doctor, demo, build, reason, cube, verify, report, cube-install.
+Stages: doctor, demo, build, reason, cube, verify, report, cube-install, counterexample.
 Each stage writes <out>/<stage>/result.json (counts and check ids only, never row values) and exits with
 0 pass, 1 a check failed or could not run, 2 configuration or usage error, 3 environment missing.
 
@@ -32,7 +32,7 @@ from pathlib import Path  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from semantic_crosscheck import VERSION, config  # noqa: E402
+from semantic_crosscheck import VERSION, config, provenance  # noqa: E402
 from semantic_crosscheck.result import EXIT_CONFIG, EXIT_FAIL, Result, StageError, discard, inputs_fingerprint  # noqa: E402
 
 STAGES = {
@@ -44,6 +44,7 @@ STAGES = {
     "verify": "stage_verify",
     "report": "report",
     "cube-install": "cube_install",
+    "counterexample": "counterexample",
 }
 NEEDS_CONFIG = {"demo", "build", "reason", "cube", "verify", "report"}
 DEFAULT_CONFIG = "crosscheck.toml"
@@ -90,12 +91,27 @@ def parser() -> argparse.ArgumentParser:
                                               "stages then need SXC_CUBE_HOME set to it")
     s.add_argument("--native-file", default="", help="use this already downloaded native tarball (still SHA-256 verified)")
     s.add_argument("--force", action="store_true", help="reinstall even when already installed")
+
+    s = sub.add_parser("counterexample", parents=[common], help="compare two trusted SQL files on generated synthetic fixtures and shrink a mismatch")
+    s.add_argument("--reference-sql", required=True, help="reference SELECT file using the synthetic CTE tables")
+    s.add_argument("--candidate-sql", required=True, help="candidate SELECT file using the same synthetic CTE tables")
+    s.add_argument("--scenario", choices=["nulls", "duplicate_join", "bom_diamond", "date_boundary"], default="nulls")
+    s.add_argument("--seed", type=int, default=7, help="deterministic synthetic generator seed")
+    s.add_argument("--max-examples", type=int, default=64, help="bounded search examples (default: 64)")
+    s.add_argument("--max-shrink-steps", type=int, default=256, help="bounded row-deletion attempts (default: 256)")
+    s.add_argument("--dsn-env", default="SXC_PG_DSN", help="NAME of the environment variable holding the read-only test PostgreSQL DSN")
+    s.add_argument("--statement-timeout-ms", type=int, default=10000, help="per-query time limit (default: 10000)")
+    s.add_argument("--replay", default=None, help="replay a previously generated fixture with matching SQL hashes")
     return p
 
 
 def config_path(stage: str, given: str | None) -> Path | None:
     """The configuration to load: an explicit --config must exist; otherwise ./crosscheck.toml, which only doctor
     and cube-install may run without."""
+    if stage == "counterexample":
+        if given is not None:
+            raise StageError("counterexample uses synthetic fixtures, not --config; pass the two SQL files", EXIT_CONFIG)
+        return None
     if given is not None:
         p = Path(given)
         if not p.is_file():
@@ -203,9 +219,11 @@ def main(argv=None) -> int:
             inputs = inputs_fingerprint(cfg)
             if inputs.get("config_sha256") != before:
                 raise StageError(f"{cfg_file.name} changed while the stage was starting; rerun it", EXIT_CONFIG)
+        revision_start = provenance.begin(cfg, result_name)
         mod = importlib.import_module(f"semantic_crosscheck.{STAGES[stage]}")
         res = mod.run(cfg, args, out)
         res.inputs = inputs
+        res = provenance.finish(cfg, res, revision_start)
     except StageError as e:
         if stage == "report":
             discard_report_files(out)

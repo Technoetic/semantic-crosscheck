@@ -21,7 +21,7 @@ from unittest import mock
 import pgfixture
 
 import sxc
-from semantic_crosscheck import config, demo, doctor, report
+from semantic_crosscheck import config, demo, doctor, report, provenance
 from semantic_crosscheck.result import EXIT_CONFIG, Result, StageError, inputs_fingerprint
 
 DEMO_INPUTS = inputs_fingerprint(config.load(pgfixture.DEMO_CONFIG))
@@ -296,7 +296,7 @@ class ReportAggregation(TempDirTest):
         self.assertEqual((build.detail["pass"], build.detail["fail"], build.detail["required"]), (1, 1, True))
         self.assertEqual(next(c for c in res.checks if c.id == "stage:verify").detail, {"reason": "missing", "required": True})
         self.assertEqual((res.status, res.exit_code()), ("error", 1))
-        self.assertEqual(res.not_proven, [])
+        self.assertEqual(res.not_proven, [provenance.UNBOUND_NOTE])
         self.assertTrue(res.next_safe_action.startswith("fix build first (fail): fix the cycle"))
 
         md = (self.tmp / "report.md").read_text(encoding="utf-8")
@@ -325,8 +325,9 @@ class ReportAggregation(TempDirTest):
         res = self.run_report()
         self.assertEqual(statuses(res), {f"stage:{s}": "not_run" for s in ("build", "reason", "cube", "verify")})
         self.assertEqual((res.status, res.exit_code()), ("not_run", 1))
-        self.assertEqual(len(res.not_proven), 1)
-        self.assertTrue(res.not_proven[0].startswith("stage doctor was not run"))
+        self.assertEqual(len(res.not_proven), 2)
+        self.assertIn(provenance.UNBOUND_NOTE, res.not_proven)
+        self.assertTrue(any(n.startswith("stage doctor was not run") for n in res.not_proven))
         self.assertTrue(res.next_safe_action.startswith("run `sxc.py doctor`, then build, reason, cube, verify"))
         self.assertTrue((self.tmp / "report.md").is_file())
         self.assertEqual(json.loads((self.tmp / "report.json").read_text(encoding="utf-8"))["stages"], {})

@@ -18,7 +18,9 @@ never ran, or ran before the data it checked was reloaded, would answer that que
     every next_safe_action, and names the trusted code: `sql_violation` predicates and gold SQL run as written.
 The overall status can therefore only be pass when every required stage ran, is current and passed.
 
-Everything comes from the stage results, which hold counts and ids only: the report never touches the database.
+Without a revision query, everything comes from stage results and local fingerprints and the database is not
+contacted. With source.data_revision_sql_file configured, fresh read-only source/Cube probes bind the saved
+evidence to the current owner-maintained data revision. A missing, changed or unreadable binding cannot pass.
 """
 
 import json
@@ -26,6 +28,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+from . import provenance
 from .result import STATUSES, Result, inputs_fingerprint, load_result
 
 PIPELINE = ("doctor", "demo", "build", "reason", "cube", "verify")
@@ -37,11 +40,15 @@ STALE_WHY = {
     "stale_dependency": "{stage} depends on {dep}, which is stale",
     "no_timestamp": "{stage} or {dep} has no readable run time, so {stage} cannot be shown to be current",
     "inputs_changed": "{stage} ran with a different {dep} than the current files",
+    "data_revision_missing": "{stage} has no stable evidence for the configured data revision",
+    "data_revision_changed": "{stage} checked a different data revision",
+    "data_revision_unavailable": "{stage} cannot be bound to a readable current data revision",
 }
 # which recorded inputs a stage depends on (result.inputs_fingerprint keys)
-INPUTS = {"build": ("config_sha256",), "reason": ("config_sha256",), "cube": ("config_sha256",),
-          "verify": ("config_sha256", "gold_sha256")}
-_INPUT_NAMES = {"config_sha256": "crosscheck.toml", "gold_sha256": "gold SQL"}
+INPUTS = {stage: ("config_sha256", "engine_sha256", "revision_query_sha256") for stage in ("build", "reason", "cube")}
+INPUTS["verify"] = ("config_sha256", "gold_sha256", "engine_sha256", "revision_query_sha256")
+_INPUT_NAMES = {"config_sha256": "crosscheck.toml", "gold_sha256": "gold SQL",
+                "engine_sha256": "verification engine", "revision_query_sha256": "data revision query"}
 TRUSTED_NOTE = ("`sql_violation` predicates and gold SQL files are trusted code from the configuration: the harness "
                 "runs them as written (values only as bound parameters) and does not generate or validate them, so "
                 "review them like code.")
@@ -103,7 +110,7 @@ def _when(text) -> datetime | None:
         return None
 
 
-def staleness(results: dict, current_inputs: dict | None = None) -> dict:
+def staleness(results: dict, current_inputs: dict | None = None, current_provenance: dict | None = None) -> dict:
     """{stage: {"after": dependency, "why": key of STALE_WHY}} for every stale stage, decided in pipeline order so
     that a stage depending on a stale stage is stale too. With current_inputs (result.inputs_fingerprint of the
     current configuration), a stage that recorded different or no inputs is stale as well."""
@@ -116,6 +123,11 @@ def staleness(results: dict, current_inputs: dict | None = None) -> dict:
             changed = [k for k in INPUTS.get(stage, ()) if recorded.get(k) != current_inputs.get(k)]
             if changed:
                 stale[stage] = {"after": _INPUT_NAMES[changed[0]], "why": "inputs_changed"}
+                continue
+        if current_provenance is not None and stage in provenance.DATA_STAGES:
+            why = provenance.evidence_staleness(results[stage].get("provenance"), current_provenance)
+            if why:
+                stale[stage] = {"after": "data revision", "why": why}
                 continue
         started = _when(results[stage].get("started_at"))
         for dep in DEPENDS.get(stage, ()):
@@ -298,6 +310,9 @@ def render_md(summary: dict) -> str:
     gaps += [f"report: {n}" for n in summary["not_proven"]]
     lines += [f"- {_md(n)}" for n in gaps] or ["Nothing listed."]
 
+    binding = summary.get("provenance", {}).get("binding", "unbound")
+    lines += ["", f"Data revision binding: **{_md(binding)}**. Only revision hashes are retained."]
+
     lines += ["", "## Next safe actions", ""]
     actions = [f"{stage}: {s['next_safe_action']}" for stage, s in summary["stages"].items() if s["next_safe_action"]]
     actions.append(f"report: {summary['next_safe_action']}")
@@ -317,7 +332,14 @@ def run(cfg, args, out: Path) -> Result:
     res = Result("report")
     results = read_results(out)
     required = required_stages(cfg)
-    stale = staleness(results, inputs_fingerprint(cfg))
+    try:
+        current = provenance.current_probe(cfg)
+    except provenance.RevisionError as problem:
+        current = {"schema_version": 1, "binding": "error", "reason": problem.reason}
+        res.add("data_revision:current", "error", "source.data_revision_sql_file", reason=problem.reason)
+    res.provenance = current
+    res.not_proven.append(provenance.UNBOUND_NOTE if current["binding"] == "unbound" else provenance.BOUND_NOTE)
+    stale = staleness(results, inputs_fingerprint(cfg), current)
     statuses = {stage: stage_status(r) for stage, r in results.items()}
     counted = {stage: counted_status(statuses[stage], stage in required, stale.get(stage)) for stage in results}
     _add_stage_checks(res, results, statuses, required, stale, counted)
@@ -335,6 +357,7 @@ def run(cfg, args, out: Path) -> Result:
         "stale": [{"stage": s, **info} for s, info in stale.items()],
         "not_proven": res.not_proven,
         "trusted_sql": _trusted(cfg),
+        "provenance": current,
         "next_safe_action": res.next_safe_action,
     }
     out.mkdir(parents=True, exist_ok=True)

@@ -6,7 +6,7 @@ and how to report a vulnerability.
 
 ## Supported versions
 
-Security fixes are made for the latest release (currently 0.1.x). Older releases are not patched.
+Security fixes are made for the latest release (currently 0.2.x). Older releases are not patched.
 
 ## Reporting a vulnerability
 
@@ -89,7 +89,7 @@ current directory. Use `verify-full` (or `verify-ca`) whenever the connection le
 ## Maintainer checklist for a public release
 
 - Turn on private vulnerability reporting in the repository settings, so the link above works.
-- Tag the release (`git tag -a v0.1.1`) and push the tag: README's Codex command pins `--ref v0.1.1`, and the
+- Tag the release (`git tag -a v0.2.0`) and push the tag: README's Codex command pins `--ref v0.2.0`, and the
   release archive is made from the tag with `git archive` and published with its SHA256SUMS.
 - Enable the hooks in the publishing clone with `git config core.hooksPath .githooks`, and set
   `SXC_DENYLIST` to the private deny-list (or `none`).

@@ -46,6 +46,13 @@ For the demo, `demo` comes first, because the source tables exist only after it:
 `cube-install` installs the pinned Cube adapter once per user before the first `cube`
 ([xc-install](../../commands/xc-install.md)).
 
+The optional `counterexample` tool compares two trusted SQL files on generated synthetic data, reduces
+the witness by row deletion and supports replay ([xc-counterexample](../../commands/xc-counterexample.md)).
+It does not read `crosscheck.toml`, rejects `--config`, and is not a required pipeline stage. See the
+[synthetic counterexample contract](references/counterexamples.md); never describe bounded agreement
+as equivalence or a query error as a witness. Synthetic fixture values are stored only in the separate
+replay artifact; result files and messages still carry statistics only.
+
 Every stage is one command:
 
 ```text
@@ -110,6 +117,10 @@ after it.
   (`killed_by`); a failing one means it survived, so the gold suite cannot see that kind of error.
 - `report` requires `build`, `cube` and `verify` (and `reason` with an ontology or shapes) to have run
   after the stages they depend on, and passes only when all of them passed.
+- With `source.data_revision_sql_file`, start/end probes and report freshness checks bind evidence
+  to a hashed source revision and engine fingerprint. The source owner must advance the revision
+  atomically with every relevant data change and never reuse it. Without this contract, data freshness
+  remains explicitly unbound/unproven. Independent SQL/Cube sessions do not share an MVCC snapshot.
 
 Every check id is listed in [docs/design.md](../../docs/design.md).
 

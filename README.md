@@ -7,7 +7,7 @@
 **설정 하나에서 네 계층을 만들고, 서로의 결과를 교차 검증합니다.**<br/>
 계층마다 그럴듯한 설명을 넘어, **검사 ID · 건수 · 종료 코드로 일치 여부를 확인합니다.**
 
-[![Release](https://img.shields.io/badge/Release-v0.1.1-0D9488?style=for-the-badge)](docs/releases/v0.1.1.md)
+[![Release](https://img.shields.io/badge/Release-v0.2.0-0D9488?style=for-the-badge)](docs/releases/v0.2.0.md)
 [![CI](https://img.shields.io/github/actions/workflow/status/Technoetic/semantic-crosscheck/tests.yml?branch=main&style=for-the-badge&label=CI&logo=github)](https://github.com/Technoetic/semantic-crosscheck/actions/workflows/tests.yml)
 [![MIT](https://img.shields.io/badge/License-MIT-8B5CF6?style=for-the-badge)](LICENSE)
 [![Claude Code](https://img.shields.io/badge/Claude_Code-Plugin-191919?style=for-the-badge&logo=anthropic&logoColor=white)](#claude-code)
@@ -212,7 +212,7 @@ Cube 1.8.3의 파일 크기와 SHA-256은 [native-sha256.json](skills/semantic-c
 릴리스 태그를 고정해 등록합니다.
 
 ```text
-codex plugin marketplace add Technoetic/semantic-crosscheck --ref v0.1.1
+codex plugin marketplace add Technoetic/semantic-crosscheck --ref v0.2.0
 codex plugin add semantic-crosscheck@semantic-crosscheck-local
 ```
 
@@ -229,7 +229,7 @@ Windows PowerShell에서 실행 정책 때문에 `codex.ps1`이 거부되면 두
    python -m pip install -r "<plugin root>/requirements/reason.txt"
    ```
 
-   `<plugin root>` 예: `~/.claude/plugins/cache/semantic-crosscheck/semantic-crosscheck/0.1.1` 또는 `~/.codex/plugins/cache/semantic-crosscheck-local/semantic-crosscheck/0.1.1`. 패키지가 없으면 `/xc-doctor`가 실제 경로에 맞는 설치 명령을 안내합니다.
+   `<plugin root>` 예: `~/.claude/plugins/cache/semantic-crosscheck/semantic-crosscheck/0.2.0` 또는 `~/.codex/plugins/cache/semantic-crosscheck-local/semantic-crosscheck/0.2.0`. 패키지가 없으면 `/xc-doctor`가 실제 경로에 맞는 설치 명령을 안내합니다.
 2. psql을 사용하는 superuser가 `docs/setup-roles.sql`로 **loader·check 역할**을 만듭니다.
 3. Java를 `PATH`에 추가하거나 `SXC_JAVA`를 지정합니다.
 4. Node.js와 npm을 준비하고 `/xc-install` 또는 `sxc.py cube-install`로 **Cube 어댑터**를 한 번 설치합니다.
@@ -340,17 +340,22 @@ CLI 출력 원문을 유지했습니다. 아래 검사 수와 `NOT PROVEN` 문�
 [sxc demo] PASS  checks: 5 pass, 0 fail, 0 error, 0 not_run  -> .../demo/.sxc/demo/result.json
 [sxc doctor] PASS  checks: 21 pass, 0 fail, 0 error, 0 not_run  -> .../demo/.sxc/doctor/result.json
 [sxc build] PASS  checks: 6 pass, 0 fail, 0 error, 0 not_run  -> .../demo/.sxc/build/result.json
+  NOT PROVEN  data revision is unbound: no owner-maintained revision was checked; separate database sessions and cached gold answers are not proven to observe one data version
 [sxc reason] PASS  checks: 9 pass, 0 fail, 0 error, 0 not_run  -> .../demo/.sxc/reason/result.json
   NOT PROVEN  shacl:open_le_total: no SHACL form (sql_violation); checked only in SQL (shape:open_le_total in build)
   NOT PROVEN  v5:defined:ProductUsedAsPart: the class has no members in OWL or in SQL, so the comparison holds vacuously
+  NOT PROVEN  data revision is unbound: no owner-maintained revision was checked; separate database sessions and cached gold answers are not proven to observe one data version
 [sxc cube] PASS  checks: 7 pass, 0 fail, 0 error, 0 not_run  -> .../demo/.sxc/cube/result.json
+  NOT PROVEN  data revision is unbound: no owner-maintained revision was checked; separate database sessions and cached gold answers are not proven to observe one data version
 [sxc verify] PASS  checks: 42 pass, 0 fail, 0 error, 0 not_run  -> .../demo/.sxc/verify/result.json
   NOT PROVEN  v4:measure_normalization_drop:on_hand equivalent on this data
   NOT PROVEN  v4:measure_normalization_drop:consigned equivalent on this data
+  NOT PROVEN  data revision is unbound: no owner-maintained revision was checked; separate database sessions and cached gold answers are not proven to observe one data version
 [sxc report] PASS  checks: 6 pass, 0 fail, 0 error, 0 not_run  -> .../demo/.sxc/report/result.json
+  NOT PROVEN  data revision is unbound: no owner-maintained revision was checked; separate database sessions and cached gold answers are not proven to observe one data version
 ```
 
-`NOT PROVEN` 4개는 정상 데모에서도 예상됩니다. `open_le_total`은 SQL 전용 규칙이고, 부품으로 쓰인 제품의 정의 클래스는 양쪽 모두 비어 있습니다. 위치 코드의 공백·대소문자 변형이 없는 데이터에서는 정규화를 제거한 두 변이도 원래 결과와 같습니다. `verify`는 변이마다 Cube를 시작하므로 느립니다. 기존 문서화된 측정 환경에서는 약 43초였으며 실행 환경에 따라 달라집니다.
+`NOT PROVEN` 9줄은 정상 데모에서도 예상됩니다. 기본 데모에는 revision 조회가 없어 build·reason·cube·verify·report 각각에 데이터 버전 미확인 안내가 나옵니다. 나머지 4개 중 `open_le_total`은 SQL 전용 규칙이고, 부품으로 쓰인 제품의 정의 클래스는 양쪽 모두 비어 있습니다. 위치 코드의 공백·대소문자 변형이 없는 데이터에서는 정규화를 제거한 두 변이도 원래 결과와 같습니다. `verify`는 변이마다 Cube를 시작하므로 느립니다. 기존 문서화된 측정 환경에서는 약 43초였으며 실행 환경에 따라 달라집니다.
 
 </details>
 
@@ -409,10 +414,11 @@ python skills/semantic-crosscheck/scripts/sxc.py <stage> [--config PATH] [--out 
 | `verify` | V1·V2·V3·V4 검증 | `--only v1,v2,v3,v4`, `--gold ID` | `verify/result.json`, `verify/server.log`, `verify/mutants/*/` |
 | `report` | 필수 단계의 실행·최신성·통과 여부 종합 | 별도 옵션 없음 | `report/result.json`, `report.md`, `report.json` |
 | `cube-install` | 사용자별 고정 Cube 어댑터 설치 | `--home DIR`, `--native-file PATH`, `--force` | `cube_install/result.json`, `cube_install/npm-ci.log`, `cube_install/smoke.log` |
+| `counterexample` | 합성 데이터에서 두 SQL의 차이를 찾고 행 삭제로 축소·재현 | `--reference-sql FILE`, `--candidate-sql FILE`, `--scenario nulls`, `--seed N`, `--max-examples N`, `--max-shrink-steps N`, `--dsn-env NAME`, `--statement-timeout-ms N`, `--replay FILE` | `counterexample/result.json`, `counterexample/fixture.json` |
 
 **공통 옵션**
 
-- `--config PATH`: 명시하면 반드시 존재해야 합니다. 없으면 exit 2이며 단계를 실행하지 않습니다. 생략하면 `./crosscheck.toml`을 찾습니다. 설정 없이 실행 가능한 단계는 `doctor`·`cube-install`입니다.
+- `--config PATH`: 명시하면 반드시 존재해야 합니다. 없으면 exit 2이며 단계를 실행하지 않습니다. 생략하면 `./crosscheck.toml`을 찾습니다. `doctor`·`cube-install`은 설정 없이도 실행합니다. 별도 합성 도구 `counterexample`은 설정을 읽지 않으며 `--config`를 거부합니다.
 - `--out DIR`: 기본 출력 위치는 설정 옆 `.sxc`입니다. 설정 없이 실행하면 `./.sxc`이며, 새 출력 디렉터리에는 내용 `*`의 `.gitignore`를 만듭니다.
 - `--quiet`: 요약 한 줄만 출력합니다. `sxc.py --version`은 버전을 표시합니다.
 
@@ -426,6 +432,22 @@ python skills/semantic-crosscheck/scripts/sxc.py <stage> [--config PATH] [--out 
 [설정 레퍼런스](skills/semantic-crosscheck/references/config.md) · [전체 설계 계약](docs/design.md)
 
 <a id="reading-results"></a>
+## 합성 반례와 데이터 버전 추적
+
+`counterexample`은 전용 시험 DB에서 두 SQL 파일을 같은 합성 CTE 데이터로 실행합니다.
+NULL·중복 조인·BOM 다중 경로·날짜 경계를 생성하고, 결과 차이가 유지되는 행만 남겨
+재현용 `fixture.json`을 만듭니다. 예제 SQL과 실행법은
+[반례 생성 안내](skills/semantic-crosscheck/references/counterexamples.md)에 있습니다.
+차이가 발견되면 비교 실패(exit 1), 예산 안에서 발견하지 못하면 `not_run`입니다.
+쿼리 오류는 반례로 세지 않고, 행 삭제에 대한 최소성과 전체 최소를 구분합니다.
+
+`[source]`의 선택 항목 `data_revision_sql_file`을 지정하면 검증 시작·종료와 보고서에서
+실제 DB의 버전을 조회해 해시로 연결합니다. 데이터 소유자가 관련 데이터 변경과 같은
+트랜잭션에서 버전을 갱신하고 과거 값을 재사용하지 않아야 합니다. 버전·검증 엔진·조회
+파일이 달라지거나 근거가 없으면 이전 결과를 최신 검증으로 인정하지 않습니다.
+미설정 시 기존 판정은 유지하되 데이터 최신성은 미확인으로 표시합니다. 이 계약이
+SQL과 Cube의 여러 세션에 공통 스냅샷을 제공하는 것은 아닙니다.
+
 ## 📋 결과 읽기
 
 각 단계의 `result.json`에는 `status`, `checks`의 ID·상태·`config_ref`·건수 정보, `not_proven`, `next_safe_action`이 들어갑니다.
@@ -481,6 +503,8 @@ flowchart TD
 | verify | `v3:total:<member>`, `v3:additive:<member>:<member>`, `v3:pair:<member>+<member>` | 합계·그룹 합·지표 조합 일치 |
 | verify | `v4:<operator>:<target>` | gold suite의 실패 항목이 변형 모델을 검출 |
 | report | `stage:<name>` | 단계가 실행되었고 최신이며 통과 |
+| build·reason·cube·verify / report | `data_revision:stable`, `data_revision:current` | 구성된 데이터 버전이 안정적이며 현재 근거와 일치; 조회 오류는 실패로 닫음 |
+| counterexample | `counterexample:search`, `counterexample:query`, `counterexample:recheck`, `counterexample:inputs` | 합성 SQL 차이와 축소·재현 범위; 오류·미발견은 동등성 증명 불가 |
 
 조기 중단의 `stage`, doctor의 `database`, demo의 `demo:load`, verify의 `v4:suite`, 범위를 나타내는 `scope:*`, 설치의 `cube_install:*`까지 포함한 전체 목록은 [설계 문서의 카탈로그](docs/design.md#6-check-catalogue)를 참고합니다.
 
@@ -640,13 +664,13 @@ CI는 전체 이력을 가진 clone의 작업 트리·이력을 일반 패턴과
 
 **MIT** · [LICENSE](LICENSE). 런타임 의존성을 저장소에 포함하지 않으며 의존성 라이선스는 [THIRD_PARTY.md](THIRD_PARTY.md)에 정리했습니다.
 
-[설계 문서](docs/design.md) · [설정 레퍼런스](skills/semantic-crosscheck/references/config.md) · [문제와 함정](skills/semantic-crosscheck/references/pitfalls.md) · [변경 이력](CHANGELOG.md) · [v0.1.1 릴리스 노트](docs/releases/v0.1.1.md)
+[설계 문서](docs/design.md) · [설정 레퍼런스](skills/semantic-crosscheck/references/config.md) · [문제와 함정](skills/semantic-crosscheck/references/pitfalls.md) · [변경 이력](CHANGELOG.md) · [v0.2.0 릴리스 노트](docs/releases/v0.2.0.md)
 
 <div align="center">
 
 **한 계층의 설명을 믿기 전에, 다른 계층의 답과 대조합니다.**
 
-[빠른 시작으로 이동 ↑](#quick-start-with-the-demo) · [GitHub 릴리스](https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.1.1)
+[빠른 시작으로 이동 ↑](#quick-start-with-the-demo) · [GitHub 릴리스](https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.2.0)
 
 </div>
 
@@ -654,4 +678,4 @@ CI는 전체 이력을 가진 clone의 작업 트리·이력을 일반 패턴과
 
 설정 하나로 PostgreSQL의 계층·규칙, SHACL, OWL·HermiT, Cube 모델을 만들고 서로와 gold SQL을 비교합니다. `not_run`은 통과가 아니며, 전체 판정은 `report`와 `not_proven`을 함께 읽습니다. 원본 조회와 생성 스키마 기록을 분리하고, 데모 적재는 별도의 loader 역할을 사용합니다.
 
-요구 환경은 **Python 3.11 이상 · PostgreSQL 17 이상 · Java 11 이상 · Node.js 22 이상**입니다. Linux Cube에는 **glibc 2.34** 이상(x64), 2.30 이상(arm64)이 필요합니다. Codex 설치 태그는 **v0.1.1**, 라이선스는 MIT입니다.
+요구 환경은 **Python 3.11 이상 · PostgreSQL 17 이상 · Java 11 이상 · Node.js 22 이상**입니다. Linux Cube에는 **glibc 2.34** 이상(x64), 2.30 이상(arm64)이 필요합니다. Codex 설치 태그는 **v0.2.0**, 라이선스는 MIT입니다.

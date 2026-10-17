@@ -351,41 +351,41 @@ class RuntimeTests(unittest.TestCase):
         self.assertLess(elapsed, 1.5, 'inherited pipe writers must not delay closing the probe')
         self.assertEqual(len(threading.enumerate()), readers_before, 'a probe cannot leave a blocked reader thread')
 
-    @unittest.skipUnless(os.name == 'nt', 'Windows Job Object process cleanup')
-    def test_repeated_actual_probes_terminate_only_their_grandchildren_without_handle_leaks(self):
-        self.need_runtime()
-        import ctypes
-        from ctypes import wintypes
-        api = ctypes.WinDLL('kernel32', use_last_error=True)
-        api.GetCurrentProcess.restype = wintypes.HANDLE
-        api.GetProcessHandleCount.argtypes = (wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD))
-        api.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
-        api.OpenProcess.restype = wintypes.HANDLE
-        api.WaitForSingleObject.argtypes = (wintypes.HANDLE, wintypes.DWORD)
-        api.CloseHandle.argtypes = (wintypes.HANDLE,)
-        def handle_count():
-            count = wintypes.DWORD()
-            self.assertTrue(api.GetProcessHandleCount(api.GetCurrentProcess(), ctypes.byref(count)))
-            return count.value
-        script = self.root / 'child-tree.py'
-        script.write_text('import subprocess,sys\nfrom pathlib import Path\n'
-                          'child=subprocess.Popen([sys.executable,"-c","import time;time.sleep(4)"], '
-                          'stdout=sys.stdout,stderr=sys.stderr)\n'
-                          'Path(sys.argv[1]).write_text(str(child.pid))\n'
-                          'print("v22.13.1",flush=True)\n', encoding='utf-8')
-        before = handle_count()
-        for index in range(3):
-            pid_file = self.root / ('descendant-' + str(index) + '.pid')
-            with mock.patch.object(runtime, 'PROBE_TIMEOUT_S', .25), self.assertRaises(runtime.RuntimeEvidenceError):
-                runtime._capture_version([sys.executable, str(script), str(pid_file)])
-            pid = int(pid_file.read_text())
-            child = api.OpenProcess(0x00100000, False, pid)  # SYNCHRONIZE only for our recorded child PID
-            if child:
-                try:
-                    self.assertEqual(api.WaitForSingleObject(child, 500), 0, 'dedicated probe descendant must terminate')
-                finally:
-                    api.CloseHandle(child)
-        self.assertLessEqual(handle_count(), before + 1)
+    if os.name == 'nt':  # Platform-specific coverage is registered only where executable.
+        def test_repeated_actual_probes_terminate_only_their_grandchildren_without_handle_leaks(self):
+            self.need_runtime()
+            import ctypes
+            from ctypes import wintypes
+            api = ctypes.WinDLL('kernel32', use_last_error=True)
+            api.GetCurrentProcess.restype = wintypes.HANDLE
+            api.GetProcessHandleCount.argtypes = (wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD))
+            api.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+            api.OpenProcess.restype = wintypes.HANDLE
+            api.WaitForSingleObject.argtypes = (wintypes.HANDLE, wintypes.DWORD)
+            api.CloseHandle.argtypes = (wintypes.HANDLE,)
+            def handle_count():
+                count = wintypes.DWORD()
+                self.assertTrue(api.GetProcessHandleCount(api.GetCurrentProcess(), ctypes.byref(count)))
+                return count.value
+            script = self.root / 'child-tree.py'
+            script.write_text('import subprocess,sys\nfrom pathlib import Path\n'
+                              'child=subprocess.Popen([sys.executable,"-c","import time;time.sleep(4)"], '
+                              'stdout=sys.stdout,stderr=sys.stderr)\n'
+                              'Path(sys.argv[1]).write_text(str(child.pid))\n'
+                              'print("v22.13.1",flush=True)\n', encoding='utf-8')
+            before = handle_count()
+            for index in range(3):
+                pid_file = self.root / ('descendant-' + str(index) + '.pid')
+                with mock.patch.object(runtime, 'PROBE_TIMEOUT_S', .25), self.assertRaises(runtime.RuntimeEvidenceError):
+                    runtime._capture_version([sys.executable, str(script), str(pid_file)])
+                pid = int(pid_file.read_text())
+                child = api.OpenProcess(0x00100000, False, pid)  # SYNCHRONIZE only for our recorded child PID
+                if child:
+                    try:
+                        self.assertEqual(api.WaitForSingleObject(child, 500), 0, 'dedicated probe descendant must terminate')
+                    finally:
+                        api.CloseHandle(child)
+            self.assertLessEqual(handle_count(), before + 1)
 
     def test_java_agent_environment_is_rejected_only_in_opt_in_mode_without_values(self):
         self.need_runtime()

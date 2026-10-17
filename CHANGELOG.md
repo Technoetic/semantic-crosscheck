@@ -4,7 +4,9 @@ All notable changes to this project are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.3.0] - 2026-10-17
+
+Release notes: [docs/releases/v0.3.0.md](docs/releases/v0.3.0.md).
 
 ### Added
 
@@ -16,6 +18,9 @@ All notable changes to this project are recorded here. The format follows
   Node/Java versions, used HermiT JAR and selected Cube installation at stage boundaries and report.
   Missing, failed or changed runtime evidence prevents reuse of prior PASS results. The default is
   off and performs no new runtime probes; enabling it requires the complete pipeline runtime.
+- Actual full-stack runtime CI exercises an opted-in clean pipeline and changed, unavailable and
+  missing runtime evidence. Platform-specific process cleanup coverage is registered on the
+  applicable OS, preserving the integration job's zero-skip requirement.
 
 ## [0.2.0] - 2026-10-16
 
@@ -113,6 +118,7 @@ First release. Release notes: [docs/releases/v0.1.0.md](docs/releases/v0.1.0.md)
   followed by the clean and dirty demo end to end through the command line; whitespace check and a leak
   scan of the working tree and the whole history.
 
+[0.3.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.3.0
 [0.2.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.2.0
 [0.1.1]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.1.1
 [0.1.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.1.0

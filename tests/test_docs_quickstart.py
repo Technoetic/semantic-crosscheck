@@ -28,7 +28,7 @@ import pgfixture
 import test_docs_catalogue as catalogue
 from test_docs_setup_roles import Psql
 
-from semantic_crosscheck import cube_run, demo, owl, procutil, provenance
+from semantic_crosscheck import cube_run, demo, owl, procutil, provenance, runtime_provenance
 
 ROOT = pgfixture.ROOT
 README = ROOT / "README.md"
@@ -141,6 +141,9 @@ class QuickStartDocumentTest(unittest.TestCase):
                 if stage in ("build", "reason", "cube", "verify", "report"):
                     self.assertIn("NOT PROVEN  " + provenance.UNBOUND_NOTE, item["not_proven"],
                                   "the default demo has no revision probe; document its unbound freshness")
+                if stage in runtime_provenance.DATA_STAGES:
+                    self.assertIn("NOT PROVEN  " + runtime_provenance.UNBOUND_NOTE, item["not_proven"],
+                                  "the default demo has no runtime binding; document the unbound runtime")
 
     def test_dirty_run_and_defect_table_follow_demo_py(self):
         run = dirty_run()

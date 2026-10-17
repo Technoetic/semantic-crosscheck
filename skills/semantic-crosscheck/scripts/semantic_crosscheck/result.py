@@ -39,6 +39,7 @@ class Result:
     finished_at: str = ""
     inputs: dict = field(default_factory=dict)   # inputs_fingerprint() of the configuration the stage ran with
     provenance: dict = field(default_factory=lambda: {"schema_version": 1, "binding": "unbound"})
+    runtime_evidence: dict = field(default_factory=lambda: {"schema_version": 1, "binding": "unbound"})
 
     def add(self, check_id: str, status: str, config_ref: str = "", **detail) -> Check:
         c = Check(check_id, status, detail, config_ref)

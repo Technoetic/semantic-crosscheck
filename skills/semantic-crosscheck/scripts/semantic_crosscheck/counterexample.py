@@ -16,7 +16,7 @@ import os
 from pathlib import Path
 import re
 
-from . import canon, db
+from . import canon, constraints, db
 from .result import EXIT_CONFIG, Result, StageError
 
 SCENARIOS = ('nulls', 'duplicate_join', 'bom_diamond', 'date_boundary')
@@ -64,7 +64,7 @@ def generate(scenario, seed, case_index):
     return fixture
 
 
-def wrap_sql(query, fixture):
+def wrap_sql(query, fixture, profile=None):
     """Typed VALUES CTEs plus a nested candidate CTE; values never interpolated."""
     if not isinstance(query, str) or not query.strip():
         raise ValueError('Empty trusted SQL')
@@ -72,6 +72,11 @@ def wrap_sql(query, fixture):
     if query.endswith(';'):
         query = query[:-1]
     parts, params = [], {}
+    def cast(expression, data_type):
+        # Explicit deterministic equality for the integrity profile's text keys
+        # and checks, including databases with nondeterministic default collation.
+        suffix = ' COLLATE "C"' if profile is not None and data_type == 'text' else ''
+        return f'CAST({expression} AS {data_type})' + suffix
     for table, columns in SCHEMA.items():
         rows = fixture[table]
         values = []
@@ -82,11 +87,11 @@ def wrap_sql(query, fixture):
             for column_number, ((name, data_type), value) in enumerate(zip(columns, row)):
                 parameter = f'sxc_{table}_{row_number}_{column_number}'
                 params[parameter] = value
-                cells.append(f'CAST(:{parameter} AS {data_type})')
+                cells.append(cast(':' + parameter, data_type))
             values.append('(' + ', '.join(cells) + ')')
         names = ', '.join(column[0] for column in columns)
         body = ('VALUES ' + ', '.join(values)) if rows else (
-            'SELECT ' + ', '.join(f'CAST(NULL AS {data_type})' for _, data_type in columns) + ' WHERE FALSE')
+            'SELECT ' + ', '.join(cast('NULL', data_type) for _, data_type in columns) + ' WHERE FALSE')
         parts.append(f'{table}({names}) AS ({body})')
     return ('WITH ' + ',\n'.join(parts) + '\n, sxc_candidate AS (\n' + query +
             f'\n) SELECT * FROM sxc_candidate LIMIT {ROW_LIMIT + 1}'), params
@@ -133,12 +138,12 @@ def compare_answers(reference_columns, reference_rows, candidate_columns, candid
             'candidate_only_rows': sum((candidate - reference).values())}
 
 
-def evaluate(conn, fixture, reference_sql, candidate_sql, timeout_ms):
+def evaluate(conn, fixture, reference_sql, candidate_sql, timeout_ms, profile=None):
     answers = []
     with db.read_only(conn, timeout_ms):
         conn.run('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ')
         for query in (reference_sql, candidate_sql):
-            sql, params = wrap_sql(query, fixture)
+            sql, params = wrap_sql(query, fixture, profile=profile)
             prepared = conn.prepare(sql)
             try:
                 rows = prepared.run(**params) or []
@@ -151,24 +156,34 @@ def evaluate(conn, fixture, reference_sql, candidate_sql, timeout_ms):
     return compare_answers(*answers[0], *answers[1])
 
 
-def shrink(fixture, predicate, max_steps):
+def shrink(fixture, predicate, max_steps, profile=None):
     """Greedy row deletion. Invalid trials are skipped, never accepted as witnesses.
 
     A query error makes deletion 1-minimality unproven even when the remaining
     successfully evaluable deletions have reached a fixed point.
     """
+    constraints.validate_fixture(fixture, SCHEMA, profile)
     current = copy.deepcopy(fixture)
-    steps = accepted = errors = 0
+    steps = accepted = errors = invalid_domain = 0
+    def summary(exhausted):
+        return {'tables': current, 'steps': steps, 'accepted': accepted, 'shrink_errors': errors,
+                'invalid_domain_trials': invalid_domain,
+                'minimality_scope': 'admissible_single_row_deletions' if profile else 'single_row_deletions',
+                'deletion_1_minimal': not exhausted and errors == 0, 'budget_exhausted': exhausted}
     while True:
         changed = False
         for table in SCHEMA:
             for index in range(len(current[table])):
                 if steps >= max_steps:
-                    return {'tables': current, 'steps': steps, 'accepted': accepted, 'shrink_errors': errors,
-                            'deletion_1_minimal': False, 'budget_exhausted': True}
+                    return summary(True)
                 trial = copy.deepcopy(current)
                 del trial[table][index]
                 steps += 1
+                try:
+                    constraints.validate_fixture(trial, SCHEMA, profile)
+                except constraints.ConstraintViolation:
+                    invalid_domain += 1
+                    continue
                 try:
                     remains_witness = predicate(trial)
                 except Exception:  # Error text can quote data; keep only the count.
@@ -181,8 +196,7 @@ def shrink(fixture, predicate, max_steps):
             if changed:
                 break
         if not changed:
-            return {'tables': current, 'steps': steps, 'accepted': accepted, 'shrink_errors': errors,
-                    'deletion_1_minimal': errors == 0, 'budget_exhausted': False}
+            return summary(False)
 
 
 def _rows(fixture):
@@ -199,14 +213,22 @@ def _read_sql(path):
         raise StageError('counterexample: trusted SQL file missing, too large or not UTF-8', EXIT_CONFIG) from None
 
 
-def _replay(raw, scenario, seed, digests):
+def _replay(raw, scenario, seed, digests, profile=None):
     try:
-        payload = json.loads(raw)
-        if (payload['format'] != FORMAT or payload['schema_version'] != VERSION or payload['generator_version'] != VERSION or payload['synthetic'] is not True
-                or payload['scenario'] != scenario or payload['seed'] != seed or payload['sql_sha256'] != digests):
+        payload = constraints.decode_json(raw)
+        if (payload['format'] != FORMAT or type(payload['schema_version']) is not int or payload['schema_version'] != VERSION
+                or type(payload['generator_version']) is not int or payload['generator_version'] != VERSION or payload['synthetic'] is not True
+                or payload['scenario'] != scenario or type(payload['seed']) is not int or payload['seed'] != seed or payload['sql_sha256'] != digests):
             raise ValueError('Replay contract')
+        expected = constraints.binding(profile)
+        binding = payload.get('constraints')
+        if binding is None and 'constraints' not in payload and profile is None:
+            pass  # Original version 1 fixture, explicitly legacy/unconstrained mode only.
+        elif (not isinstance(binding, dict) or binding != expected or type(binding.get('version')) is not int):
+            raise ValueError('Replay constraint profile/mode')
         original = generate(scenario, seed, payload['case_index'])
         tables = payload['tables']
+        constraints.validate_fixture(tables, SCHEMA, profile)
         if set(tables) != set(SCHEMA):
             raise ValueError('Replay schema')
         for table in SCHEMA:
@@ -217,7 +239,7 @@ def _replay(raw, scenario, seed, digests):
             if requested - available:
                 raise ValueError('Replay contains non-generated rows')
         return payload
-    except (ValueError, TypeError, KeyError, OverflowError):
+    except (ValueError, TypeError, KeyError, OverflowError, RecursionError):
         raise StageError('counterexample: replay is not a matching generated row-deletion fixture', EXIT_CONFIG) from None
 
 
@@ -230,6 +252,8 @@ def run(cfg, args, out):
     scenario = args.scenario
     if scenario not in SCENARIOS or not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', args.dsn_env):
         raise StageError('counterexample: invalid scenario or DSN environment variable name', EXIT_CONFIG)
+    profile_path = getattr(args, 'constraints', None)
+    profile = constraints.load(profile_path, SCHEMA) if profile_path is not None else None
     reference, reference_sha = _read_sql(args.reference_sql)
     candidate, candidate_sha = _read_sql(args.candidate_sql)
     digests = {'reference': reference_sha, 'candidate': candidate_sha}
@@ -239,7 +263,7 @@ def run(cfg, args, out):
             replay_path = Path(args.replay)
             if replay_path.stat().st_size > 1024 * 1024:
                 raise ValueError('Replay file size')
-            replay = _replay(replay_path.read_text(encoding='utf-8'), scenario, seed, digests)
+            replay = _replay(replay_path.read_text(encoding='utf-8'), scenario, seed, digests, profile)
         except (OSError, UnicodeError, ValueError):
             raise StageError('counterexample: replay file missing, too large or invalid', EXIT_CONFIG) from None
     directory = Path(out) / 'counterexample'
@@ -248,28 +272,44 @@ def run(cfg, args, out):
     artifact_path.unlink(missing_ok=True)
     result = Result('counterexample')
     result.not_proven.append('Trusted SQL may explicitly reference real tables; CTE fixtures are not a SQL sandbox or proof of source-independent execution.')
-    checked = 0
-    conn = db.connect(args.dsn_env)
+    if profile is None:
+        result.not_proven.append('Synthetic fixture scope is unconstrained: no declared PK, UNIQUE, NOT NULL, foreign key or CHECK domain is enforced.')
+    else:
+        result.not_proven.append('Only this exact version 1 integrity profile is enforced; it does not represent every PostgreSQL DDL feature or production data rule.')
+        result.not_proven.append('Constrained fixture text columns use PostgreSQL C collation and exact equality; production collation behavior is not reproduced and ordered text CHECKs are rejected.')
+    checked = attempted = invalid_domain = 0
+    conn = None
     try:
         found = None
         for index in ([replay['case_index']] if replay else range(maximum)):
             fixture = replay['tables'] if replay else generate(scenario, seed, index)
-            answer = evaluate(conn, fixture, reference, candidate, timeout)
+            attempted += 1
+            try:
+                constraints.validate_fixture(fixture, SCHEMA, profile)
+            except constraints.ConstraintViolation:
+                invalid_domain += 1
+                continue
+            if conn is None:
+                conn = db.connect(args.dsn_env)
+            answer = evaluate(conn, fixture, reference, candidate, timeout, profile)
             checked += 1
             if not answer['equal']:
                 found = (index, fixture, answer)
                 break
         if found is None:
             result.add('counterexample:search', 'not_run', '', found=False, examples=checked, bounded=True,
-                       reason='no_disagreement_in_bounded_search')
+                       attempted_examples=attempted, invalid_domain_examples=invalid_domain,
+                       constraints_mode=constraints.binding(profile)['mode'],
+                       reason='no_admissible_generated_examples' if checked == 0 else 'no_disagreement_in_bounded_search')
             result.not_proven.append('No disagreement within the generated examples proves neither SQL equivalence nor correctness on other inputs.')
             result.next_safe_action = 'Review the supported synthetic scenarios and trusted SQL, or increase the bounded search budget.'
             return result
         index, fixture, answer = found
         def predicate(trial):
-            return not evaluate(conn, trial, reference, candidate, timeout)['equal']
-        reduced = shrink(fixture, predicate, budget)
-        final_answer = evaluate(conn, reduced['tables'], reference, candidate, timeout)
+            return not evaluate(conn, trial, reference, candidate, timeout, profile)['equal']
+        reduced = shrink(fixture, predicate, budget, profile=profile)
+        constraints.validate_fixture(reduced['tables'], SCHEMA, profile)
+        final_answer = evaluate(conn, reduced['tables'], reference, candidate, timeout, profile)
         if final_answer['equal']:
             result.add('counterexample:recheck', 'error', '', reason='witness_not_stable')
             result.next_safe_action = 'Review nondeterministic or external-table SQL; no fixture was saved.'
@@ -278,25 +318,38 @@ def run(cfg, args, out):
         if _read_sql(args.reference_sql)[1] != reference_sha or _read_sql(args.candidate_sql)[1] != candidate_sha:
             result.add('counterexample:inputs', 'error', '', reason='sql_changed_during_run')
             return result
+        if profile is not None and not profile.unchanged():
+            result.add('counterexample:inputs', 'error', '', reason='constraint_profile_changed_during_run')
+            result.next_safe_action = 'Restore the exact constraint profile or rerun with the changed profile; no fixture was saved.'
+            return result
         payload = {'format': FORMAT, 'schema_version': VERSION, 'synthetic': True, 'generator_version': VERSION,
                    'scenario': scenario, 'seed': seed, 'case_index': index, 'sql_sha256': digests,
+                   'constraints': constraints.binding(profile),
                    'tables': reduced['tables'], 'shrink': {key: value for key, value in reduced.items() if key != 'tables'},
-                   'scope': 'Row-deletion witness for these trusted SQL files; no global minimality or general equivalence proof.'}
+                   'scope': ('Row-deletion witness within this exact constraint profile; minimality considers only admissible single-row deletions.' if profile else
+                             'Unconstrained row-deletion witness for these trusted SQL files; no declared integrity domain.') +
+                            ' No global minimality or general equivalence proof.'}
         serialized = json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=2).encode('utf-8')
         temporary = directory / 'fixture.json.part'
         temporary.write_bytes(serialized)
         os.replace(temporary, artifact_path)
         result.add('counterexample:search', 'fail', '', found=True, examples=checked, case_index=index,
+                   attempted_examples=attempted, invalid_domain_examples=invalid_domain,
+                   constraints_mode=constraints.binding(profile)['mode'], constraint_profile_sha256=profile.sha256 if profile else None,
                    original_rows=_rows(fixture), minimized_rows=_rows(reduced['tables']), shrink_steps=reduced['steps'],
                    shrink_errors=reduced['shrink_errors'],
+                   shrink_invalid_domain_trials=reduced['invalid_domain_trials'], minimality_scope=reduced['minimality_scope'],
                    deletion_1_minimal=reduced['deletion_1_minimal'], budget_exhausted=reduced['budget_exhausted'],
                    fixture_sha256=hashlib.sha256(serialized).hexdigest(), **{k: v for k, v in final_answer.items() if k != 'equal'})
         if reduced['budget_exhausted']:
             result.not_proven.append('Row-deletion shrinking exhausted its budget; deletion 1-minimality is not proven.')
         if reduced['shrink_errors']:
             result.not_proven.append('Some row deletions could not execute; those trials were never accepted and deletion 1-minimality is not proven.')
-        result.not_proven.append('Deletion 1-minimality is not a global minimum; only these four synthetic scenario families are searched.')
+        result.not_proven.append(('Deletion 1-minimality covers only admissible single-row deletions within the bound profile, not simultaneous deletions or a global minimum.' if profile else
+                                  'Deletion 1-minimality is not a global minimum; only these four synthetic scenario families are searched.'))
         result.next_safe_action = 'Replay fixture.json with the same two trusted SQL files, then review the SQL disagreement.'
+    except StageError:
+        raise
     except Exception as error:
         arg = error.args[0] if error.args else None
         code = arg.get('C', '') if isinstance(arg, dict) else ''
@@ -304,5 +357,6 @@ def run(cfg, args, out):
                    sqlstate=code if isinstance(code, str) and re.fullmatch('[A-Z0-9]{5}', code) else '', examples=checked)
         result.next_safe_action = 'Fix the query or environment; an execution error is not a counterexample and no fixture was saved.'
     finally:
-        conn.close()
+        if conn is not None:
+            conn.close()
     return result

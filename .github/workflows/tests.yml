@@ -61,6 +61,9 @@ jobs:
       PGPASSWORD: ci-${{ github.run_id }}-admin
       SXC_TEST_ADMIN_DSN: postgresql://postgres@127.0.0.1:5432/postgres
       SXC_TEST_ROLE_PASSWORD: ci-${{ github.run_id }}-roles
+      # Registers the actual-runtime end-to-end tests only in this provisioned job.
+      # Missing prerequisites fail those tests; they never skip in this job.
+      SXC_TEST_FULLSTACK: '1'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

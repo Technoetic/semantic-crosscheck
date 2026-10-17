@@ -28,7 +28,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from . import provenance
+from . import provenance, runtime_provenance
 from .result import STATUSES, Result, inputs_fingerprint, load_result
 
 PIPELINE = ("doctor", "demo", "build", "reason", "cube", "verify")
@@ -43,6 +43,9 @@ STALE_WHY = {
     "data_revision_missing": "{stage} has no stable evidence for the configured data revision",
     "data_revision_changed": "{stage} checked a different data revision",
     "data_revision_unavailable": "{stage} cannot be bound to a readable current data revision",
+    "runtime_evidence_missing": "{stage} has no stable evidence for the configured actual runtime",
+    "runtime_evidence_changed": "{stage} checked a different actual runtime",
+    "runtime_evidence_unavailable": "{stage} cannot be bound to the currently available actual runtime",
 }
 # which recorded inputs a stage depends on (result.inputs_fingerprint keys)
 INPUTS = {stage: ("config_sha256", "engine_sha256", "revision_query_sha256") for stage in ("build", "reason", "cube")}
@@ -110,7 +113,8 @@ def _when(text) -> datetime | None:
         return None
 
 
-def staleness(results: dict, current_inputs: dict | None = None, current_provenance: dict | None = None) -> dict:
+def staleness(results: dict, current_inputs: dict | None = None, current_provenance: dict | None = None,
+              current_runtime: dict | None = None) -> dict:
     """{stage: {"after": dependency, "why": key of STALE_WHY}} for every stale stage, decided in pipeline order so
     that a stage depending on a stale stage is stale too. With current_inputs (result.inputs_fingerprint of the
     current configuration), a stage that recorded different or no inputs is stale as well."""
@@ -128,6 +132,11 @@ def staleness(results: dict, current_inputs: dict | None = None, current_provena
             why = provenance.evidence_staleness(results[stage].get("provenance"), current_provenance)
             if why:
                 stale[stage] = {"after": "data revision", "why": why}
+                continue
+        if current_runtime is not None and stage in provenance.DATA_STAGES:
+            why = runtime_provenance.evidence_staleness(results[stage].get('runtime_evidence'), current_runtime)
+            if why:
+                stale[stage] = {'after': 'actual runtime', 'why': why}
                 continue
         started = _when(results[stage].get("started_at"))
         for dep in DEPENDS.get(stage, ()):
@@ -312,6 +321,10 @@ def render_md(summary: dict) -> str:
 
     binding = summary.get("provenance", {}).get("binding", "unbound")
     lines += ["", f"Data revision binding: **{_md(binding)}**. Only revision hashes are retained."]
+    runtime_binding = summary.get('runtime_evidence', {}).get('binding', 'unbound')
+    lines += ["", f"Actual runtime binding: **{_md(runtime_binding)}**. Only normalized versions and artifact/setting hashes are retained."]
+    if runtime_binding == 'unbound':
+        lines += ["", runtime_provenance.UNBOUND_NOTE + '.']
 
     lines += ["", "## Next safe actions", ""]
     actions = [f"{stage}: {s['next_safe_action']}" for stage, s in summary["stages"].items() if s["next_safe_action"]]
@@ -339,7 +352,15 @@ def run(cfg, args, out: Path) -> Result:
         res.add("data_revision:current", "error", "source.data_revision_sql_file", reason=problem.reason)
     res.provenance = current
     res.not_proven.append(provenance.UNBOUND_NOTE if current["binding"] == "unbound" else provenance.BOUND_NOTE)
-    stale = staleness(results, inputs_fingerprint(cfg), current)
+    try:
+        current_runtime = runtime_provenance.current_probe(cfg)
+    except runtime_provenance.RuntimeEvidenceError as problem:
+        current_runtime = {'schema_version': 1, 'binding': 'error', 'reason': problem.reason}
+        res.add('runtime_evidence:current', 'error', 'source.runtime_evidence', reason=problem.reason)
+    res.runtime_evidence = current_runtime
+    if current_runtime['binding'] != 'unbound':
+        res.not_proven.append(runtime_provenance.BOUND_NOTE)
+    stale = staleness(results, inputs_fingerprint(cfg), current, current_runtime)
     statuses = {stage: stage_status(r) for stage, r in results.items()}
     counted = {stage: counted_status(statuses[stage], stage in required, stale.get(stage)) for stage in results}
     _add_stage_checks(res, results, statuses, required, stale, counted)
@@ -358,6 +379,7 @@ def run(cfg, args, out: Path) -> Result:
         "not_proven": res.not_proven,
         "trusted_sql": _trusted(cfg),
         "provenance": current,
+        "runtime_evidence": current_runtime,
         "next_safe_action": res.next_safe_action,
     }
     out.mkdir(parents=True, exist_ok=True)

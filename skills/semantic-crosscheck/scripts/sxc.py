@@ -102,6 +102,7 @@ def parser() -> argparse.ArgumentParser:
     s.add_argument("--dsn-env", default="SXC_PG_DSN", help="NAME of the environment variable holding the read-only test PostgreSQL DSN")
     s.add_argument("--statement-timeout-ms", type=int, default=10000, help="per-query time limit (default: 10000)")
     s.add_argument("--replay", default=None, help="replay a previously generated fixture with matching SQL hashes")
+    s.add_argument("--constraints", default=None, metavar="FILE", help="optional version 1 integrity profile for the fixed synthetic schema; replay requires the exact same file bytes")
     return p
 
 

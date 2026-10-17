@@ -210,7 +210,10 @@ class RuntimeTests(unittest.TestCase):
 
     def test_used_hermit_classpath_jar_hash_and_missing_jar(self):
         self.need_runtime()
-        import owlready2.reasoning as reasoning
+        try:
+            import owlready2.reasoning as reasoning
+        except ImportError:
+            self.skipTest('owlready2 is not installed in the core-only environment')
         jar = self.root / 'used.jar'
         jar.write_bytes(b'actual-hermit-one')
         with mock.patch.object(reasoning, '_HERMIT_CLASSPATH', str(self.root) + os.pathsep + str(jar)):
@@ -224,7 +227,10 @@ class RuntimeTests(unittest.TestCase):
 
     def test_hermit_classpath_walk_is_bounded_and_binds_actual_loose_classes(self):
         self.need_runtime()
-        import owlready2.reasoning as reasoning
+        try:
+            import owlready2.reasoning as reasoning
+        except ImportError:
+            self.skipTest('owlready2 is not installed in the core-only environment')
         jar = self.root / 'used.jar'
         jar.write_bytes(b'actual-jar')
         with mock.patch.object(reasoning, '_HERMIT_CLASSPATH', str(self.root) + os.pathsep + str(jar)):

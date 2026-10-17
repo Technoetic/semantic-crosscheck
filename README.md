@@ -340,22 +340,26 @@ CLI 출력 원문을 유지했습니다. 아래 검사 수와 `NOT PROVEN` 문�
 [sxc demo] PASS  checks: 5 pass, 0 fail, 0 error, 0 not_run  -> .../demo/.sxc/demo/result.json
 [sxc doctor] PASS  checks: 21 pass, 0 fail, 0 error, 0 not_run  -> .../demo/.sxc/doctor/result.json
 [sxc build] PASS  checks: 6 pass, 0 fail, 0 error, 0 not_run  -> .../demo/.sxc/build/result.json
+  NOT PROVEN  runtime evidence is unbound: actual PostgreSQL, Node, Java, HermiT and selected Cube installation were not bound; local engine/package metadata alone does not establish the executing runtime
   NOT PROVEN  data revision is unbound: no owner-maintained revision was checked; separate database sessions and cached gold answers are not proven to observe one data version
 [sxc reason] PASS  checks: 9 pass, 0 fail, 0 error, 0 not_run  -> .../demo/.sxc/reason/result.json
   NOT PROVEN  shacl:open_le_total: no SHACL form (sql_violation); checked only in SQL (shape:open_le_total in build)
   NOT PROVEN  v5:defined:ProductUsedAsPart: the class has no members in OWL or in SQL, so the comparison holds vacuously
+  NOT PROVEN  runtime evidence is unbound: actual PostgreSQL, Node, Java, HermiT and selected Cube installation were not bound; local engine/package metadata alone does not establish the executing runtime
   NOT PROVEN  data revision is unbound: no owner-maintained revision was checked; separate database sessions and cached gold answers are not proven to observe one data version
 [sxc cube] PASS  checks: 7 pass, 0 fail, 0 error, 0 not_run  -> .../demo/.sxc/cube/result.json
+  NOT PROVEN  runtime evidence is unbound: actual PostgreSQL, Node, Java, HermiT and selected Cube installation were not bound; local engine/package metadata alone does not establish the executing runtime
   NOT PROVEN  data revision is unbound: no owner-maintained revision was checked; separate database sessions and cached gold answers are not proven to observe one data version
 [sxc verify] PASS  checks: 42 pass, 0 fail, 0 error, 0 not_run  -> .../demo/.sxc/verify/result.json
   NOT PROVEN  v4:measure_normalization_drop:on_hand equivalent on this data
   NOT PROVEN  v4:measure_normalization_drop:consigned equivalent on this data
+  NOT PROVEN  runtime evidence is unbound: actual PostgreSQL, Node, Java, HermiT and selected Cube installation were not bound; local engine/package metadata alone does not establish the executing runtime
   NOT PROVEN  data revision is unbound: no owner-maintained revision was checked; separate database sessions and cached gold answers are not proven to observe one data version
 [sxc report] PASS  checks: 6 pass, 0 fail, 0 error, 0 not_run  -> .../demo/.sxc/report/result.json
   NOT PROVEN  data revision is unbound: no owner-maintained revision was checked; separate database sessions and cached gold answers are not proven to observe one data version
 ```
 
-`NOT PROVEN` 9줄은 정상 데모에서도 예상됩니다. 기본 데모에는 revision 조회가 없어 build·reason·cube·verify·report 각각에 데이터 버전 미확인 안내가 나옵니다. 나머지 4개 중 `open_le_total`은 SQL 전용 규칙이고, 부품으로 쓰인 제품의 정의 클래스는 양쪽 모두 비어 있습니다. 위치 코드의 공백·대소문자 변형이 없는 데이터에서는 정규화를 제거한 두 변이도 원래 결과와 같습니다. `verify`는 변이마다 Cube를 시작하므로 느립니다. 기존 문서화된 측정 환경에서는 약 43초였으며 실행 환경에 따라 달라집니다.
+`NOT PROVEN` 13줄은 정상 데모에서도 예상됩니다. 기본 데모에는 revision 조회가 없어 build·reason·cube·verify·report 각각에 데이터 버전 미확인 안내가 나옵니다. 나머지 4개 중 `open_le_total`은 SQL 전용 규칙이고, 부품으로 쓰인 제품의 정의 클래스는 양쪽 모두 비어 있습니다. 위치 코드의 공백·대소문자 변형이 없는 데이터에서는 정규화를 제거한 두 변이도 원래 결과와 같습니다. `verify`는 변이마다 Cube를 시작하므로 느립니다. 기존 문서화된 측정 환경에서는 약 43초였으며 실행 환경에 따라 달라집니다.
 
 </details>
 

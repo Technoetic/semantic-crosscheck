@@ -140,11 +140,17 @@ def begin(cfg, stage: str) -> dict:
         state = {'schema_version': 1, 'binding': 'bound', 'stage': stage,
                  'revision_query_sha256': state['revision_query_sha256'],
                  'start': {key: state[key] for key in ('source_sha256', 'cube_sha256')}}
+    from . import runtime_provenance
+    state['_runtime_start'] = runtime_provenance.begin(cfg, stage)
     return state
 
 
 def finish(cfg, res: Result, start: dict) -> Result:
     """CLI finalizer; a changed/error revision prevents reuse of even otherwise passing cached checks."""
+    from . import runtime_provenance
+    runtime_start = start.get('_runtime_start', {})
+    start = {key: value for key, value in start.items() if key != '_runtime_start'}
+    runtime_provenance.finish(cfg, res, runtime_start)
     if res.stage == 'report':
         return res  # report.run owns its conditional current probe and provenance.
     if res.stage not in DATA_STAGES:

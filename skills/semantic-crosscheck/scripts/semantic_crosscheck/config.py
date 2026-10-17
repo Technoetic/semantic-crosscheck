@@ -95,6 +95,7 @@ class Source:
     output_schema: str = "sxc_out"
     statement_timeout_ms: int = 60000
     data_revision_sql_file: str = ""  # optional query returning exactly one nonempty text revision
+    runtime_evidence: bool = False  # opt in to actual full-pipeline runtime boundary probes
 
 
 @dataclass
@@ -289,6 +290,8 @@ def _load(path: str | Path) -> Config:
     _env_name("source.owner_dsn_env", src.owner_dsn_env)
     if not isinstance(src.data_revision_sql_file, str):
         _err("source.data_revision_sql_file", "must be a SQL file name or an empty string")
+    if type(src.runtime_evidence) is not bool:
+        _err("source.runtime_evidence", "must be a boolean (true or false)")
     _int("source.statement_timeout_ms", src.statement_timeout_ms, 1000)
     if not isinstance(src.schemas, list) or not src.schemas:
         _err("source.schemas", "list the source schemas")

@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "tables": {
+    "part": {"primary_key": ["part_id"]},
+    "bom_line": {"primary_key": ["parent_id", "line_no"]},
+    "sales_order": {"primary_key": ["order_id"]},
+    "stock": {"primary_key": ["part_id", "location_id"]}
+  },
+  "foreign_keys": [
+    {"table": "bom_line", "columns": ["parent_id"], "references": {"table": "part", "columns": ["part_id"]}},
+    {"table": "bom_line", "columns": ["child_id"], "references": {"table": "part", "columns": ["part_id"]}},
+    {"table": "sales_order", "columns": ["part_id"], "references": {"table": "part", "columns": ["part_id"]}},
+    {"table": "stock", "columns": ["part_id"], "references": {"table": "part", "columns": ["part_id"]}}
+  ],
+  "checks": [
+    {"table": "bom_line", "column": "qty_per", "op": "gt", "value": "0"},
+    {"table": "sales_order", "column": "qty_total", "op": "ge", "value": "0"},
+    {"table": "sales_order", "column": "qty_open", "op": "ge", "value": "0"},
+    {"table": "stock", "column": "qty", "op": "ge", "value": "0"}
+  ]
+}

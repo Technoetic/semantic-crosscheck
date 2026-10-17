@@ -48,6 +48,7 @@ The other top-level keys are the tables `source`, `entities`, `hierarchies`, `sh
 | `output_schema` | string | `"sxc_out"` | Schema owned by the check role, where closures, cycle examples and `v_shape_<id>` views are created. Must differ from every source schema. |
 | `statement_timeout_ms` | integer | `60000` | `statement_timeout` for the stages' database transactions; at least 1000. A build waiting for another build of the same output schema counts against it. |
 | `data_revision_sql_file` | string | `""` | Optional configuration-relative trusted SQL file returning exactly one nonempty text revision. Start/end probes and report freshness checks record only its hash. |
+| `runtime_evidence` | boolean | `False` | Opt into actual full-pipeline runtime binding at build/reason/cube/verify boundaries and report. Requires both PG roles, Node, Java, HermiT and the selected installed Cube adapter. Missing or changed evidence fails closed. |
 
 When `data_revision_sql_file` is configured, the source owner must update a never-reused, monotonically
 advancing revision in the same transaction as **every** relevant data change. The probe must cover all
@@ -58,9 +59,44 @@ snapshot between independent SQL/Cube sessions and depends on the owner's revisi
 Without a probe, existing verdicts remain compatible and data freshness is explicitly `unbound` /
 `not_proven`. Engine and probe-file fingerprints also participate in evidence freshness.
 The engine fingerprint covers plugin Python/CLI sources, adapter source/lock inputs, Python version
-and direct Python package-version metadata. It does not identify the actual PostgreSQL, Node.js or
-Java executable version, or establish an authenticated/tamper-proof evidence chain. Results produced
+and direct Python package-version metadata. By itself it does not identify the actual PostgreSQL,
+Node.js or Java executable version, or establish an authenticated/tamper-proof evidence chain. Results produced
 before this fingerprint existed must be rerun; compatibility applies to new runs without a revision probe.
+
+### Actual runtime binding (opt-in)
+
+```toml
+[source]
+# Keep the other required source keys.
+runtime_evidence = true
+```
+
+This option observes each connected PostgreSQL source/Cube endpoint's `server_version_num` and
+hashes allowlisted session/database semantics (timezone, date/interval style, encoding, collation,
+database locale/ICU rules and collation versions, string/float/bytea settings, text-search
+configuration and search path). Nullable locale/rule metadata is preserved exactly in the hash. The two
+endpoint observations must agree. It records normalized versions from the actual selected Node and
+Java executables, hashes the HermiT JAR and actual classpath contents used by owlready2, and hashes the selected Cube
+adapter, native artifact and installed dependency contents. Package pins alone are insufficient.
+Only normalized versions, fixed identifiers, counts and hashes are retained; no DSNs, hostnames,
+local paths, raw process output or database setting values are saved.
+
+The contract covers the **complete pipeline**, including a `build` run in this mode: all listed
+components must already be available. No dependency install or service startup occurs. Version probes
+have short deadlines and bounded output; artifact traversal has file/size limits and unsupported
+links fail closed. npm `.bin` launch conveniences are excluded because the adapter starts Node and
+`server.js` directly. Full installed-content hashing adds I/O at each stage boundary and report.
+In this mode, nonempty `JAVA_TOOL_OPTIONS`, `JDK_JAVA_OPTIONS` or `_JAVA_OPTIONS` are rejected with
+a fixed reason code: otherwise injected JVM options/agents could affect HermiT without appearing in
+the selected classpath evidence. Their contents are never retained. The default disabled mode keeps
+the existing environment behavior.
+
+A missing, errored or changed probe cannot preserve a previous PASS. Reports reject legacy evidence
+without the runtime binding when this option is enabled. With `false` (default), no new runtime
+database/subprocess probes occur, and the report explicitly labels actual runtime binding `unbound`.
+Other operations, such as configured data-revision probes or normal stage work, still perform their
+own existing I/O. Runtime fingerprints are observed boundary evidence, not binary attestation,
+protection against between-probe replacement, or a shared PostgreSQL/Cube MVCC snapshot.
 
 A DSN may carry the password in the URL (percent-encoded: reserved characters such as `/ # ? @ : %` in the
 user name or password must be encoded); when it does not, `PGPASSWORD` is used. TLS settings go in the

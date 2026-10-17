@@ -4,6 +4,19 @@ All notable changes to this project are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Optional `counterexample --constraints FILE` profiles enforce the declared PK, UNIQUE, NOT NULL,
+  MATCH SIMPLE FK and allowlisted CHECK domain before SQL and during every row-deletion trial.
+  Replay binds the exact profile bytes and mode. Minimality covers admissible single-row deletions
+  only; a search with no valid generated cases remains `not_run`.
+- Optional `source.runtime_evidence = true` binds the actual PostgreSQL endpoints/settings,
+  Node/Java versions, used HermiT JAR and selected Cube installation at stage boundaries and report.
+  Missing, failed or changed runtime evidence prevents reuse of prior PASS results. The default is
+  off and performs no new runtime probes; enabling it requires the complete pipeline runtime.
+
 ## [0.2.0] - 2026-10-16
 
 Release notes: [docs/releases/v0.2.0.md](docs/releases/v0.2.0.md).

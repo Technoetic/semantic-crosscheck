@@ -414,7 +414,7 @@ python skills/semantic-crosscheck/scripts/sxc.py <stage> [--config PATH] [--out 
 | `verify` | V1·V2·V3·V4 검증 | `--only v1,v2,v3,v4`, `--gold ID` | `verify/result.json`, `verify/server.log`, `verify/mutants/*/` |
 | `report` | 필수 단계의 실행·최신성·통과 여부 종합 | 별도 옵션 없음 | `report/result.json`, `report.md`, `report.json` |
 | `cube-install` | 사용자별 고정 Cube 어댑터 설치 | `--home DIR`, `--native-file PATH`, `--force` | `cube_install/result.json`, `cube_install/npm-ci.log`, `cube_install/smoke.log` |
-| `counterexample` | 합성 데이터에서 두 SQL의 차이를 찾고 행 삭제로 축소·재현 | `--reference-sql FILE`, `--candidate-sql FILE`, `--scenario nulls`, `--seed N`, `--max-examples N`, `--max-shrink-steps N`, `--dsn-env NAME`, `--statement-timeout-ms N`, `--replay FILE` | `counterexample/result.json`, `counterexample/fixture.json` |
+| `counterexample` | 합성 데이터에서 두 SQL의 차이를 찾고 행 삭제로 축소·재현 | `--reference-sql FILE`, `--candidate-sql FILE`, `--scenario nulls`, `--seed N`, `--max-examples N`, `--max-shrink-steps N`, `--dsn-env NAME`, `--statement-timeout-ms N`, `--constraints FILE`, `--replay FILE` | `counterexample/result.json`, `counterexample/fixture.json` |
 
 **공통 옵션**
 
@@ -441,12 +441,23 @@ NULL·중복 조인·BOM 다중 경로·날짜 경계를 생성하고, 결과 �
 차이가 발견되면 비교 실패(exit 1), 예산 안에서 발견하지 못하면 `not_run`입니다.
 쿼리 오류는 반례로 세지 않고, 행 삭제에 대한 최소성과 전체 최소를 구분합니다.
 
+`--constraints examples/counterexamples/constraints.json`을 추가하면 선언한 PK·UNIQUE·
+NOT NULL·FK·CHECK를 지키는 데이터만 실행하고 축소합니다. FK를 깨는 부모 행 삭제는
+거부하며, 최소성은 제약을 지키는 단일 행 삭제 범위입니다. 재현할 때도 같은 프로필
+파일이 필요합니다. 실제 운영 DB의 모든 제약을 자동으로 읽거나 증명하는 기능은 아닙니다.
+
 `[source]`의 선택 항목 `data_revision_sql_file`을 지정하면 검증 시작·종료와 보고서에서
 실제 DB의 버전을 조회해 해시로 연결합니다. 데이터 소유자가 관련 데이터 변경과 같은
 트랜잭션에서 버전을 갱신하고 과거 값을 재사용하지 않아야 합니다. 버전·검증 엔진·조회
 파일이 달라지거나 근거가 없으면 이전 결과를 최신 검증으로 인정하지 않습니다.
 미설정 시 기존 판정은 유지하되 데이터 최신성은 미확인으로 표시합니다. 이 계약이
 SQL과 Cube의 여러 세션에 공통 스냅샷을 제공하는 것은 아닙니다.
+
+`[source]`에 `runtime_evidence = true`를 지정하면 실제 PostgreSQL 버전·의미 설정,
+Node·Java 버전, 사용한 HermiT와 Cube 설치 파일의 해시도 검증 시작·종료와 보고서에
+연결합니다. 근거가 없거나 달라지면 기존 PASS를 재사용하지 않습니다. 전체 실행 환경이
+이미 설치돼 있어야 하며, 기본값은 꺼짐입니다. 자세한 설정과 한계는
+[설정 안내](skills/semantic-crosscheck/references/config.md#actual-runtime-binding-opt-in)에 있습니다.
 
 ## 📋 결과 읽기
 
@@ -480,7 +491,7 @@ flowchart TD
 `report`는 `build`·`cube`·`verify`를 요구합니다. 설정에 `[ontology]` 또는 `[[shapes]]`가 있으면 `reason`도 필요합니다. 의존 단계보다 먼저 실행한 결과는 오래된 것으로 처리합니다: `build`는 `demo` 뒤, `reason`·`cube`는 `build` 뒤, `verify`는 `build`·`cube` 뒤에 실행합니다. 선택 단계인 `doctor`·`demo`도 실행 결과가 실패이면 보고서를 실패시킵니다.
 
 > [!IMPORTANT]
-> 설정과 gold SQL의 fingerprint가 바뀌면 관련 결과는 `why=inputs_changed`로 오래된 상태가 됩니다. **단계 전체의 원본 데이터 snapshot/version을 묶는 기능은 아직 없습니다.** 한 번의 검증 동안 입력 데이터를 안정적으로 유지해야 합니다.
+> 설정과 gold SQL의 fingerprint가 바뀌면 관련 결과는 `why=inputs_changed`로 오래된 상태가 됩니다. 데이터 버전 추적은 위의 선택 설정으로 연결할 수 있지만, **PostgreSQL·Cube의 모든 세션이 하나의 MVCC snapshot을 공유하지는 않습니다.** 한 번의 검증 동안 입력 데이터를 안정적으로 유지해야 합니다.
 
 <a id="check-catalogue"></a>
 ## 🔎 검사 ID 목록
@@ -504,6 +515,7 @@ flowchart TD
 | verify | `v4:<operator>:<target>` | gold suite의 실패 항목이 변형 모델을 검출 |
 | report | `stage:<name>` | 단계가 실행되었고 최신이며 통과 |
 | build·reason·cube·verify / report | `data_revision:stable`, `data_revision:current` | 구성된 데이터 버전이 안정적이며 현재 근거와 일치; 조회 오류는 실패로 닫음 |
+| build·reason·cube·verify / report | `runtime_evidence:stable`, `runtime_evidence:current` | 선택한 실제 실행 환경 근거가 안정적이며 현재와 일치; 누락·변경·조회 실패 시 기존 PASS 재사용 차단 |
 | counterexample | `counterexample:search`, `counterexample:query`, `counterexample:recheck`, `counterexample:inputs` | 합성 SQL 차이와 축소·재현 범위; 오류·미발견은 동등성 증명 불가 |
 
 조기 중단의 `stage`, doctor의 `database`, demo의 `demo:load`, verify의 `v4:suite`, 범위를 나타내는 `scope:*`, 설치의 `cube_install:*`까지 포함한 전체 목록은 [설계 문서의 카탈로그](docs/design.md#6-check-catalogue)를 참고합니다.

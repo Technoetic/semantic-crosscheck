@@ -141,8 +141,19 @@ exit 3, so one run lists everything to fix.
 - **The Cube child's environment** is the inherited one minus every `CUBEJS_*`, `PG*` and `SXC_*` variable,
   `NODE_OPTIONS`, every variable whose value contains `postgres://` or `postgresql://` and the configured DSN
   variable names; plus the connection parsed from the Cube DSN, a random per-run API secret, development mode
-  and telemetry off, `CUBEJS_LOG_LEVEL=error`, TLS settings from the DSN's `sslmode`, `SXC_PORT`,
-  `SXC_MODEL_DIR` and, only when it is `1`, `SXC_CUBE_DEBUG`. `node` is looked up on `PATH` only.
+  and telemetry off, `CUBEJS_LOG_LEVEL=error`, `CUBEJS_TESSERACT_SQL_PLANNER=true`, TLS settings from the DSN's
+  `sslmode`, `SXC_PORT`, `SXC_MODEL_DIR` and, only when it is `1`, `SXC_CUBE_DEBUG`. `node` is looked up on
+  `PATH` only.
+- **The Cube SQL planner is pinned and recorded.** Cube 1.8.3 picks its SQL planner from
+  `CUBEJS_TESSERACT_SQL_PLANNER` (default `true`, the Tesseract planner; `false` selects the legacy planner, which
+  Cube warns it will remove). The runner sets `true` itself (`cube_run.PLANNER_ENV`), so neither Cube's implicit
+  default nor an inherited value (dropped with every other `CUBEJS_*` variable) decides which planner serves a
+  result. The legacy-planner SQL injection GHSA-cfx6-94gc-h774 affected Cube 1.7.x and earlier, not the pinned
+  1.8.3; pinning the planner keeps a later Cube move from silently changing it. `serve` records the Cube version
+  and the planner the child was started with (`cube_run.runtime_facts`: `cube_version`, `sql_planner`), the cube
+  stage writes both into the `cube:meta` detail and `report` treats a cube result that recorded another version or
+  planner, or neither, as stale (section 8). The value is the one the runner passes, not one read back from Cube;
+  it lives in `cube_run.py`, which the engine fingerprint hashes.
 - **The adapter listens on 127.0.0.1 only** and requires an HS256 JWT signed with the per-run secret. The client
   talks to it through an opener without proxies, so `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY` and the system
   proxy settings never see the JWT or filter values, and no `NO_PROXY` entry is needed. `cube-install` downloads
@@ -201,7 +212,7 @@ parameters are ignored.
 | `naming` | every generated name: closure/cycles tables, shape views, cube and member names, RDF IRIs, OWL property names |
 | `closure` | `build(conn, cfg, h) -> (checks, sql_log)` inside the caller's transaction, which holds the output schema's build lock |
 | `cube_gen` | `generate(cfg, conn) -> (model, notes)`, `members(model)`, `to_yaml`, `write_model(model, dir)`, `load_model(out)`, `where_sql(measure)`, `measure_cube(cfg, m, cols)`, `columns(conn, table)` |
-| `cube_run` | `cube_home()` (absolute), `install_state(home) -> 'ok'\|'missing'\|'incomplete'\|'stale'`, `installed(home)`, `adapter_hashes()`, `serve(cfg, run_dir, log_path) -> CubeClient` (context manager), `ADAPTER_DIR`, `MIN_NODE` |
+| `cube_run` | `cube_home()` (absolute), `install_state(home) -> 'ok'\|'missing'\|'incomplete'\|'stale'`, `installed(home)`, `adapter_hashes()`, `serve(cfg, run_dir, log_path) -> CubeClient` (context manager; `client.runtime` is `runtime_facts` of the started child), `runtime_facts(version, env=None) -> {'cube_version', 'sql_planner'}`, `sql_planner(env) -> 'tesseract'\|'legacy'\|'unknown'`, `PLANNER_ENV`, `ADAPTER_DIR`, `MIN_NODE` |
 | `cube_client` | `CubeClient.load(query) -> list[dict]` (polls "Continue wait", explicit limit 50,000, never `renewQuery`, no proxies), `meta()` |
 | `compare` | `run_binding(conn, client, cfg, gold, params, cache=None, types=None)`, `compare_rows(gold, g_rows, c_rows, types=None)`, `member_kinds(model)`, `gold_kinds(gold, kinds)` |
 | `sweep` | `bindings(conn, cfg, gold)`, `strata_names(gold)`, `md5_order(column)` |
@@ -267,7 +278,7 @@ configuration ids; `<member>` is a Cube member (`cube.member`); `<stratum>` is a
 | reason | `scope:shacl`, `scope:owl` | never passes | `not_run` (`excluded_by_only`): the part `--only` left out |
 | cube | `cube:model` | the model was generated (a generator error is exit 2 instead) | none |
 | cube | `cube:gold_members:<gold>` | every member the gold entry names exists in the model and is public | `fail` (`missing`, `hidden`, `malformed` counts) |
-| cube | `cube:meta` | Cube's `/meta` lists exactly the public members of the model | `fail` (`missing`, `extra`); `error` (HTTP status, connection error, unexpected response) |
+| cube | `cube:meta` | Cube's `/meta` lists exactly the public members of the model | `fail` (`missing`, `extra`); `error` (HTTP status, connection error, unexpected response). Every outcome records `cube_version` and `sql_planner` of the adapter that answered |
 | verify | `v1:<gold>` | the first binding matches exactly | `fail`; `error` (gold or Cube side: error type, SQLSTATE, HTTP status, `cube` `timeout`/`row_limit`/`query_error`; `members_not_in_model`; `bindings_failed`); `not_run` (`closure_not_passed`, `no_binding`) |
 | verify | `v2:<gold>:<stratum>` | every binding of the stratum matches exactly; an empty stratum passes (`empty_stratum`) and is listed in `not_proven` | as `v1:<gold>`, without `no_binding` |
 | verify | `v3:total:<member>` | the Cube total equals SQL computed from the configuration (or the closure table) | `fail`; `error`; `not_run` (`closure_not_passed`) |
@@ -464,6 +475,11 @@ never touches the database.
   stage that depends on a stale one (`stale_dependency`) and one whose run times cannot be read
   (`no_timestamp`). A stale required stage counts as at least `not_run` (`reason=stale`, `after`, `why`,
   `last_status`).
+- **Cube runtime.** A cube result whose `cube:meta` recorded another `cube_version` or `sql_planner` than
+  `cube_run.runtime_facts` of the configured (pinned) Cube version is stale (`after=Cube runtime`,
+  `why=cube_runtime_changed`); one whose `cube:meta` lacks either value is stale too (`why=cube_runtime_missing`,
+  for example a result from a release that did not pin the planner). verify then follows as `stale_dependency`. A
+  cube result without `cube:meta` (the stage stopped before Cube answered) is left to its own error.
 - **Optional stages** (`doctor`, `demo`): a present result that passed, failed or errored is mirrored (a failing
   doctor or demo fails the report); one that is `not_run` or stale gets only a `not_proven` line. A missing
   `doctor` adds the `not_proven` line that the check role's privileges were not verified.
@@ -509,7 +525,9 @@ and reference queries remain trusted code, not a security boundary. The engine d
 Python/CLI sources, adapter files/pins and Python/direct Python package-version metadata. Optional
 `source.runtime_evidence=true` separately binds actual PG endpoint versions/semantic settings,
 Node/Java executable versions, the used HermiT JAR/classpath and the selected Cube installation's consumed
-contents. It requires the complete installed runtime, adds bounded metadata/version/hash probes,
+contents, with the pinned Cube version and the SQL planner the runner fixes (`cube_version`, `sql_planner`;
+configured values, not read back from Cube) next to its package versions, so evidence recorded under another
+planner no longer matches. It requires the complete installed runtime, adds bounded metadata/version/hash probes,
 and invalidates missing/errored/changed evidence. With it disabled, no new runtime probes occur.
 Historical results without current fingerprints must be rerun. These are observed boundary facts,
 not cryptographic authentication, runtime attestation or a shared cross-session snapshot.

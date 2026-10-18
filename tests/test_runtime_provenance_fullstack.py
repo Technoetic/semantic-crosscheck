@@ -126,6 +126,11 @@ if os.environ.get('SXC_TEST_FULLSTACK') == '1':
             self.assertEqual(components['cube']['native_sha256'],
                              hashlib.sha256((home / cube_run.INDEX_NODE).read_bytes()).hexdigest())
             self.assertGreater(components['cube']['file_count'], 0)
+            self.assertEqual((components['cube']['cube_version'], components['cube']['sql_planner']),
+                             (self.cfg.cube.version, 'tesseract'))
+            cube_meta = next(c for c in json.loads((self.out / 'cube' / 'result.json').read_text(encoding='utf-8'))
+                             ['checks'] if c['id'] == 'cube:meta')
+            self.assertEqual(cube_meta['detail']['sql_planner'], components['cube']['sql_planner'])
             for package, version in components['cube']['package_versions'].items():
                 installed = json.loads((home / 'node_modules' / package / 'package.json').read_text(encoding='utf-8'))
                 self.assertEqual(version, installed['version'])

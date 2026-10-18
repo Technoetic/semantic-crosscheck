@@ -10,7 +10,10 @@ never ran, or ran before the data it checked was reloaded, would answer that que
     depends on. A stage whose own result is not_run (a narrowed run, a build with nothing to build) is no pass.
   - Staleness follows DEPENDS: build after demo; reason and cube after build; verify after build and cube. A stage
     that started before a dependency finished its latest run is stale, so is every stage that depends on a stale
-    one, and so is a stage whose run times cannot be read (freshness cannot be shown).
+    one, and so is a stage whose run times cannot be read (freshness cannot be shown). A cube result whose `cube:meta`
+    recorded another Cube version or SQL planner than cube_run pins is stale (cube_runtime_changed), and so is one
+    whose `cube:meta` recorded neither (cube_runtime_missing): it cannot be shown to have been served by the pinned
+    Cube and planner.
   - doctor and demo are optional: a stage that did not run is not required, but a result that is present and failed
     still fails the report (a broken privilege model or a failed load is real). An optional stage without a
     decisive result (not_run, or stale) is listed as not proven and does not count.
@@ -28,7 +31,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from . import provenance, runtime_provenance
+from . import config, cube_run, provenance, runtime_provenance
 from .result import STATUSES, Result, inputs_fingerprint, load_result
 
 PIPELINE = ("doctor", "demo", "build", "reason", "cube", "verify")
@@ -46,6 +49,9 @@ STALE_WHY = {
     "runtime_evidence_missing": "{stage} has no stable evidence for the configured actual runtime",
     "runtime_evidence_changed": "{stage} checked a different actual runtime",
     "runtime_evidence_unavailable": "{stage} cannot be bound to the currently available actual runtime",
+    "cube_runtime_changed": "{stage} was served by another Cube version or SQL planner than this checkout pins",
+    "cube_runtime_missing": "{stage} recorded no Cube version and SQL planner, so it cannot be shown to have been "
+                            "served by the pinned ones",
 }
 # which recorded inputs a stage depends on (result.inputs_fingerprint keys)
 INPUTS = {stage: ("config_sha256", "engine_sha256", "revision_query_sha256") for stage in ("build", "reason", "cube")}
@@ -113,11 +119,29 @@ def _when(text) -> datetime | None:
         return None
 
 
+def cube_runtime_staleness(r: dict, current: dict) -> str | None:
+    """Fixed stale reason when the `cube:meta` check of a result recorded another Cube version or SQL planner than
+    `current` (cube_run.runtime_facts), or not both; None when it agrees or the result has no `cube:meta` (the stage
+    stopped before Cube served anything, and its own error keeps it from passing)."""
+    meta = next((c for c in _checks(r) if c.get("id") == "cube:meta"), None)
+    if meta is None:
+        return None
+    detail = meta.get("detail") if isinstance(meta.get("detail"), dict) else {}
+    recorded = {key: detail.get(key) for key in current}
+    if any(value is None for value in recorded.values()):
+        return "cube_runtime_missing"
+    return None if recorded == current else "cube_runtime_changed"
+
+
 def staleness(results: dict, current_inputs: dict | None = None, current_provenance: dict | None = None,
-              current_runtime: dict | None = None) -> dict:
+              current_runtime: dict | None = None, current_cube: dict | None = None) -> dict:
     """{stage: {"after": dependency, "why": key of STALE_WHY}} for every stale stage, decided in pipeline order so
     that a stage depending on a stale stage is stale too. With current_inputs (result.inputs_fingerprint of the
-    current configuration), a stage that recorded different or no inputs is stale as well."""
+    current configuration), a stage that recorded different or no inputs is stale as well. current_cube is the Cube
+    version and SQL planner the cube stage must have recorded (cube_run.runtime_facts of the pinned version when
+    None)."""
+    if current_cube is None:
+        current_cube = cube_run.runtime_facts(config.CUBE_VERSION)
     stale = {}
     for stage in PIPELINE:
         if stage not in results:
@@ -127,6 +151,11 @@ def staleness(results: dict, current_inputs: dict | None = None, current_provena
             changed = [k for k in INPUTS.get(stage, ()) if recorded.get(k) != current_inputs.get(k)]
             if changed:
                 stale[stage] = {"after": _INPUT_NAMES[changed[0]], "why": "inputs_changed"}
+                continue
+        if stage == "cube":
+            why = cube_runtime_staleness(results[stage], current_cube)
+            if why:
+                stale[stage] = {"after": "Cube runtime", "why": why}
                 continue
         if current_provenance is not None and stage in provenance.DATA_STAGES:
             why = provenance.evidence_staleness(results[stage].get("provenance"), current_provenance)
@@ -360,7 +389,8 @@ def run(cfg, args, out: Path) -> Result:
     res.runtime_evidence = current_runtime
     if current_runtime['binding'] != 'unbound':
         res.not_proven.append(runtime_provenance.BOUND_NOTE)
-    stale = staleness(results, inputs_fingerprint(cfg), current, current_runtime)
+    cube_version = cfg.cube.version if cfg is not None else config.CUBE_VERSION
+    stale = staleness(results, inputs_fingerprint(cfg), current, current_runtime, cube_run.runtime_facts(cube_version))
     statuses = {stage: stage_status(r) for stage, r in results.items()}
     counted = {stage: counted_status(statuses[stage], stage in required, stale.get(stage)) for stage in results}
     _add_stage_checks(res, results, statuses, required, stale, counted)

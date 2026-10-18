@@ -36,7 +36,8 @@ python "${CLAUDE_PLUGIN_ROOT}/skills/semantic-crosscheck/scripts/sxc.py" report 
 - **Stale**: a stage that started before a stage it depends on finished its latest run counts as at least
   `not_run` (`reason=stale`, with `after` and `why`). Dependencies: `build` after `demo`; `reason` and
   `cube` after `build`; `verify` after `build` and `cube`. A stage that depends on a stale one is stale
-  too.
+  too. A cube result whose `cube:meta` recorded another Cube version or SQL planner than this plugin pins
+  (`why=cube_runtime_changed`), or neither (`why=cube_runtime_missing`), is stale as well.
 - **Narrowed**: a stage whose own status is `not_run` (for example a verify narrowed with `--only` or
   `--gold`, whose `scope:*` checks are `not_run`) is `stage:<name>` `not_run`.
 - **Optional** stages (`doctor`, `demo`): a present result that passed, failed or errored is mirrored, so a

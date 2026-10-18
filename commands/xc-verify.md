@@ -30,7 +30,9 @@ python "${CLAUDE_PLUGIN_ROOT}/skills/semantic-crosscheck/scripts/sxc.py" verify 
 - V3 checks query shapes derived from the model: totals against SQL, additivity over the ontology class
   column of every cube joined to the measure through many-to-one or one-to-one steps only (the node cube,
   and the closure's ancestor and descendant copies for `qty` and `pairs`), with the NULL group compared
-  against an anti-join over the measure source, and measures queried together against the same measures
+  against independent SQL over the measure source (an anti-join when Cube starts from the measure's cube;
+  only the matched rows without a class when it starts from the node cube, which drops measure rows
+  without a node row), and measures queried together against the same measures
   queried alone (join fan-out). A join path with a one-to-many step gets no additivity check and is listed
   in not proven as not applicable. A pair
   test over more than 2,000 keys compares a deterministic sample of 2,000 keys (ordered with

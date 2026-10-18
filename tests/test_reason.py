@@ -155,26 +155,93 @@ class PlanTest(unittest.TestCase):
                                                    "qty_capped", "child_is_stock"])
         self.assertEqual(skipped, {"open_le_total": "sql_violation", "class_and_bound": "class_and_bounds"})
         grouped = shacl_check.groups(planned)
+        # child_small needs literals on child_id, which "main" already carries as part IRIs; child_is_stock needs
+        # stock IRIs there, which neither "main" nor "extra:1" (literals) allows; qty_capped fits "main"
         self.assertEqual([(name, [s.id for s in members]) for name, members in grouped], [
-            ("class:part", ["child_exists"]),
-            ("bound", ["qty_positive", "stock_nonnegative", "child_small", "qty_capped"]),
-            ("class:stock", ["child_is_stock"]),
+            ("main", ["child_exists", "qty_positive", "stock_nonnegative", "qty_capped"]),
+            ("extra:1", ["child_small"]),
+            ("extra:2", ["child_is_stock"]),
         ])
-        for name, members in grouped:   # each group carries one kind of value per column: today's single-kind export
-            for entity in ("bom_line", "stock"):
-                kinds = {(path, shacl_check.value_group(s)) for path, s in shacl_check.paths(members, entity)}
-                self.assertTrue(all(kind == name for _p, kind in kinds), (name, entity))
-        self.assertEqual([p for p, _s in shacl_check.paths(grouped[1][1], "bom_line")], ["qty_per", "child_id"])
-        self.assertEqual([p for p, _s in shacl_check.paths(grouped[0][1], "bom_line")], ["child_id"])
+        for name, members in grouped:   # each group carries one kind of value per column: the single-kind export
+            kinds = {}
+            for s in members:
+                kinds.setdefault((s.target, s.path), set()).add(shacl_check.value_kind(s))
+            self.assertEqual({column: len(k) for column, k in kinds.items()}, dict.fromkeys(kinds, 1), name)
+        self.assertEqual([p for p, _s in shacl_check.paths(grouped[0][1], "bom_line")], ["child_id", "qty_per"])
+        self.assertEqual([p for p, _s in shacl_check.paths(grouped[1][1], "bom_line")], ["child_id"])
+        self.assertEqual([shacl_check.value_kind(s) for _n, members in grouped for s in members if s.path == "child_id"],
+                         ["class:part", "bound", "class:stock"])
 
-    def test_groups_follow_configuration_order_and_skip_nothing(self):
+    def test_a_configuration_without_collisions_has_one_group(self):
+        """Without a column that needs two kinds of value every shape stays in "main": one graph, as in 0.3.0."""
         self.assertEqual(shacl_check.groups([]), [])
         cfg = demo_config()
         planned, _ = shacl_check.plan(cfg)
         self.assertEqual([(n, [s.id for s in m]) for n, m in shacl_check.groups(planned)],
-                         [("class:part", ["child_exists"]), ("bound", ["qty_positive", "stock_nonnegative"])])
-        self.assertNotIn("shared_path", shacl_check.plan(with_shapes(cfg, Shape(
-            id="child_small", target="bom_line", path="child_id", max_inclusive=Decimal(9))))[1].values())
+                         [("main", ["child_exists", "qty_positive", "stock_nonnegative"])])
+        more = with_shapes(cfg, Shape(id="qty_capped", target="bom_line", path="qty_per", max_inclusive=Decimal(9)),
+                           Shape(id="child_known", target="bom_line", path="child_id", class_="part"))
+        self.assertEqual([(n, len(m)) for n, m in shacl_check.groups(shacl_check.plan(more)[0])], [("main", 5)],
+                         "shapes needing the same kind of value on one column share it")
+
+    def test_only_a_colliding_shape_opens_a_group_and_nothing_is_skipped(self):
+        cfg = with_shapes(demo_config(), Shape(id="child_small", target="bom_line", path="child_id",
+                                               max_inclusive=Decimal(9)))
+        planned, skipped = shacl_check.plan(cfg)
+        self.assertNotIn("shared_path", skipped.values())
+        self.assertEqual([(n, [s.id for s in m]) for n, m in shacl_check.groups(planned)],
+                         [("main", ["child_exists", "qty_positive", "stock_nonnegative"]), ("extra:1", ["child_small"])])
+        # labels are numbered by the order groups are opened, whichever column collides (here stock.qty)
+        swapped = with_shapes(demo_config(), Shape(id="zz_small", target="stock", path="qty", class_="part"))
+        self.assertEqual([n for n, _m in shacl_check.groups(shacl_check.plan(swapped)[0])], ["main", "extra:1"])
+
+
+@unittest.skipUnless(HAVE_SHACL, "rdflib and pyshacl are not installed")
+class GroupIsolationTest(unittest.TestCase):
+    """shacl_check.run with the snapshot reads replaced: whatever validating one group raises leaves only that
+    group's shapes without an answer (the exception type, never its message), and errors raised before validation
+    (the row cap, the database) are not caught per group."""
+
+    def setUp(self):
+        self.cfg = with_shapes(demo_config(), Shape(id="child_small", target="bom_line", path="child_id",
+                                                    max_inclusive=Decimal(9)))
+        grouped = shacl_check.groups(shacl_check.plan(self.cfg)[0])
+        self.assertEqual([n for n, _m in grouped], ["main", "extra:1"])
+        self.fetched = ({name: ({}, {}) for name, _m in grouped}, {name: 1 for name, _m in grouped})
+        self.conn = types.SimpleNamespace(run=lambda *_a, **_k: None)
+
+    def run_shacl(self, validate=None, fetch=None, sql_keys=None):
+        with mock.patch.object(shacl_check, "_limited_fetch", **(fetch or {"return_value": self.fetched})), \
+             mock.patch.object(shacl_check, "sql_keys", **(sql_keys or {"return_value": set()})), \
+             mock.patch.object(shacl_check, "validate", side_effect=validate or shacl_check.validate):
+            return shacl_check.run(self.conn, self.cfg, shapes.shapes_ttl(self.cfg)[0])
+
+    def test_any_exception_from_one_group_errors_only_that_group(self):
+        real, seen = shacl_check.validate, []
+
+        def validate(graph, shacl):
+            seen.append(graph)
+            if len(seen) == 2:   # the extra:1 graph
+                raise RuntimeError("P-000123 quoted in a message")
+            return real(graph, shacl)
+
+        got = self.run_shacl(validate)
+        self.assertEqual((got["child_small"]["validation_error"], got["child_small"]["shacl_keys"],
+                          got["child_small"]["group"]), ("RuntimeError", None, "extra:1"))
+        for sid in ("child_exists", "qty_positive", "stock_nonnegative"):
+            self.assertNotIn("validation_error", got[sid], sid)
+            self.assertEqual((got[sid]["shacl_keys"], got[sid]["group"]), (set(), "main"), sid)
+        self.assertNotIn("P-000123", repr(got))
+
+    def test_errors_before_validation_are_not_caught_per_group(self):
+        cap = shacl_check.TooManyRows(10, 9)
+        with self.assertRaises(shacl_check.TooManyRows):
+            self.run_shacl(fetch={"side_effect": cap})
+
+        class DatabaseError(Exception):
+            pass
+        with self.assertRaises(DatabaseError):
+            self.run_shacl(sql_keys={"side_effect": DatabaseError({"C": "57014"})})
 
 
 @unittest.skipUnless(HAVE_SHACL, "rdflib and pyshacl are not installed")
@@ -218,15 +285,16 @@ class ShaclOnRowsTest(unittest.TestCase):
             ["P1", "P2", 1], ["P1", "P3", 2], ["P2", "P3", 0], ["P2", "P1", 7], ["P3", "P1", None],
         ]
         ttl = shapes.shapes_ttl(cfg)[0]
-        found = {}
-        for name, members in shacl_check.groups(planned):
-            if not any(s.target == "bom_line" and s.path == "line_no" for s in members):
-                continue
+        found, grouped = {}, shacl_check.groups(planned)
+        self.assertEqual([(n, [s.id for s in m if s.path == "line_no"]) for n, m in grouped],
+                         [("main", ["line_positive"]), ("extra:1", ["line_known"])])
+        for name, members in grouped:
+            is_line = any(s.class_ == "line" for s in members)
             rows = {"bom_line": [r + [r[2]] * len(shacl_check.paths(members, "bom_line")) for r in lines]}
-            keys = {"line": [1, 2, 3]} if name == "class:line" else {}
+            keys = {"line": [1, 2, 3]} if is_line else {}
             graph = shacl_check.build_graph(cfg, members, rows, keys)
             values = set(graph.objects(None, rdflib.URIRef(naming.rdf_predicate(cfg, "bom_line", "line_no"))))
-            self.assertEqual({type(v) for v in values}, {rdflib.URIRef if name == "class:line" else rdflib.Literal}, name)
+            self.assertEqual({type(v) for v in values}, {rdflib.URIRef if is_line else rdflib.Literal}, name)
             got = shacl_check.focus_keys(cfg, members, shacl_check.validate(graph, ttl))
             found.update({sid: got[sid] for sid in ("line_positive", "line_known") if sid in got})
         self.assertEqual(found, {"line_positive": {key("P2", "P3", 0)},
@@ -495,6 +563,10 @@ class ReasonCleanTest(_ReasonCase):
             self.assertEqual((c.status, c.config_ref, c.detail["violations"], c.detail["shacl_only"], c.detail["sql_only"]),
                              ("pass", shapes.config_ref(self.cfg, s), 0, 0, 0), s.id)
             self.assertEqual(c.detail["view"], naming.shape_view(self.cfg, s.id))
+            exp = self.fx.data["expected"]
+            rows = exp["bom_lines"] + exp["parts"] + exp["stock_rows"]   # targets and class entity once, as in 0.3.0
+            self.assertEqual((c.detail["value_group"], c.detail["group_rows"], c.detail["rows_exported"]),
+                             ("main", rows, rows), "no column needs two kinds of value: one group, no extra rows")
         self.assertFalse([c for c in self.res.checks if c.id == "shacl:open_le_total"])
         self.assertIn("shacl:open_le_total: no SHACL form (sql_violation); checked only in SQL (shape:open_le_total in build)",
                       self.res.not_proven)
@@ -629,29 +701,28 @@ class ReasonDirtyTest(_ReasonCase):
                               c.detail["sql_only"]), ("pass", n, n, 0, 0), sid)
         self.assertEqual(get_check(self.res, "shacl:stock_nonnegative").detail["severity"], "warning")
 
-    def test_each_group_exports_its_rows_and_leaves_dangling_references_untyped(self):
+    def test_one_group_exports_every_row_once_and_leaves_dangling_references_untyped(self):
+        """The demo has no column that needs two kinds of value: one graph, the export 0.3.0 made."""
         from rdflib import URIRef
         conn = self.fx.check_conn()
         try:
             graphs = shacl_check.export_graphs(conn, self.cfg)
         finally:
             conn.close()
-        self.assertEqual(list(graphs), ["class:part", "bound"])
-        exp, rdf_type = self.fx.data["expected"], URIRef(shacl_check.RDF_TYPE)
+        self.assertEqual(list(graphs), ["main"])
+        exp, rdf_type, g = self.fx.data["expected"], URIRef(shacl_check.RDF_TYPE), graphs["main"]
         child, qty = (URIRef(naming.rdf_predicate(self.cfg, "bom_line", p)) for p in ("child_id", "qty_per"))
-        for name, rows in (("class:part", {"bom_line": exp["bom_lines"], "part": exp["parts"], "stock": 0}),
-                           ("bound", {"bom_line": exp["bom_lines"], "part": 0, "stock": exp["stock_rows"]})):
-            g = graphs[name]
-            typed = {e: len(set(g.subjects(rdf_type, URIRef(naming.rdf_entity_class(self.cfg, e))))) for e in rows}
-            self.assertEqual(typed, rows, name)
-        g = graphs["class:part"]
+        rows = {"bom_line": exp["bom_lines"], "part": exp["parts"], "stock": exp["stock_rows"]}
+        typed = {e: len(set(g.subjects(rdf_type, URIRef(naming.rdf_entity_class(self.cfg, e))))) for e in rows}
+        self.assertEqual(typed, rows)
         children = set(g.objects(None, child))
         self.assertEqual(len([o for o in children if (o, rdf_type, None) not in g]), exp["orphan_child_refs"])
-        self.assertFalse(list(g.objects(None, qty)), "a bound column is not part of the class group")
-        g = graphs["bound"]
+        self.assertFalse([o for o in children if not isinstance(o, URIRef)], "a class column carries row IRIs only")
         quantities = list(g.objects(None, qty))
         self.assertEqual((len(quantities), {str(q.datatype) for q in quantities}), (exp["bom_lines"], {XSD + "decimal"}))
-        self.assertFalse(list(g.objects(None, child)), "a class column is not part of the bound group")
+        c = get_check(self.res, "shacl:child_exists")
+        self.assertEqual((c.detail["value_group"], c.detail["group_rows"], c.detail["rows_exported"]),
+                         ("main", sum(rows.values()), sum(rows.values())))
 
     @unittest.skipUnless(HAVE_OWL, "needs owlready2 and Java")
     def test_a_raw_part_with_a_child_makes_the_ontology_inconsistent(self):
@@ -675,16 +746,18 @@ class ReasonDirtyTest(_ReasonCase):
 @unittest.skipUnless(pgfixture.available() and HAVE_SHACL, "needs SXC_TEST_ADMIN_DSN, rdflib and pyshacl")
 class ReasonValueGroupsTest(unittest.TestCase):
     """One column, vg_item.code, checked by two class shapes (vg_code, vg_grade) and a bound next to the demo shapes:
-    four value groups, each exported as its own data graph and validated on its own, with a seeded violation in every
-    vg group. The expected keys come from the hand-made rows, not from the code under test."""
+    the demo shapes and code_known share "main", code_small (literals on the column) opens "extra:1" and code_graded
+    (vg_grade IRIs, which neither allows) "extra:2"; each group is exported as its own data graph and validated on its
+    own, with a seeded violation for every vg shape. The expected keys come from the hand-made rows, not from the code
+    under test."""
 
     database = f"{PREFIX}_groups"
     ITEMS = [("i1", 1), ("i2", 2), ("i3", 3), ("i4", 7), ("i5", None), ("i6", 0)]
     CODES, GRADES = (1, 2, 3), (1, 2)
     EXPECTED = {"code_known": {key("i4"), key("i6")}, "code_small": {key("i4")},
                 "code_graded": {key("i3"), key("i4"), key("i6")}}
-    GROUPS = {"class:part": ["child_exists"], "bound": ["qty_positive", "stock_nonnegative", "code_small"],
-              "class:vg_code": ["code_known"], "class:vg_grade": ["code_graded"]}
+    GROUPS = {"main": ["child_exists", "qty_positive", "stock_nonnegative", "code_known"], "extra:1": ["code_small"],
+              "extra:2": ["code_graded"]}
 
     @classmethod
     def setUpClass(cls):
@@ -720,9 +793,8 @@ class ReasonValueGroupsTest(unittest.TestCase):
         stage_build.run(cfg, types.SimpleNamespace(hierarchy=""), cls.out).write(cls.out)
         cls.res = stage_reason.run(cfg, types.SimpleNamespace(only=["shacl"]), cls.out)
         exp, items = cls.fx.data["expected"], len(cls.ITEMS)
-        cls.group_rows = {"class:part": exp["bom_lines"] + exp["parts"],
-                          "bound": exp["bom_lines"] + exp["stock_rows"] + items,
-                          "class:vg_code": items + len(cls.CODES), "class:vg_grade": items + len(cls.GRADES)}
+        cls.group_rows = {"main": exp["bom_lines"] + exp["parts"] + exp["stock_rows"] + items + len(cls.CODES),
+                          "extra:1": items, "extra:2": items + len(cls.GRADES)}
         cls.distinct_rows = exp["bom_lines"] + exp["parts"] + exp["stock_rows"] + items + len(cls.CODES) + len(cls.GRADES)
 
     def setUp(self):
@@ -792,22 +864,26 @@ class ReasonValueGroupsTest(unittest.TestCase):
         from rdflib import URIRef
         grade = URIRef(naming.rdf_entity_class(self.cfg, "vg_grade"))
         real = shacl_check.validate
+        for error, recorded in ((shacl_check.ValidationError("Literal"), "Literal"),
+                                (RuntimeError("P-ORPHAN i4 quoted by pySHACL"), "RuntimeError")):
+            with self.subTest(error=type(error).__name__):
+                def validate(graph, shapes_graph):
+                    if (None, URIRef(shacl_check.RDF_TYPE), grade) in graph:
+                        raise error
+                    return real(graph, shapes_graph)
 
-        def validate(graph, shapes_graph):
-            if (None, URIRef(shacl_check.RDF_TYPE), grade) in graph:
-                raise shacl_check.ValidationError("Literal")
-            return real(graph, shapes_graph)
-
-        with mock.patch.object(shacl_check, "validate", validate):
-            res = stage_reason.run(self.cfg, types.SimpleNamespace(only=["shacl"]), self.copy_out("failing_group"))
-        c = get_check(res, "shacl:code_graded")
-        self.assertEqual((c.status, c.detail["reason"], c.detail["exception"], c.detail["value_group"]),
-                         ("error", "validation_failure", "Literal", "class:vg_grade"))
-        for sid in ("child_exists", "qty_positive", "stock_nonnegative", "code_small", "code_known"):
-            self.assertEqual(get_check(res, f"shacl:{sid}").status, "pass", sid)
-        self.assertEqual(get_check(res, "shacl:code_known").detail["violations"], 2)
-        self.assertEqual(res.status, "error")
-        self.assertIn("pySHACL could not validate", res.next_safe_action)
+                with mock.patch.object(shacl_check, "validate", validate):
+                    res = stage_reason.run(self.cfg, types.SimpleNamespace(only=["shacl"]),
+                                           self.copy_out(f"failing_group_{recorded}"))
+                c = get_check(res, "shacl:code_graded")
+                self.assertEqual((c.status, c.detail["reason"], c.detail["exception"], c.detail["value_group"]),
+                                 ("error", "validation_failure", recorded, "extra:2"))
+                for sid in ("child_exists", "qty_positive", "stock_nonnegative", "code_small", "code_known"):
+                    self.assertEqual(get_check(res, f"shacl:{sid}").status, "pass", sid)
+                self.assertEqual(get_check(res, "shacl:code_known").detail["violations"], 2)
+                self.assertEqual(res.status, "error")
+                self.assertIn("pySHACL could not validate", res.next_safe_action)
+                self.assertNotIn("P-ORPHAN", json.dumps(res.to_dict()), "only the exception type is recorded")
 
     def test_a_disagreement_in_one_group_fails_only_that_shape(self):
         view = ident.qualified(naming.shape_view(self.cfg, "code_small"))

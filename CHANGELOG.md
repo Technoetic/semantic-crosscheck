@@ -11,7 +11,11 @@ All notable changes to this project are recorded here. The format follows
 - V3 `additive` tests now cover every sum/count measure (configuration measures and the closure's
   `qty`/`pairs`) grouped by `ontology.class_column` on every cube that Cube joins through
   many_to_one / one_to_one steps only (4 new checks in the demo, 42 -> 46). Each test also compares
-  Cube's NULL group with an independent anti-join over the measure source; a mismatch fails. Join
+  Cube's NULL group with independent SQL over the measure source; a mismatch fails. The SQL follows
+  the cube Cube roots the query at: from the measure's cube (the closure ends) an anti-join, rows
+  without a dimension row with a class; from the dimension's cube (a node cube's one_to_one join to
+  its measure cube) only the matched rows without a class, as Cube drops the measure rows without a
+  node row (they fail the sum unless they add up to 0, and are counted as `orphan_rows`). Join
   paths with a one_to_many or unknown step get no test and are listed in not_proven as not
   applicable (aggregation-consistency errors, HILDA 2023, arXiv 2307.00417).
 - Sampled V3 pair tests report their 95% detection bound: the detail gains `d95_keys` and `d95_rate`
@@ -37,13 +41,19 @@ All notable changes to this project are recorded here. The format follows
   (`cube_runtime_changed`), or none (`cube_runtime_missing`, e.g. results from 0.3.0), as stale;
   verify follows as a stale dependency. Rerun cube and verify after upgrading.
 - reason: shapes on the same column that need different RDF value kinds (a class shape and a bound
-  shape, or class shapes naming different entities) are no longer skipped as `shared_path`. Each value
-  group (`bound`, `class:<entity>`) is exported as its own data graph in the same READ ONLY REPEATABLE
-  READ snapshot and validated with the same shapes graph. `verify.shacl_max_rows` now limits the sum of
-  the rows over all groups, so a configuration near the limit can become `not_run`
-  (`resource_limit`) where those shapes were skipped before. If pySHACL cannot validate one group, only
-  that group's shapes are `error`. `shacl:<id>` details gain `value_group` and `group_rows`;
-  `shacl_check.export_graph` is replaced by `export_graphs`. `class_and_bounds` remains SQL-only.
+  shape, or class shapes naming different entities) are no longer skipped as `shared_path`. Each shape
+  goes, in configuration order, to the first value group in which its column carries no other kind of
+  value: `main` holds every shape that needs no split, so a configuration without such a column (the
+  demo included) exports one graph with the same rows as 0.3.0, and only a colliding shape opens an
+  extra group (`extra:1`, `extra:2`, ... in the order they are opened). All groups are exported in the
+  same READ ONLY REPEATABLE READ snapshot and validated with the same shapes graph.
+  `verify.shacl_max_rows` limits the sum of the rows over all groups (an extra group adds the rows it
+  exports again), so a configuration with a shared column near the limit can become `not_run`
+  (`resource_limit`) where those shapes were skipped before. If validating one group fails (pySHACL
+  returns no results graph or raises any exception), only that group's shapes are `error`
+  (`validation_failure`, with a type name only). `shacl:<id>` details gain `value_group` and
+  `group_rows`; `shacl_check.export_graph` is replaced by `export_graphs`. `class_and_bounds` remains
+  SQL-only.
 - The `v3:additive` detail gains `null_group_equal`, `null_group_rows` and `orphan_rows`; a test passes
   only when the groups add up and the NULL groups agree.
 - `counterexample`: `--reference-sql` and `--candidate-sql` are enforced by the stage (still exit 2,

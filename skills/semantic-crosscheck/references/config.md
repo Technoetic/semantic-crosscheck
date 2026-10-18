@@ -142,10 +142,13 @@ not proven, "checked only in SQL", instead of compared:
 - a shape that combines `class` with bounds.
 
 Shapes on the same `target` and `path` that need different kinds of RDF value (a `class` shape and a
-bound shape, or `class` shapes naming different entities) are all compared: `reason` validates each value
-group (the bound shapes, and the shapes of each class entity) on its own data graph. Adding a shape never
-removes the SHACL comparison of another one, but every extra group exports its rows again, and
-`verify.shacl_max_rows` counts the rows of all groups together.
+bound shape, or `class` shapes naming different entities) are all compared: `reason` puts each shape in
+the first value group whose column carries the same kind of value, and validates each group on its own
+data graph. Without such a shared column every shape is in one group (`main`) and the export is the same
+as without groups. A shape that collides opens an extra group (`extra:1`, `extra:2`, ...), which exports
+its target rows (and referenced keys) again; `verify.shacl_max_rows` counts the rows of all groups
+together, so adding a colliding shape can push the export over the limit, and then every SHACL check,
+not only the new shape's, is `not_run` (`resource_limit`).
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|

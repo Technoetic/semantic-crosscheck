@@ -10,7 +10,10 @@
                                        the changed edge, and nothing else; the V3 additive tests over the
                                        closure's many_to_one joins to the node copies fail when the node table
                                        repeats a key (the declared many_to_one is one-to-many in the data) and pass
-                                       with a non-empty NULL group when a closure end has no node row.
+                                       with a non-empty NULL group when a closure end has no node row; the node
+                                       tests, which Cube roots at the node cube, drop stock rows without a node
+                                       row (worth 0: pass; worth more: fail the sum, not the NULL group) and put
+                                       a node row without a class in the NULL group.
 
 Database names start with sxc_t_verify. Skipped unless SXC_TEST_ADMIN_DSN names a superuser connection and, for
 the Cube tests, the adapter is installed (SXC_CUBE_HOME or the per-user default) with node on PATH.
@@ -365,16 +368,20 @@ class VerifyStageTest(unittest.TestCase):
     def node_variant(self, table: str, edit: str) -> tuple:
         """(configuration, output directory) whose node entity is `table`: a copy of sxc_demo.part without its primary
         key, changed by `edit` (SQL run as the loader), with build's closure result and a model generated from it."""
+        return self.entity_variant("part", table, edit)
+
+    def entity_variant(self, entity: str, table: str, edit: str) -> tuple:
+        """node_variant for any demo entity: its table replaced by an edited copy without its primary key."""
         owner = db.connect("SXC_PG_OWNER_DSN")
         try:
             with db.write_tx(owner):
-                owner.run(f"CREATE TABLE sxc_demo.{table} AS SELECT * FROM sxc_demo.part")
+                owner.run(f"CREATE TABLE sxc_demo.{table} AS SELECT * FROM sxc_demo.{entity}")
                 owner.run(edit.format(table=f"sxc_demo.{table}"))
         finally:
             owner.close()
         self.addCleanup(self.drop, table)
         cfg = config.load(pgfixture.DEMO_CONFIG)
-        cfg.entities["part"].table = f"sxc_demo.{table}"
+        cfg.entities[entity].table = f"sxc_demo.{table}"
         out = self.tmp / table
         shutil.copytree(self.out / "build", out / "build")
         conn = self.fx.check_conn()
@@ -429,6 +436,34 @@ class VerifyStageTest(unittest.TestCase):
             self.assertGreater(c.detail["orphan_rows"], 0, c.id)
             self.assertEqual(c.detail["orphan_rows"], c.detail["null_group_rows"], c.id)
         self.assertEqual(res.not_proven, [])
+
+    def test_measure_rows_without_a_node_row_are_dropped_not_grouped(self):
+        # Cube reaches m_on_hand only through the node cube's one_to_one join, so it roots the grouped query at part
+        # and drops stock rows without a part row: they are no NULL group. Orphans that add up to 0 change neither
+        # the groups nor the total and pass; orphans worth something fail the sum, not the NULL group.
+        for table, rows, equal in (("stock_orphan_zero", "('P-ORPHAN-0', 'MAIN', 2.5), ('P-ORPHAN-0', 'SUB', -2.5)", True),
+                                   ("stock_orphan_four", "('P-ORPHAN-4', 'MAIN', 4)", False)):
+            with self.subTest(table=table):
+                cfg, out = self.entity_variant("stock", table, "INSERT INTO {table} VALUES " + rows)
+                res = self.verify(out, ["v3"], cfg)
+                checks = {c.id: c for c in res.checks}
+                c = checks["v3:additive:m_on_hand.value:part.part_class"]
+                self.assertEqual((c.status, c.detail["equal"], c.detail["null_group_equal"], c.detail["null_class_groups"],
+                                  c.detail["null_group_rows"], c.detail["orphan_rows"]),
+                                 ("pass" if equal else "fail", equal, True, 0, 0, rows.count("(")), c.detail)
+                c = checks["v3:additive:m_consigned.value:part.part_class"]
+                self.assertEqual((c.status, c.detail["orphan_rows"]), ("pass", 0), "the CONSIGN filter leaves them out")
+                self.assertEqual(checks["v3:total:m_on_hand.value"].status, "pass", "the total includes them")
+
+    def test_node_rows_without_a_class_are_the_null_group_of_a_node_measure(self):
+        cfg, out = self.node_variant("part_no_class", "UPDATE {table} SET part_class = NULL WHERE part_id = "
+                                     "(SELECT min(part_id) FROM sxc_demo.stock WHERE upper(btrim(location_id)) IN "
+                                     "('MAIN', 'SUB') AND qty <> 0)")
+        res = self.verify(out, ["v3"], cfg)
+        c = {c.id: c for c in res.checks}["v3:additive:m_on_hand.value:part.part_class"]
+        self.assertEqual((c.status, c.detail["equal"], c.detail["null_group_equal"], c.detail["null_class_groups"],
+                          c.detail["orphan_rows"]), ("pass", True, True, 1, 0), c.detail)
+        self.assertGreater(c.detail["null_group_rows"], 0)
 
     @staticmethod
     def change(owner, lines: set, sign: str):

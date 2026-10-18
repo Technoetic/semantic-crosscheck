@@ -350,7 +350,7 @@ CLI 출력 원문을 유지했습니다. 아래 검사 수와 `NOT PROVEN` 문�
 [sxc cube] PASS  checks: 7 pass, 0 fail, 0 error, 0 not_run  -> .../demo/.sxc/cube/result.json
   NOT PROVEN  runtime evidence is unbound: actual PostgreSQL, Node, Java, HermiT and selected Cube installation were not bound; local engine/package metadata alone does not establish the executing runtime
   NOT PROVEN  data revision is unbound: no owner-maintained revision was checked; separate database sessions and cached gold answers are not proven to observe one data version
-[sxc verify] PASS  checks: 46 pass, 0 fail, 0 error, 0 not_run  -> .../demo/.sxc/verify/result.json
+[sxc verify] PASS  checks: 47 pass, 0 fail, 0 error, 0 not_run  -> .../demo/.sxc/verify/result.json
   NOT PROVEN  v4:measure_normalization_drop:on_hand equivalent on this data
   NOT PROVEN  v4:measure_normalization_drop:consigned equivalent on this data
   NOT PROVEN  runtime evidence is unbound: actual PostgreSQL, Node, Java, HermiT and selected Cube installation were not bound; local engine/package metadata alone does not establish the executing runtime
@@ -460,7 +460,7 @@ NOT NULL·FK·CHECK를 지키는 데이터만 실행하고 축소합니다. FK�
 
 - **BOM 독립 검산:** V3가 원본 연결과 저장된 폐포를 같은 읽기 전용 스냅샷에서 읽고,
   별도의 Python 계산으로 소요 수량·논리 경로 수·최단/최장 깊이를 대조합니다. 같은 두 부품의
-  여러 BOM 줄은 수량을 합친 하나의 연결로 계산합니다. 순환·미지원 자료형·계산 상한은
+  여러 BOM 줄은 수량을 합친 하나의 연결로 계산합니다. 순환 보고 모드·미지원 자료형·계산 상한은
   `not_run`이며 일부만 읽고 통과하지 않습니다.
 - **변이 검출용 합성 데이터:** `--mutation-operator`로 잘못 바꾼 SQL의 차이를 드러낼 데이터를
   생성합니다. `--gold-sql`을 함께 주면 원본과 기준 SQL의 일치도 확인합니다. 실제 Cube 모델과의

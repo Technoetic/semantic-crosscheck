@@ -290,7 +290,7 @@ configuration ids; `<member>` is a Cube member (`cube.member`); `<stratum>` is a
 | verify | `v3:total:<member>` | the Cube total equals SQL computed from the configuration (or the closure table) | `fail`; `error`; `not_run` (`closure_not_passed`) |
 | verify | `v3:additive:<member>:<member>` | the groups of the measure by the ontology class column of a cube joined through many_to_one / one_to_one steps only, the NULL group included, add up to its total, and the NULL group equals independent SQL over the measure source (`null_group_equal`: an anti-join, or the matched rows without a class when Cube roots the query at the dimension's cube) | as `v3:total:<member>`; a join path with a one_to_many or unknown step gets no check, only a `not_proven` line (not applicable) |
 | verify | `v3:pair:<member>+<member>` | the two measures queried together equal the same measures queried alone, per key | as `v3:total:<member>` |
-| verify | `v3:closure_oracle:<h>` | raw edges independently recomputed in Python match every stored closure pair's exact quantity, logical path count and minimum/maximum depth in one read-only REPEATABLE READ snapshot | `fail` on differences or an exceeded configured depth; `error` on query failure; `not_run` for a failed build gate, cyclic input, unsupported keys/quantities or exceeded resource bounds |
+| verify | `v3:closure_oracle:<h>` | raw edges independently recomputed in Python match every stored closure pair's exact quantity, logical path count and minimum/maximum depth in one read-only REPEATABLE READ snapshot | `fail` on differences, error-mode cycles or an exceeded configured depth; `error` on query failure; `not_run` for a failed build gate, report-mode cycles, unsupported keys/quantities or exceeded resource bounds |
 | verify | `v4:<operator>:<target>` | the mutant was killed: a suite item failed against it (`killed_by`) | `fail` (it survived); `error` (`suite_error`, `startup`, `cube`, `write`, `model_mismatch`, `witness`); `not_run` (`closure_not_passed`, `suite_incomplete`). Equivalent and not applicable mutants get no check, only a `not_proven` line |
 | verify | `v4:suite` | never passes | `not_run` (`no_passing_suite_item`): no suite item passes on the unmutated model |
 | verify | `scope:v1`, `scope:v2`, `scope:v3`, `scope:v4`, `scope:gold:<gold>` | never pass | `not_run` (`excluded_by_only`, `excluded_by_gold`): the part or gold query a narrowed run left out |
@@ -310,8 +310,8 @@ depth are compared. Empty input is explicitly disclosed as lacking nonempty cove
 
 This check is bounded, not sampled: limits are 50,000 raw lines, 100,000 stored/expected pairs,
 10,000 nodes and 2,000,000 counted operations, with numeric-size bounds in `closure_oracle.Limits`.
-No matching prefix can pass when a limit is exceeded. Cyclic graphs, including `on_cycle = report`,
-are not supported by this independent algorithm and remain not proven. Only compatible built-in
+No matching prefix can pass when a limit is exceeded. A raw cycle fails in `on_cycle = error` mode;
+SCC-edge removal for `on_cycle = report` is unsupported and remains not proven. Only compatible built-in
 endpoint types with deterministic SQL equality are supported; character padding, citext, domains
 and nondeterministic collation are refused. These database-only checks are not replayed as V4
 Cube mutation suite items. They do not create a shared snapshot with Cube or other stages.

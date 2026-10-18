@@ -3,6 +3,8 @@ import copy
 import importlib
 import json
 import os
+import subprocess
+import sys
 from pathlib import Path
 import tempfile
 from types import SimpleNamespace
@@ -159,6 +161,19 @@ class MutationFixturePostgresTest(unittest.TestCase):
         self.assertTrue(repeated.checks[0].detail['synthetic_distinguished'])
         self.assertTrue(repeated.checks[0].detail['gold_observes'])
         self.assertEqual(json.loads(artifact.read_text(encoding='utf-8'))['tables'], original_tables)
+
+    def test_public_cli_operator_mode_does_not_inject_a_legacy_scenario(self):
+        args = self.args()
+        completed = subprocess.run(
+            [sys.executable, str(pgfixture.SCRIPTS / 'sxc.py'), 'counterexample',
+             '--mutation-operator', args.mutation_operator, '--reference-sql', args.reference_sql,
+             '--candidate-sql', args.candidate_sql, '--gold-sql', args.gold_sql,
+             '--out', str(self.out), '--max-examples', '1', '--quiet'],
+            capture_output=True, text=True, timeout=30)
+        self.assertEqual(completed.returncode, 1, 'A synthetic distinction must be reachable through the public CLI')
+        saved = json.loads((self.out / 'counterexample/result.json').read_text(encoding='utf-8'))
+        self.assertTrue(saved['checks'][0]['detail']['synthetic_distinguished'])
+        self.assertTrue(saved['checks'][0]['detail']['gold_observes'])
         args.replay = str(self.out / 'counterexample/fixture.json')
         Path(args.gold_sql).write_text('SELECT 5::numeric AS value', encoding='utf-8')
         with patch.object(ce.db, 'connect', side_effect=AssertionError('must not connect')):

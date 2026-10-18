@@ -212,7 +212,8 @@ def discard_report_files(out: Path | None) -> None:
 def main(argv=None) -> int:
     args = parser().parse_args(argv)
     stage = args.stage
-    if stage == "counterexample" and args.scenario is None:   # the default scenario depends on the mode
+    if stage == "counterexample" and args.scenario is None and args.mutation_operator is None:
+        # Operator-directed fixtures have their own generator and reject legacy scenarios.
         args.scenario = "bom_diamond" if args.metamorphic_sql is not None else "nulls"
     result_name = stage.replace("-", "_")
     cfg = None

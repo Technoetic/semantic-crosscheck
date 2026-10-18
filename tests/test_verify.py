@@ -6,8 +6,8 @@
   DirtySweepTest    (database)         the dirty variant (a cycle, so no closure) still samples valid strata.
   VerifyStageTest   (database + Cube)  the clean demo passes every V1/V2/V3 check; a closure that did not pass
                                        in build turns the closure checks into not_run; a bom_line quantity
-                                       changed after the closure was built fails exactly the bindings that reach
-                                       the changed edge, and nothing else; the V3 additive tests over the
+                                       changed after the closure was built fails the independent raw-edge oracle
+                                       and exactly the bindings that reach the changed edge; the V3 additive tests over the
                                        closure's many_to_one joins to the node copies fail when the node table
                                        repeats a key (the declared many_to_one is one-to-many in the data) and pass
                                        with a non-empty NULL group when a closure end has no node row; the node
@@ -51,6 +51,7 @@ V3_TESTS = ["total:m_firm_open.value", "total:m_firm_open_dated.value", "total:m
 CLOSURE_ADDITIVE = [t for t in V3_TESTS if t.startswith("additive:has_component_closure")]
 CLOSURE_V3 = {"total:has_component_closure.qty", "total:has_component_closure.pairs",
               "pair:has_component_closure.qty+m_firm_open.value", *CLOSURE_ADDITIVE}
+CLOSURE_ORACLE = "v3:closure_oracle:has_component"
 
 
 def graph(data: dict) -> tuple[set, dict, dict]:
@@ -270,7 +271,7 @@ class VerifyStageTest(unittest.TestCase):
         res = self.verify(self.out, ["v1", "v2", "v3"])
         failing = [(c.id, c.status, c.detail) for c in res.checks if c.status != "pass"]
         self.assertEqual(failing, [("scope:v4", "not_run", {"reason": "excluded_by_only"})])
-        want = ([f"v1:{g}" for g in V2_STRATA] + [f"v2:{g}:{s}" for g, ss in V2_STRATA.items() for s in ss]
+        want = ([CLOSURE_ORACLE] + [f"v1:{g}" for g in V2_STRATA] + [f"v2:{g}:{s}" for g, ss in V2_STRATA.items() for s in ss]
                 + [f"v3:{t}" for t in V3_TESTS] + ["scope:v4"])
         self.assertEqual([c.id for c in res.checks], want)
         self.assertEqual(res.status, "not_run", "--only left v4 out, so the run is not a pass")
@@ -297,8 +298,8 @@ class VerifyStageTest(unittest.TestCase):
         res = self.verify(out, ["v1", "v3"])
         status = {c.id: c.status for c in res.checks if not c.id.startswith("scope:")}
         self.assertEqual([c.id for c in res.checks if c.id.startswith("scope:")], ["scope:v2", "scope:v4"])
-        gated = {"v1:q01_explosion", "v1:q02_where_used", "v1:q04_depth_histogram"} | {f"v3:{t}" for t in CLOSURE_V3}
-        self.assertEqual(len(status), 5 + len(V3_TESTS))
+        gated = {CLOSURE_ORACLE, "v1:q01_explosion", "v1:q02_where_used", "v1:q04_depth_histogram"} | {f"v3:{t}" for t in CLOSURE_V3}
+        self.assertEqual(len(status), 6 + len(V3_TESTS))
         self.assertEqual({cid for cid, st in status.items() if st == "not_run"}, gated)
         self.assertEqual({cid: st for cid, st in status.items() if cid not in gated and st != "pass"}, {})
         for c in res.checks:
@@ -348,10 +349,14 @@ class VerifyStageTest(unittest.TestCase):
                     self.assertEqual(set(c.detail["mismatched_columns"]), {"qty"}, c.id)
         self.assertEqual(checks["v2:q01_explosion:top"].status, "fail")
         self.assertEqual(checks["v2:q02_where_used:shared"].status, "fail")
-        untouched = [c for c in res.checks if c.id.startswith("v3:") or re.match(r"v[12]:q0[345]_", c.id)]
+        oracle = checks[CLOSURE_ORACLE]
+        self.assertEqual(oracle.status, "fail", "raw edges changed while the generated closure stayed stale")
+        self.assertEqual(set(oracle.detail["mismatched_columns"]), {"qty"})
+        untouched = [c for c in res.checks if (c.id.startswith("v3:") and c.id != CLOSURE_ORACLE)
+                     or re.match(r"v[12]:q0[345]_", c.id)]
         self.assertEqual([(c.id, c.status) for c in untouched if c.status != "pass"], [])
         self.assertEqual(res.status, "fail")
-        self.assertIn("v1:q01_explosion", res.next_safe_action)
+        self.assertIn(CLOSURE_ORACLE, res.next_safe_action)
 
     def test_mutation_suite_kills_observable_mutants(self):
         cfg = config.load(pgfixture.DEMO_CONFIG)

@@ -1,11 +1,16 @@
-"""verify: V1 strict compare, V2 strata sweep, V3 query shapes and V4 mutation tests (design sections 6 and 7).
+"""verify: V1 strict compare, V2 strata sweep, V3 closure oracle/query shapes and V4 mutation tests.
 
 Prerequisites are the cube stage (cube/model.json, cube/model/*.yml) and, for every gold query or V3 test that
 uses a hierarchy's closure, ancestor or descendant cube, a passing `closure:<h>` check in build. Without it those
 checks are not_run and listed as not proven: agreement with a closure that did not build proves nothing. A
 verify.mutation_operators entry that names no operator is a configuration error (exit 2) before any check runs.
 
-One Cube process (cube_run.serve on <out>/cube, log in verify/server.log) serves V1-V3:
+Before Cube starts, v3:closure_oracle:<h> independently compares the generated closure to exact Python raw-edge
+calculations of qty, path_count, min_depth and max_depth. Both inputs share one READ ONLY REPEATABLE READ snapshot.
+Resource bounds, unsupported types and cyclic report-mode graphs are not_run and not_proven; error-policy cycles
+fail. An empty graph passes with a coverage disclosure. The oracle is not replayed against V4's Cube mutants.
+
+One Cube process (cube_run.serve on <out>/cube, log in verify/server.log) serves the other V1-V3 checks:
   v1:<gold>             the first binding of the gold query matches exactly; a gold query without any binding
                         (every stratum empty) is not_run, because it was never exercised
   v2:<gold>:<stratum>   every binding of the stratum matches exactly (rows_compared counts gold rows); an empty
@@ -40,7 +45,7 @@ import contextlib
 from pathlib import Path
 from typing import Callable
 
-from . import compare, cube_gen, cube_run, db, mutate, naming, shape_q, sweep
+from . import closure_oracle, compare, cube_gen, cube_run, db, mutate, naming, shape_q, sweep
 from .result import EXIT_CONFIG, Check, Result, StageError, check_status, require_stage
 
 PARTS = ("v1", "v2", "v3", "v4")
@@ -266,6 +271,8 @@ class _Verify:
 
     # ---- checks ----------------------------------------------------------------------------------
     def run(self, conn):
+        if "v3" in self.only:
+            self.closure_oracles(conn)
         plans = [self.plan_gold(conn, i, g) for i, g in self.golds]
         tests = self.plan_tests(conn)
         if self._needs_cube(plans, tests):
@@ -292,6 +299,22 @@ class _Verify:
                         self.baseline[iid] = fn(client)
         if "v4" in self.only:
             self.v4(conn)
+
+    def closure_oracles(self, conn):
+        """Raw-edge expected closures are database checks, so finish their snapshots before Cube starts."""
+        for name, hierarchy in self.cfg.hierarchies.items():
+            cid = f"v3:closure_oracle:{name}"
+            build_status = self.closure[name]
+            if build_status != "pass":
+                self._gated(cid, (name, build_status or "missing"))
+                continue
+            status, detail = closure_oracle.run(conn, self.cfg, hierarchy)
+            self.res.add(cid, status, f"hierarchies.{name}", **detail)
+            if status == "not_run":
+                self.res.not_proven.append(f"{cid}: independent raw-edge closure comparison not proven "
+                                           f"({detail['reason']})")
+            elif detail.get("empty_graph"):
+                self.res.not_proven.append(f"{cid}: empty raw-edge graph; no reachable pair was exercised")
 
     def scope(self):
         """One not_run check per part --only left out and per gold query --gold left out."""
@@ -424,6 +447,12 @@ def _error_action(c: Check) -> str:
 
 def _not_run_action(c: Check) -> str:
     why = c.detail.get("reason", "not_run")
+    if c.id.startswith("v3:closure_oracle:") and why == "budget_exceeded":
+        return (f"{c.id} exceeded the independent oracle limit {c.detail['limit']}: use a smaller hierarchy or review "
+                "closure_oracle.Limits before raising the bound; no partial closure was certified")
+    if c.id.startswith("v3:closure_oracle:") and why == "cycle_not_supported":
+        return (f"{c.id}: on_cycle=report cycles are unsupported by the independent raw-edge oracle; "
+                "use an acyclic hierarchy or implement independent cycle handling before claiming this proof")
     if why == "suite_incomplete":
         return (f"{c.id} survived a suite with items left out ({', '.join(c.detail.get('excluded', []))}): make every "
                 "gold query and closure run (full verify, passing builds), then rerun verify")
@@ -451,6 +480,9 @@ def _next_action(res: Result) -> str:
     if st == "fail" and first.id.startswith("v4:"):
         return (f"{first.id} survived: no gold query observes this kind of error in {first.config_ref}; add a gold "
                 "query, a mapped column or a stratum that would, then rerun verify (do not drop the operator)")
+    if st == "fail" and first.id.startswith("v3:closure_oracle:"):
+        return (f"{first.id}: raw-edge expectations disagree with the generated closure in {first.config_ref}; "
+                "inspect the source edges and generated closure, rerun build and cube, then rerun verify")
     if st == "fail":
         return (f"{first.id} disagrees: fix the crosscheck.toml entry {first.config_ref or 'named by the check'} or its "
                 "gold SQL, rerun build and cube, then rerun verify")

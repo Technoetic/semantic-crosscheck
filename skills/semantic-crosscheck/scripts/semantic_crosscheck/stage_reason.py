@@ -16,6 +16,9 @@ which, per shape, per hierarchy and per defined class.
   v5:defined:<name>   the members of a defined class equal its SQL definition (owl.defined_sql); contains_class reads
                       the closure table and has the same precondition as v5:closure. A class without members on either
                       side passes vacuously and is listed in not_proven
+  v5:witness:<name>   optional --synthetic-witnesses: configured HermiT and SQL translations each match independently
+                      specified members of a small synthetic graph. Source-data vacuity remains not_proven; controls
+                      mean absence of entailment, not negative OWL facts
   scope:<part>        not_run (reason excluded_by_only) for the part --only leaves out, so a narrowed run never passes
 An inconsistent ontology entails every statement, so the V5 checks are then not_run and listed in not_proven.
 
@@ -30,7 +33,7 @@ counts and ids only.
 import importlib
 from pathlib import Path
 
-from . import db, ident, naming, owl, shacl_check, shapes, stage_build
+from . import db, ident, naming, owl, owl_witness, shacl_check, shapes, stage_build
 from .result import EXIT_CONFIG, EXIT_ENV, Result, StageError, require_stage
 
 PARTS = ("shacl", "owl")
@@ -47,6 +50,8 @@ WHY = {   # why the closure table cannot be compared with OWL ({h}: the hierarch
 def run(cfg, args, out: Path) -> Result:
     out = Path(out)
     only = _only(args)
+    if getattr(args, "synthetic_witnesses", False) and not cfg.ontology.hierarchy:
+        raise StageError("--synthetic-witnesses requires a configured [ontology] hierarchy", EXIT_CONFIG)
     build = require_stage(out, "build")
     planned, skipped = shacl_check.plan(cfg) if "shacl" in only else ([], {})
     use_owl = "owl" in only and bool(cfg.ontology.hierarchy)
@@ -68,6 +73,8 @@ def run(cfg, args, out: Path) -> Result:
                 _shacl(conn, cfg, build, planned, ttl, res)
             if use_owl:
                 _owl(conn, cfg, build, java, res)
+                if getattr(args, "synthetic_witnesses", False):
+                    owl_witness.run(conn, cfg, java, res)
         finally:
             conn.close()
     for part in PARTS:
@@ -83,6 +90,8 @@ def _only(args) -> list[str]:
     bad = [x for x in only if x not in PARTS]
     if bad:
         raise StageError(f"--only accepts {','.join(PARTS)} (got {','.join(bad)})", EXIT_CONFIG)
+    if getattr(args, "synthetic_witnesses", False) and "owl" not in only:
+        raise StageError("--synthetic-witnesses requires OWL checks: include owl in --only", EXIT_CONFIG)
     return only
 
 
@@ -327,6 +336,9 @@ def next_action(cfg, res: Result) -> str:
     if refs:
         clauses.append(f"defined classes differ from their SQL definitions: check ontology.class_column, ontology.classes "
                        f"and the kind and class of {', '.join(refs)}")
+    if any(c.id.startswith("v5:witness:") for c in failed):
+        clauses.append("synthetic defined-class translations differ from the independent expected memberships: "
+                       "review the OWL and SQL definitions named by the v5:witness checks")
     if clauses:
         return "; ".join(clauses) + "; then rerun reason"
     reasons = {c.detail.get("reason") for c in checks if c.status == "not_run"}
@@ -338,6 +350,9 @@ def next_action(cfg, res: Result) -> str:
     if "cycle_edges_dropped" in reasons:
         return ("the closure leaves out the edges inside cycles (on_cycle = report): fix the cycles in the data so V5 "
                 "compares the whole hierarchy, then rerun build and reason")
+    if reasons & {"configuration_gap", "configured_class_unsatisfiable", "synthetic_inconsistent", "no_defined_classes"}:
+        return ("some synthetic witnesses could not run with the configured ontology: review the v5:witness reasons "
+                "and the referenced ontology.defined entries, then rerun reason")
     if narrowed:
         return ("--only left a part of reason out (the scope:* check): rerun reason without --only before reporting a "
                 "result")

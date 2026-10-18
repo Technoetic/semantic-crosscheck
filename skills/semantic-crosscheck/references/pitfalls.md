@@ -129,8 +129,11 @@ gold SQL and `crosscheck.toml` avoid them too.
 - **One RDF predicate carries one kind of value.** A column is one predicate in the exported RDF. A
   `class` shape needs its values as row IRIs and a bound shape as numbers, so when shapes on the same
   column need different kinds of value (or `class` shapes name different entities), each value would
-  violate the other shape's constraint. Those shapes are reported as `shared_path` and checked only in
-  SQL: adding a shape can remove the SHACL comparison of another shape on the same column.
+  violate the other shape's constraint in one graph. `reason` therefore validates each value group (the
+  bound shapes, and the shapes of each class entity) on its own data graph and reads a group's results
+  only for its own shapes; the check detail names the `value_group`. Each extra group exports the target
+  rows again, and `verify.shacl_max_rows` limits the sum over all groups, so splitting one column across
+  value kinds can push a large export over the limit (every SHACL check is then `not_run`).
 
 ## Comparing values
 

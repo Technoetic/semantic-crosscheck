@@ -39,15 +39,18 @@ python "${CLAUDE_PLUGIN_ROOT}/skills/semantic-crosscheck/scripts/sxc.py" reason 
 
 Exit code 0 with `shacl:<id>`, `owl:consistency`, `v5:closure:<h>` and `v5:defined:<name>` passing.
 A passing `shacl:<id>` means SHACL and SQL agree on which rows violate the shape, not that there are
-no violations (that is `shape:<id>` in `build`). Three kinds of shape are not compared with SHACL and are
+no violations (that is `shape:<id>` in `build`). Two kinds of shape are not compared with SHACL and are
 listed as not proven, "checked only in SQL":
 
 - `sql_violation`: a shape with an `sql_violation` predicate, also combined with `class` or bounds (no
   SHACL form);
-- `class_and_bounds`: a shape that combines `class` with bounds (no SHACL form);
-- `shared_path`: shapes on the same target column that need different kinds of RDF value (a `class`
-  shape and a bound shape, or `class` shapes naming different entities); none of them is compared, so
-  adding a shape can remove another shape's SHACL comparison.
+- `class_and_bounds`: a shape that combines `class` with bounds (no SHACL form).
+
+Shapes on the same target column that need different kinds of RDF value (a `class` shape and a bound
+shape, or `class` shapes naming different entities) are all compared: each value group (`bound`, one
+`class:<entity>` per referenced entity) is validated on its own data graph, and each `shacl:<id>` names
+its `value_group`. `verify.shacl_max_rows` bounds the rows of all groups together. If pySHACL cannot
+validate one group, only that group's shapes are `error`.
 
 A defined class without members in OWL or in SQL passes vacuously and is listed as not proven.
 

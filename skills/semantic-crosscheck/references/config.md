@@ -139,10 +139,13 @@ bound, or `sql_violation`; when it has several, a row violating any of them viol
 not proven, "checked only in SQL", instead of compared:
 
 - a shape with `sql_violation` (also when it has `class` or bounds as well);
-- a shape that combines `class` with bounds;
-- shapes on the same `target` and `path` that need different kinds of RDF value: a `class` shape and a
-  bound shape, or `class` shapes naming different entities (`shared_path`). None of them is compared, so
-  adding a shape can remove the SHACL comparison of another one.
+- a shape that combines `class` with bounds.
+
+Shapes on the same `target` and `path` that need different kinds of RDF value (a `class` shape and a
+bound shape, or `class` shapes naming different entities) are all compared: `reason` validates each value
+group (the bound shapes, and the shapes of each class entity) on its own data graph. Adding a shape never
+removes the SHACL comparison of another one, but every extra group exports its rows again, and
+`verify.shacl_max_rows` counts the rows of all groups together.
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|

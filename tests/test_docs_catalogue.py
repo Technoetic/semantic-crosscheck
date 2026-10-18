@@ -236,7 +236,7 @@ class CatalogueTest(unittest.TestCase):
         text = DESIGN.read_text(encoding="utf-8")
         for code in ("| 0 |", "| 1 |", "| 2 |", "| 3 |"):
             self.assertIn(code, text)
-        for word in ("sql_violation", "class_and_bounds", "shared_path", "suite_error", "suite_incomplete",
+        for word in ("sql_violation", "class_and_bounds", "value_group", "suite_error", "suite_incomplete",
                      "excluded_by_only", "excluded_by_gold", "excluded_by_option", "PAIR_KEY_CAP"):
             with self.subTest(word=word):
                 self.assertIn(word, text)

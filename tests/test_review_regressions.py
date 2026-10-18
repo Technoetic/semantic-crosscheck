@@ -35,7 +35,8 @@ class ReasonResourceLimits(unittest.TestCase):
                 self.at(out, stage, minute)
             (out / "build/shapes.ttl").write_text(shapes.shapes_ttl(self.cfg)[0], encoding="utf-8")
             planned, _ = shacl_check.plan(self.cfg)
-            compared = {s.id: {"sql_keys": set(), "shacl_keys": set(), "rows": 1} for s in planned}
+            compared = {s.id: {"sql_keys": set(), "shacl_keys": set(), "rows": 1, "group": shacl_check.value_group(s),
+                               "group_rows": 1} for s in planned}
             shacl_boundary = ({"side_effect": shacl_check.TooManyRows(self.cfg.verify.shacl_max_rows + 1,
                                                                       self.cfg.verify.shacl_max_rows)}
                               if "shacl" in limited else {"return_value": compared})

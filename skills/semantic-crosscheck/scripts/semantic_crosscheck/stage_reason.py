@@ -5,9 +5,11 @@ ontology of the same rows answers by reasoning. Two layers that disagree mean on
 which, per shape, per hierarchy and per defined class.
 
   shacl:<shape>       pySHACL's focus nodes on the rows exported as RDF equal the keys in v_shape_<shape> (set
-                      equality; detail: violations, shacl_only, sql_only). Shapes without a SHACL form, or sharing a
-                      column with a shape that needs another kind of RDF value, are listed in not_proven: they are
-                      checked only in SQL. A shape whose view build did not produce is not_run.
+                      equality; detail: violations, shacl_only, sql_only, value_group). Shapes are validated per
+                      value group (shacl_check.groups), so shapes needing different kinds of RDF value on one column
+                      are all compared. Shapes without a SHACL form are listed in not_proven: they are checked only
+                      in SQL. A shape whose view build did not produce is not_run; a shape whose value group pySHACL
+                      could not validate is error.
   owl:consistency     HermiT finds the ontology of owl.py consistent (detail: individuals, edges, hermit_ms)
   v5:closure:<h>      the OWL closure pairs equal the closure table. not_run unless build's closure:<h> passed with no
                       cycle edges dropped: otherwise the table describes another graph than the one OWL reasons on
@@ -165,8 +167,7 @@ def _shacl_not_proven(cfg, skipped: dict, res: Result) -> None:
         res.not_proven.append("shacl: the configuration has no [[shapes]] entries")
     for s in cfg.shapes:
         if s.id in skipped:
-            form = "no SHACL form" if skipped[s.id] != "shared_path" else "no separate RDF value"
-            res.not_proven.append(f"shacl:{s.id}: {form} ({skipped[s.id]}); checked only in SQL (shape:{s.id} in build)")
+            res.not_proven.append(f"shacl:{s.id}: no SHACL form ({skipped[s.id]}); checked only in SQL (shape:{s.id} in build)")
 
 
 def _shacl(conn, cfg, build: dict, planned: list, ttl: str, res: Result) -> None:
@@ -179,10 +180,6 @@ def _shacl(conn, cfg, build: dict, planned: list, ttl: str, res: Result) -> None
         res.not_proven.append(f"shacl: {e.rows} rows to export exceed verify.shacl_max_rows = {e.limit}; no shape was "
                               "compared with SHACL")
         return
-    except shacl_check.ValidationError as e:
-        for s in planned:
-            res.add(f"shacl:{s.id}", "error", shapes.config_ref(cfg, s), reason="validation_failure", exception=str(e))
-        return
     except Exception as e:  # noqa: BLE001 - database errors become error checks with their SQLSTATE
         code = _db_error(e)
         for s in planned:
@@ -190,6 +187,10 @@ def _shacl(conn, cfg, build: dict, planned: list, ttl: str, res: Result) -> None
         return
     for s in planned:
         ref, got = shapes.config_ref(cfg, s), compared[s.id]
+        if "validation_error" in got:   # only the shapes of the value group pySHACL could not validate
+            res.add(f"shacl:{s.id}", "error", ref, reason="validation_failure", exception=got["validation_error"],
+                    value_group=got["group"])
+            continue
         built = _build_check(build, f"shape:{s.id}").get("status")
         if built not in ("pass", "fail"):
             res.add(f"shacl:{s.id}", "not_run", ref, reason="shape_not_built", build_status=built or "absent")
@@ -203,7 +204,8 @@ def _shacl(conn, cfg, build: dict, planned: list, ttl: str, res: Result) -> None
         flagged, viewed = got["shacl_keys"], got["sql_keys"]
         res.add(f"shacl:{s.id}", "pass" if flagged == viewed else "fail", ref, violations=len(viewed),
                 shacl_focus_nodes=len(flagged), shacl_only=len(flagged - viewed), sql_only=len(viewed - flagged),
-                severity=s.severity, kind=shapes.kind(s), rows_exported=got["rows"], view=naming.shape_view(cfg, s.id))
+                severity=s.severity, kind=shapes.kind(s), rows_exported=got["rows"], value_group=got["group"],
+                group_rows=got["group_rows"], view=naming.shape_view(cfg, s.id))
 
 
 # ---- OWL and V5 -------------------------------------------------------------------------------------------

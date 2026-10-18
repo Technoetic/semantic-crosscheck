@@ -370,19 +370,32 @@ targeting the entity class, with one property shape (`sh:class`, `sh:minExclusiv
 `sh:maxInclusive`) and the configured severity. `reason` exports the needed rows as RDF in memory (target rows
 with the shape paths; referenced entities with their types) in one read-only `REPEATABLE READ` transaction,
 counting them first against `verify.shacl_max_rows`, runs pySHACL without inference and compares, per shape, the
-set of focus-node keys with the keys in `v_shape_<id>` (both in `canon.key` form). Above the row limit, every
-planned shape leaves a `not_run` check with `reason=resource_limit`; the explanation also appears in
-`not_proven`. Three kinds of shape are not
-compared and are listed in `not_proven` instead ("checked only in SQL"):
+set of focus-node keys with the keys in `v_shape_<id>` (both in `canon.key` form).
+
+One RDF predicate carries one kind of value, and shapes on the same target column can need different kinds (a
+`class` shape and a bound shape, or `class` shapes naming different entities): in one graph each value would
+violate the other shape's constraint. The compared shapes are therefore split into value groups: one `bound` group
+(literal values) and one `class:<entity>` group per referenced class entity. Each group gets its own data graph
+with only what its shapes need (their target rows and paths; for a class group the typed keys of its entity), and
+pySHACL validates every group graph once with the same shapes graph. The focus nodes of a group graph are read
+only for that group's shapes, so every group has the single-kind semantics above. Counting, exporting every group
+and reading the views stay in the one transaction. The row limit applies to the sum over the groups (a table that
+two groups read counts twice), so it does not grow with the number of groups; above it, every planned shape
+leaves a `not_run` check with `reason=resource_limit`, and the explanation also appears in `not_proven`. When
+pySHACL cannot validate one group graph, only that group's shapes are `error` (`reason=validation_failure`); the
+other groups are still compared. Each `shacl:<id>` check names its `value_group` and `group_rows`;
+`rows_exported` is the sum over the groups.
+
+Two kinds of shape are not compared and are listed in `not_proven` instead ("checked only in SQL"):
 
 - `sql_violation`: any shape with an `sql_violation` predicate, also when it has `class` or bounds as well
   (no SHACL form);
 - `class_and_bounds`: a shape that combines `class` with bounds (its value cannot be a row IRI and a number at
-  once in RDF; no SHACL form);
-- `shared_path`: shapes with a SHACL form on the same target column that need different kinds of RDF value (a
-  `class` shape and a bound shape, or `class` shapes naming different entities). One RDF predicate carries one
-  kind of value, so none of those shapes is compared. Adding a shape can therefore remove another shape's SHACL
-  comparison.
+  once in RDF; no SHACL form). Value groups do not split it: its one view ORs both constraints, so it would need
+  the value as an IRI and as a literal in the same graph.
+
+Releases up to 0.3.0 left every shape on a column shared by two value kinds uncompared (`shared_path`); value
+groups replace that exclusion.
 
 `shapes.ttl` must equal what the configuration generates now; otherwise `reason` stops with exit 2 (rerun
 `build`).

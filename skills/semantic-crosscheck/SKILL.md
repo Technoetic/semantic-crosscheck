@@ -53,6 +53,11 @@ It does not read `crosscheck.toml`, rejects `--config`, and is not a required pi
 as equivalence or a query error as a witness. Synthetic fixture values are stored only in the separate
 replay artifact; result files and messages still carry statistics only.
 
+V3 also checks actual hierarchy arithmetic with an independent bounded Python closure oracle.
+For additional synthetic coverage, use `counterexample --mutation-operator` with original/mutant SQL
+and optionally `--gold-sql`, or `reason --synthetic-witnesses` for configured OWL definitions.
+Synthetic checks do not replace actual-data V4/V5 checks or erase their `not_proven` disclosures.
+
 Every stage is one command:
 
 ```text

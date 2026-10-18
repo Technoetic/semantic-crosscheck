@@ -253,6 +253,9 @@ configuration ids; `<member>` is a Cube member (`cube.member`); `<stratum>` is a
 | report | `runtime_evidence:current` | error check only | `error` when opted-in current runtime cannot be read; missing/changed stage binding is also stale |
 | counterexample | `counterexample:search` | never proves general equivalence | `fail` with a reduced successful mismatch; `not_run` when bounded examples agree |
 | counterexample | `counterexample:query`, `counterexample:recheck`, `counterexample:inputs` | error checks only | `error` on query failure, unstable witness or a SQL edit during execution; no new replay fixture |
+| counterexample | `counterexample:mutation:search` | never proves equivalence or a real-data V4 verdict | `fail` when supplied original/mutant SQL differ on an admissible operator-directed synthetic fixture; `not_run` when no difference is found within the bound |
+| counterexample | `counterexample:mutation:gold_agreement` | supplied original and independent gold SQL agree on the saved synthetic fixture | `fail` on disagreement; this does not establish correspondence to an actual Cube model |
+| counterexample | `counterexample:mutation:query`, `counterexample:mutation:recheck`, `counterexample:mutation:inputs` | no synthetic detection is established by an error | `error` on execution failure, unstable witness or changed inputs; unsupported SQL relation/column schema is `not_run` |
 | counterexample | `counterexample:metamorphic:<relation>` | `--metamorphic-sql` only (`<relation>`: `mr1_unfold`, `mr2_scale`, `mr3_disjoint`, `mr4_unit_node`): every admissible case with a non-vacuous transform agrees exactly with the relation's expected path-product answer | `fail` on a violated relation (replay fixture saved); `not_run` when vacuous in every case (`not_run_reasons`) |
 | counterexample | `counterexample:metamorphic:shape` | error check only | `error` when the SQL answer is not closure-shaped (`reason`: missing or duplicate columns, duplicate pair, NULL, non-text id, non-exact qty) |
 | doctor | `python` | Python >= 3.11 | `fail` |
@@ -277,6 +280,7 @@ configuration ids; `<member>` is a Cube member (`cube.member`); `<stratum>` is a
 | reason | `owl:consistency` | HermiT finds the ontology consistent | `fail`; `error` (SQLSTATE or `reasoner_error`); `not_run` (`resource_limit`) |
 | reason | `v5:closure:<h>` | the OWL closure pairs equal the closure table | `fail`; `not_run` (`closure_not_passed`, `cycle_edges_dropped`, `closure_table_missing`, `inconsistent`, `owl_not_run`, `resource_limit`) |
 | reason | `v5:defined:<name>` | the members of the defined class equal its SQL definition (a class without members on either side passes and is listed in `not_proven`) | `fail`; `not_run` (as `v5:closure:<h>`; `contains_class` reads the closure table) |
+| reason | `v5:witness:<name>` | opt-in synthetic expected memberships agree with both HermiT and the configured SQL translation; includes nonmember controls under open-world semantics | `fail` on any disagreement; `error` on execution failure; `not_run` for a configuration gap, an impossible positive, inconsistent synthetic ontology or resource limit; `<name>` is `scope` when no definitions are configured |
 | reason | `scope:shacl`, `scope:owl` | never passes | `not_run` (`excluded_by_only`): the part `--only` left out |
 | cube | `cube:model` | the model was generated (a generator error is exit 2 instead) | none |
 | cube | `cube:gold_members:<gold>` | every member the gold entry names exists in the model and is public | `fail` (`missing`, `hidden`, `malformed` counts) |
@@ -286,6 +290,7 @@ configuration ids; `<member>` is a Cube member (`cube.member`); `<stratum>` is a
 | verify | `v3:total:<member>` | the Cube total equals SQL computed from the configuration (or the closure table) | `fail`; `error`; `not_run` (`closure_not_passed`) |
 | verify | `v3:additive:<member>:<member>` | the groups of the measure by the ontology class column of a cube joined through many_to_one / one_to_one steps only, the NULL group included, add up to its total, and the NULL group equals independent SQL over the measure source (`null_group_equal`: an anti-join, or the matched rows without a class when Cube roots the query at the dimension's cube) | as `v3:total:<member>`; a join path with a one_to_many or unknown step gets no check, only a `not_proven` line (not applicable) |
 | verify | `v3:pair:<member>+<member>` | the two measures queried together equal the same measures queried alone, per key | as `v3:total:<member>` |
+| verify | `v3:closure_oracle:<h>` | raw edges independently recomputed in Python match every stored closure pair's exact quantity, logical path count and minimum/maximum depth in one read-only REPEATABLE READ snapshot | `fail` on differences or an exceeded configured depth; `error` on query failure; `not_run` for a failed build gate, cyclic input, unsupported keys/quantities or exceeded resource bounds |
 | verify | `v4:<operator>:<target>` | the mutant was killed: a suite item failed against it (`killed_by`) | `fail` (it survived); `error` (`suite_error`, `startup`, `cube`, `write`, `model_mismatch`, `witness`); `not_run` (`closure_not_passed`, `suite_incomplete`). Equivalent and not applicable mutants get no check, only a `not_proven` line |
 | verify | `v4:suite` | never passes | `not_run` (`no_passing_suite_item`): no suite item passes on the unmutated model |
 | verify | `scope:v1`, `scope:v2`, `scope:v3`, `scope:v4`, `scope:gold:<gold>` | never pass | `not_run` (`excluded_by_only`, `excluded_by_gold`): the part or gold query a narrowed run left out |
@@ -294,6 +299,40 @@ configuration ids; `<member>` is a Cube member (`cube.member`); `<stratum>` is a
 | cube-install | `cube_install:already_installed` | an install matching the pins and this checkout's adapter files exists, so nothing was reinstalled | none |
 
 ## 7. Verification semantics
+
+**Independent closure oracle.** V3 also reads raw edge lines and the closure table in a single
+read-only REPEATABLE READ transaction, before starting Cube. A reverse-topological Python fold
+computes expected results with exact rational arithmetic, without invoking the builder's SQL or
+reading its temporary tables. Duplicate parent/child lines form one logical edge with summed
+quantity: path counts count paths through those logical edges. SQL SUM ignores NULL products and
+an all-NULL sum remains NULL. Null endpoints are omitted, as in build. Both minimum and maximum
+depth are compared. Empty input is explicitly disclosed as lacking nonempty coverage.
+
+This check is bounded, not sampled: limits are 50,000 raw lines, 100,000 stored/expected pairs,
+10,000 nodes and 2,000,000 counted operations, with numeric-size bounds in `closure_oracle.Limits`.
+No matching prefix can pass when a limit is exceeded. Cyclic graphs, including `on_cycle = report`,
+are not supported by this independent algorithm and remain not proven. Only compatible built-in
+endpoint types with deterministic SQL equality are supported; character padding, citext, domains
+and nondeterministic collation are refused. These database-only checks are not replayed as V4
+Cube mutation suite items. They do not create a shared snapshot with Cube or other stages.
+
+**Synthetic OWL definition witnesses.** `reason --synthetic-witnesses` adds separate small graph
+checks for the configured definition kinds. Expected memberships and closure pairs are specified
+independently of both translations; SQL relation bindings become bound-value CTEs and HermiT keeps
+the configured ontology axioms. These are logical translation checks on synthetic text keys,
+not tests of all production column types. Nonmember controls express lack of entailment, never
+explicit OWL negation. An impossible positive example is not repaired by removing an axiom.
+Synthetic success leaves real-data empty-class `not_proven` entries intact.
+
+**Operator-directed SQL fixtures.** `counterexample --mutation-operator` uses small deterministic
+templates on the fixed four-table synthetic schema, instead of the ordinary scenario generator.
+Original and mutant SQL must return different successful answers to establish a distinction.
+When `--gold-sql` is supplied, gold observation also requires original/gold agreement and
+mutant/gold disagreement. The same condition is preserved while shrinking; query errors and
+invalid fixtures are not detections. SQL, operator, generator, seed and exact integrity-profile
+bytes are bound in replay. This command neither verifies that supplied queries came from the
+selected Cube operator nor changes the real-data V4 verdict. Qualified external references in
+trusted SQL can still read real relations; use a dedicated test database.
 
 **V1/V2 compare.** Gold rows come from the gold SQL (read as UTF-8 with or without a BOM, one prepared
 statement, bound parameters, read-only transaction; the parameter names `stream` and `types` are reserved). Cube

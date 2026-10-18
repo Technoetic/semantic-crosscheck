@@ -4,6 +4,21 @@ All notable changes to this project are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- A bounded V3 independent closure oracle reads raw edges and the stored closure in one read-only
+  REPEATABLE READ snapshot. Python exact arithmetic checks quantities, logical path counts and depth
+  bounds without reusing the generated closure SQL. Unsupported inputs and resource limits are
+  explicitly not run; duplicate BOM lines follow the existing summed-edge contract.
+- Operator-directed synthetic SQL fixtures through `counterexample --mutation-operator`, with an
+  optional independent `--gold-sql`, integrity-constrained shrinking and hash-bound replay. A
+  synthetic disagreement does not change a real-data V4 verdict or prove a Cube runtime defect.
+- Opt-in `reason --synthetic-witnesses` exercises configured OWL definitions on small, independently
+  specified graphs and compares HermiT and the SQL translation with expected memberships. These
+  checks preserve real-data vacuity disclosures and OWL's open-world semantics.
+
 ## [0.4.0] - 2026-10-18
 
 Release notes: [docs/releases/v0.4.0.md](docs/releases/v0.4.0.md).

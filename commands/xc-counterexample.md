@@ -16,6 +16,10 @@ python "${CLAUDE_PLUGIN_ROOT}/skills/semantic-crosscheck/scripts/sxc.py" counter
   and `qty` against four BOM metamorphic relations, without gold; it cannot be combined with the two files
   above and supports only `--scenario bom_diamond` (its default). `--max-shrink-steps` is not used.
 - `--scenario`: `nulls` (default), `duplicate_join`, `bom_diamond`, `date_boundary`.
+- `--mutation-operator` selects an operator-directed fixture family instead of `--scenario` or
+  `--metamorphic-sql`. Supply the original query with `--reference-sql` and the deliberately changed
+  query with `--candidate-sql`. An optional `--gold-sql` tests whether an independent gold query
+  agrees with the original and disagrees with the mutant on the same fixture.
 - `--seed` reproduces generation within the recorded generator version; `--max-examples` bounds
   search and `--max-shrink-steps` bounds row-deletion attempts.
 - `--dsn-env` names the environment variable holding a dedicated read-only PostgreSQL test DSN;
@@ -50,3 +54,8 @@ not make arbitrary SQL safe: explicit qualified table names/functions remain tru
 dedicated test database and least-privilege role. No Cube, SHACL or OWL proof is implied.
 
 See [counterexample reference](../skills/semantic-crosscheck/references/counterexamples.md).
+
+Operator-directed results are synthetic SQL evidence only. Selecting an operator does not verify
+that the supplied SQL came from that Cube mutation, and does not update the configured V4 checks.
+No disagreement within the search budget is not proof of equivalence. Replay binds the operator,
+generator, SQL files (including gold when supplied) and integrity profile.

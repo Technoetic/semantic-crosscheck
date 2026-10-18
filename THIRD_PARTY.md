@@ -10,6 +10,13 @@ semantic-crosscheck vendors no third-party code. Its dependencies are installed 
   when its size and SHA-256 match `native-sha256.json`;
 - the runtimes (Java for HermiT, Node.js for Cube, the PostgreSQL server).
 
+The independent arithmetic oracle and synthetic witnesses are original implementations using the
+existing dependencies and Python standard library. Their design references include
+[Provenance Semirings](https://repository.upenn.edu/handle/20.500.14332/8764),
+[Polygon](https://arxiv.org/abs/2504.06542) and
+[RDFGraphGen](https://arxiv.org/abs/2407.17941). No source from these projects is copied or bundled;
+NetworkX, Polygon, RDFGraphGen and a second OWL reasoner are not new runtime dependencies.
+
 Licence names below were read from the installed packages' metadata (Python) and from the licence fields
 recorded in `skills/semantic-crosscheck/adapters/cube/package-lock.json` (npm), unless noted otherwise.
 

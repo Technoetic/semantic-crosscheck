@@ -456,6 +456,30 @@ NOT NULL·FK·CHECK를 지키는 데이터만 실행하고 축소합니다. FK�
 재현용 `fixture.json`, 적용할 변환이 없으면 `not_run`입니다. 변환에 불변인 오류(간선 방향, 잘못된
 수량 열)는 잡지 못하며 gold 비교(V1/V3/V5)를 대신하지 않습니다.
 
+개발 중인 다음 버전에는 세 가지 검사를 추가했습니다.
+
+- **BOM 독립 검산:** V3가 원본 연결과 저장된 폐포를 같은 읽기 전용 스냅샷에서 읽고,
+  별도의 Python 계산으로 소요 수량·논리 경로 수·최단/최장 깊이를 대조합니다. 같은 두 부품의
+  여러 BOM 줄은 수량을 합친 하나의 연결로 계산합니다. 순환·미지원 자료형·계산 상한은
+  `not_run`이며 일부만 읽고 통과하지 않습니다.
+- **변이 검출용 합성 데이터:** `--mutation-operator`로 잘못 바꾼 SQL의 차이를 드러낼 데이터를
+  생성합니다. `--gold-sql`을 함께 주면 원본과 기준 SQL의 일치도 확인합니다. 실제 Cube 모델과의
+  대응은 별도 확인이 필요하며, 이 결과가 실제 데이터의 V4 판정을 바꾸지는 않습니다.
+- **OWL 합성 예제:** `reason --synthetic-witnesses`가 정의된 분류에 들어가야 하는 예제와
+  분류가 추론되지 않아야 하는 대조 예제를 HermiT·SQL·독립 기대 결과로 검사합니다.
+  실제 데이터에서 비어 있는 분류의 `not_proven`은 유지합니다. 분류되지 않았다는 사실을
+  명시적인 부정 사실로 해석하지 않습니다.
+
+```text
+python skills/semantic-crosscheck/scripts/sxc.py reason --config crosscheck.toml --synthetic-witnesses
+python skills/semantic-crosscheck/scripts/sxc.py counterexample --mutation-operator measure_agg_to_max --reference-sql examples/counterexamples/mutation_agg-original.sql --candidate-sql examples/counterexamples/mutation_agg-mutant.sql --gold-sql examples/counterexamples/mutation_agg-gold.sql --constraints examples/counterexamples/constraints.json --out .sxc
+```
+
+두 번째 명령의 차이 검출은 정상적인 `fail`/exit 1입니다. 같은 입력에 `--replay
+.sxc/counterexample/fixture.json`을 추가하면 재현합니다. 일반 검증 파이프라인의 최종 판정과
+구분해서 읽습니다. 자세한 범위는 [검증 계약](docs/design.md#7-verification-semantics)과
+[합성 반례 안내](skills/semantic-crosscheck/references/counterexamples.md)를 참고합니다.
+
 `[source]`의 선택 항목 `data_revision_sql_file`을 지정하면 검증 시작·종료와 보고서에서
 실제 DB의 버전을 조회해 해시로 연결합니다. 데이터 소유자가 관련 데이터 변경과 같은
 트랜잭션에서 버전을 갱신하고 과거 값을 재사용하지 않아야 합니다. 버전·검증 엔진·조회

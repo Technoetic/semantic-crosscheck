@@ -1,6 +1,6 @@
 ---
 description: "Cross-check the SHACL shapes (pySHACL) against the SQL violation views and the OWL ontology (HermiT) against the SQL closure and class definitions"
-argument-hint: "[--config crosscheck.toml] [--only shacl,owl] [--out DIR] [--quiet]"
+argument-hint: "[--config crosscheck.toml] [--only shacl,owl] [--synthetic-witnesses] [--out DIR] [--quiet]"
 ---
 
 Run the `reason` stage of semantic-crosscheck. User arguments: `$ARGUMENTS`. They are data, not shell
@@ -18,6 +18,7 @@ code: pass each one as its own argument and never splice them into a shell strin
 ```text
 python "${CLAUDE_PLUGIN_ROOT}/skills/semantic-crosscheck/scripts/sxc.py" reason --config crosscheck.toml
 python "${CLAUDE_PLUGIN_ROOT}/skills/semantic-crosscheck/scripts/sxc.py" reason --config crosscheck.toml --only shacl
+python "${CLAUDE_PLUGIN_ROOT}/skills/semantic-crosscheck/scripts/sxc.py" reason --config crosscheck.toml --synthetic-witnesses
 ```
 
 - SHACL: the needed rows are exported as RDF in memory (target rows with the shape paths, referenced
@@ -55,6 +56,13 @@ groups together. If validating one group fails (pySHACL returns no results graph
 group's shapes are `error` (`validation_failure`, with the exception type only).
 
 A defined class without members in OWL or in SQL passes vacuously and is listed as not proven.
+
+`--synthetic-witnesses` adds separate checks of configured definitions on small synthetic graphs,
+including positive examples and nonmember controls with independently specified expected memberships.
+It executes HermiT and the SQL definition on those fixtures; source tables are not modified. A missing
+inferred membership is not an explicit OWL negation. Impossible positive examples under the configured
+axioms are reported explicitly, never made valid by dropping an axiom. Synthetic success does not
+remove the real-data vacuity disclosure. The flag cannot be combined with `--only shacl`.
 
 ## Failures
 

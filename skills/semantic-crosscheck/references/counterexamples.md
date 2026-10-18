@@ -77,6 +77,37 @@ equivalence. Invalid arguments or replay files are configuration errors. Runtime
 errors. `result.json` contains statistics and identifiers only; `fixture.json` alone contains the
 generated rows, together with generator/replay metadata and SQL fingerprints.
 
+## Operator-directed mutation fixtures
+
+`--mutation-operator` selects a deterministic fixture family for one of the nine configured V4
+operator names, instead of `--scenario` or `--metamorphic-sql`. The supplied reference is the original
+SQL and the candidate is the deliberately changed SQL, adapted to the fixed CTE tables above. This
+tool does not compile Cube models or verify that the files correspond to that operator.
+
+```text
+python skills/semantic-crosscheck/scripts/sxc.py counterexample --mutation-operator measure_agg_to_max --reference-sql examples/counterexamples/mutation_agg-original.sql --candidate-sql examples/counterexamples/mutation_agg-mutant.sql --gold-sql examples/counterexamples/mutation_agg-gold.sql --constraints examples/counterexamples/constraints.json --out .sxc
+```
+
+Families cover closure depth/path count/quantity, exact and normalized filters, sum/count to max,
+one-day shifts and asymmetric join/end selection. Only an executed SQL disagreement establishes
+`synthetic_distinguished`. Selecting a family never establishes that a particular fault was present.
+All queries for a fixture execute in the same read-only REPEATABLE READ transaction. With an
+independent `--gold-sql`, `gold_observes` is true only when original and gold agree and mutant and
+gold differ. Original/gold disagreement is a separate failed check. Without gold, its observation
+is explicitly not proven. Gold cannot be supplied without this operator-directed mode.
+
+The same distinction and gold-observation condition must survive shrinking. Every generated case
+and deletion still satisfies the optional integrity profile. No successful mismatch within the
+budget is `not_run`, never equivalence. Unsupported SQL relation/column schemas are explicitly
+not run; other query failures are errors, never detections.
+
+Replay format `sxc-synthetic-mutation` binds the selected operator, generator version, seed, original,
+mutant and optional gold hashes, plus exact profile bytes. Repeat those inputs and add `--replay
+.sxc/counterexample/fixture.json`. SQL files are trusted code, and qualified references can bypass the
+fixture CTEs: use a dedicated test database. Results do not prove real-data V4 coverage, Cube runtime
+behavior or business correctness. Fixture generation borrows the distinguishing-input principle
+from [Polygon](https://arxiv.org/abs/2504.06542); no solver or third-party source is bundled.
+
 ## BOM metamorphic relations (one SQL, no gold)
 
 A two-file comparison cannot see an error that the reference SQL shares with the candidate, for example

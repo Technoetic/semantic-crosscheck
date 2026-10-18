@@ -92,10 +92,14 @@ def parser() -> argparse.ArgumentParser:
     s.add_argument("--native-file", default="", help="use this already downloaded native tarball (still SHA-256 verified)")
     s.add_argument("--force", action="store_true", help="reinstall even when already installed")
 
-    s = sub.add_parser("counterexample", parents=[common], help="compare two trusted SQL files on generated synthetic fixtures and shrink a mismatch")
-    s.add_argument("--reference-sql", required=True, help="reference SELECT file using the synthetic CTE tables")
-    s.add_argument("--candidate-sql", required=True, help="candidate SELECT file using the same synthetic CTE tables")
-    s.add_argument("--scenario", choices=["nulls", "duplicate_join", "bom_diamond", "date_boundary"], default="nulls")
+    s = sub.add_parser("counterexample", parents=[common], help="compare two trusted SQL files on generated synthetic fixtures and shrink a mismatch, "
+                                                                "or check one closure SQL against BOM metamorphic relations")
+    s.add_argument("--reference-sql", default=None, help="reference SELECT file using the synthetic CTE tables (required without --metamorphic-sql)")
+    s.add_argument("--candidate-sql", default=None, help="candidate SELECT file using the same synthetic CTE tables (required without --metamorphic-sql)")
+    s.add_argument("--metamorphic-sql", default=None, metavar="FILE", help="instead of two files: one closure SELECT (ancestor, descendant, qty) "
+                                                                         "checked against four BOM metamorphic relations; no gold needed")
+    s.add_argument("--scenario", choices=["nulls", "duplicate_join", "bom_diamond", "date_boundary"], default=None,
+                   help="default: nulls, or bom_diamond (the only one supported) with --metamorphic-sql")
     s.add_argument("--seed", type=int, default=7, help="deterministic synthetic generator seed")
     s.add_argument("--max-examples", type=int, default=64, help="bounded search examples (default: 64)")
     s.add_argument("--max-shrink-steps", type=int, default=256, help="bounded row-deletion attempts (default: 256)")
@@ -200,6 +204,8 @@ def discard_report_files(out: Path | None) -> None:
 def main(argv=None) -> int:
     args = parser().parse_args(argv)
     stage = args.stage
+    if stage == "counterexample" and args.scenario is None:   # the default scenario depends on the mode
+        args.scenario = "bom_diamond" if args.metamorphic_sql is not None else "nulls"
     result_name = stage.replace("-", "_")
     cfg = None
     out = Path(args.out) if args.out else None

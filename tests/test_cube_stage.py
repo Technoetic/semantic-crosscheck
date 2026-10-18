@@ -57,10 +57,19 @@ class CubeStageTest(unittest.TestCase):
         public, everything = stage_cube.public_members(model), cube_gen.members(model)
         meta = next(c for c in res.checks if c.id == "cube:meta").detail
         self.assertEqual((meta["missing"], meta["extra"], meta["meta_members"]), (0, 0, len(public)))
+        self.assertEqual((meta["cube_version"], meta["sql_planner"]), (config.CUBE_VERSION, "tesseract"),
+                         "the served Cube version and the pinned SQL planner are recorded")
         self.assertLess(len(public), len(everything), "hidden primary keys exist and Cube does not list them")
         self.assertEqual({p.stem for p in (out / "cube" / "model").glob("*.yml")}, {c["name"] for c in model["cubes"]})
         self.assertTrue((out / "cube" / "server.log").is_file())
         self.assertNotRegex(json.dumps(res.to_dict()), r"P-\d{6}|SO-\d{6}", "results must not carry row values")
+
+    def test_inherited_legacy_planner_switch_does_not_reach_cube(self):
+        with mock.patch.dict(os.environ, {cube_run.SQL_PLANNER_VAR: "false"}):
+            res = stage_cube.run(self.cfg, argparse.Namespace(), self.tmp / "out_planner")
+        meta = next(c for c in res.checks if c.id == "cube:meta")
+        self.assertEqual(meta.status, "pass")
+        self.assertEqual(meta.detail["sql_planner"], "tesseract")
 
     def test_stage_ignores_http_proxies(self):
         with socket.socket() as s:

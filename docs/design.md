@@ -33,7 +33,7 @@ python skills/semantic-crosscheck/scripts/sxc.py --version
 | `verify` | V1 strict compare, V2 strata sweep, V3 query shapes, V4 mutation tests | `--only v1,v2,v3,v4` (default all), `--gold ID` (repeatable) | `verify/result.json`, `verify/server.log`, `verify/mutants/<operator>__<target>/` (`model/*.yml`, `model.json`, `server.log`) |
 | `report` | summary of every stage | none | `report/result.json`, `report.md`, `report.json` |
 | `cube-install` | installs the pinned Cube adapter once per user | `--home DIR`, `--native-file PATH`, `--force` | `cube_install/result.json`, `cube_install/npm-ci.log`, `cube_install/smoke.log` |
-| `counterexample` | optional synthetic SQL mismatch search and reduction | `--reference-sql`, `--candidate-sql`, `--scenario`, `--seed`, `--max-examples`, `--max-shrink-steps`, `--dsn-env`, `--statement-timeout-ms`, `--constraints`, `--replay` | `counterexample/result.json`, `counterexample/fixture.json` |
+| `counterexample` | optional synthetic SQL mismatch search and reduction, or BOM metamorphic relations for one closure SQL | `--reference-sql`, `--candidate-sql`, `--metamorphic-sql`, `--scenario`, `--seed`, `--max-examples`, `--max-shrink-steps`, `--dsn-env`, `--statement-timeout-ms`, `--constraints`, `--replay` | `counterexample/result.json`, `counterexample/fixture.json` |
 
 Common options:
 
@@ -232,6 +232,8 @@ configuration ids; `<member>` is a Cube member (`cube.member`); `<stratum>` is a
 | report | `runtime_evidence:current` | error check only | `error` when opted-in current runtime cannot be read; missing/changed stage binding is also stale |
 | counterexample | `counterexample:search` | never proves general equivalence | `fail` with a reduced successful mismatch; `not_run` when bounded examples agree |
 | counterexample | `counterexample:query`, `counterexample:recheck`, `counterexample:inputs` | error checks only | `error` on query failure, unstable witness or a SQL edit during execution; no new replay fixture |
+| counterexample | `counterexample:metamorphic:<relation>` | `--metamorphic-sql` only (`<relation>`: `mr1_unfold`, `mr2_scale`, `mr3_disjoint`, `mr4_unit_node`): every admissible case with a non-vacuous transform agrees exactly with the relation's expected path-product answer | `fail` on a violated relation (replay fixture saved); `not_run` when vacuous in every case (`not_run_reasons`) |
+| counterexample | `counterexample:metamorphic:shape` | error check only | `error` when the SQL answer is not closure-shaped (`reason`: missing or duplicate columns, duplicate pair, NULL, non-text id, non-exact qty) |
 | doctor | `python` | Python >= 3.11 | `fail` |
 | doctor | `pg8000` | pg8000 can be imported | `fail`, with the absolute pip command as the next action |
 | doctor | `dsn` | the check-role DSN variable (`source.dsn_env`, or `SXC_PG_DSN` without a configuration) is set | `fail`; the database checks after it are `not_run` (`no_dsn`) |
@@ -451,6 +453,26 @@ are rejected without cascading. Minimality is then relative to admissible single
 Profiles bind exact file bytes and mode in replay; constrained text uses explicit `C` collation.
 Only the separate synthetic replay
 artifact contains generated row values; results and reports contain statistics, IDs and hashes.
+
+`--metamorphic-sql FILE` replaces the two-file comparison with a gold-independent check of one trusted
+closure SELECT (columns `ancestor`, `descendant`, `qty`) over seeded `bom_diamond` fixtures, with or without
+`--constraints`. Q(a, d) is the path-product quantity: the sum over all paths of the product of `qty_per`. Each
+admissible case runs the SQL on the original fixture and on four transformed fixtures, each in its own read-only
+REPEATABLE READ transaction with bound values: `mr1_unfold` (shared sub-assemblies copied into a forest; summed
+over copies, every instance answers like its original), `mr2_scale` (one multi-path line times K = 2:
+Q'(a, d) = Q(a, d) + (K-1)·q·Q(a, u)·Q(v, d)), `mr3_disjoint` (a fresh component leaves original pairs unchanged
+and adds no cross pair) and `mr4_unit_node` (a line split through a fresh unit node: original pairs unchanged,
+Q'(a, w) = Q(a, u)·q, Q'(w, d) = Q(v, d)). Expected values use exact decimal arithmetic (inexact is `not_run`)
+and the `number` canonical form; absent pairs are 0, Q(x, x) = 1 only inside the formulas, and reflexive answer
+rows are not compared. A relation is `not_run` for a case without a diamond, a multi-path line or a quantity
+other than 1 where it needs one, when its transformed fixture leaves the type domain or the profile, exceeds the
+row bound, or compares no pair; never `pass` without a compared pair. The search stops at the first case that
+violates any relation and saves the original rows, the failed relations and every transform specification in
+`fixture.json` (format `sxc-synthetic-metamorphic`); replay recomputes the transforms and refuses a file whose
+recorded ones differ. Results carry counts, the seed and transform hashes. These relations cannot see errors
+invariant under them (edge direction, a wrong quantity column, a filter mapping) and test only the given SQL:
+the generated closure is tied to gold through V1/V3/V5, and a passing relation upgrades no other check. The idea
+follows EDC (Detecting Logic Bugs in DBMSs via Equivalent Data Construction, PACMMOD 3(6), 2025); no code is used.
 See [counterexample reference](../skills/semantic-crosscheck/references/counterexamples.md).
 
 Optional `source.data_revision_sql_file` supplies a trusted, read-only single-text-scalar probe.

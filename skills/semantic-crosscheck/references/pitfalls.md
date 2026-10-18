@@ -132,7 +132,7 @@ gold SQL and `crosscheck.toml` avoid them too.
   `class` shape needs its values as row IRIs and a bound shape as numbers, so when shapes on the same
   column need different kinds of value (or `class` shapes name different entities), each value would
   violate the other shape's constraint in one graph. `reason` therefore puts each shape in the first value
-  group whose column carries the same kind of value (`main`, then `extra:1`, `extra:2`, ... for the
+  group in which its column carries no other kind of value (`main`, then `extra:1`, `extra:2`, ... for the
   colliding shapes), validates each group on its own data graph and reads a group's results only for its
   own shapes; the check detail names the `value_group`. Without a colliding shape there is only `main`.
   Each extra group exports its target rows again, and `verify.shacl_max_rows` limits the sum over all

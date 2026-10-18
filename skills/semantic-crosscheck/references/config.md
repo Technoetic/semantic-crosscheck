@@ -143,7 +143,7 @@ not proven, "checked only in SQL", instead of compared:
 
 Shapes on the same `target` and `path` that need different kinds of RDF value (a `class` shape and a
 bound shape, or `class` shapes naming different entities) are all compared: `reason` puts each shape in
-the first value group whose column carries the same kind of value, and validates each group on its own
+the first value group in which its column carries no other kind of value, and validates each group on its own
 data graph. Without such a shared column every shape is in one group (`main`) and the export is the same
 as without groups. A shape that collides opens an extra group (`extra:1`, `extra:2`, ...), which exports
 its target rows (and referenced keys) again; `verify.shacl_max_rows` counts the rows of all groups

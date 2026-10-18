@@ -48,7 +48,7 @@ listed as not proven, "checked only in SQL":
 
 Shapes on the same target column that need different kinds of RDF value (a `class` shape and a bound
 shape, or `class` shapes naming different entities) are all compared: each shape goes to the first value
-group whose column carries the same kind of value (`main`; a colliding shape opens `extra:1`, `extra:2`,
+group in which its column carries no other kind of value (`main`; a colliding shape opens `extra:1`, `extra:2`,
 ...), each group is validated on its own data graph, and each `shacl:<id>` names its `value_group`.
 Without a colliding shape there is one group, `main`. `verify.shacl_max_rows` bounds the rows of all
 groups together. If validating one group fails (pySHACL returns no results graph or raises), only that

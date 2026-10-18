@@ -122,7 +122,9 @@ def _when(text) -> datetime | None:
 def cube_runtime_staleness(r: dict, current: dict) -> str | None:
     """Fixed stale reason when the `cube:meta` check of a result recorded another Cube version or SQL planner than
     `current` (cube_run.runtime_facts), or not both; None when it agrees or the result has no `cube:meta` (the stage
-    stopped before Cube served anything, and its own error keeps it from passing)."""
+    stopped before Cube served anything, and its own error keeps it from passing). Since this release every served
+    run writes `cube:meta`; an older result that passed without one (a 0.3.0 /meta answering JSON null) is still
+    stale, through inputs_changed, because its recorded engine_sha256 differs from the current engine."""
     meta = next((c for c in _checks(r) if c.get("id") == "cube:meta"), None)
     if meta is None:
         return None

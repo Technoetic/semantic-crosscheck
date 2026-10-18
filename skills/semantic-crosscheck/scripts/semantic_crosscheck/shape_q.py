@@ -2,9 +2,15 @@
 
   total     each measure cube's `value` total equals SQL computed from the configuration (cube_gen.where_sql and
             the measure's aggregate); the closure cube's `qty` and `pairs` equal the closure table.
-  additive  for sum/count measures joined one_to_one to their node cube, the groups by the ontology class column
-            add up to the measure's total: measure keys missing from the node table, or a join that fans out,
-            break the sum.
+  additive  for every sum/count measure (the configuration's measures and the closure cube's `qty` and `pairs`) and
+            every cube with the ontology class column that Cube joins to the measure's cube through many_to_one or
+            one_to_one steps only (join_path, seen from the measure), the groups by that column, the NULL group
+            included, add up to the measure's total, and the NULL group equals an independent anti-join over the
+            measure source (null_group_sql: the source rows with no dimension row whose class is set). Measure
+            rows Cube drops (keys missing from the node table) or a join that fans out break the sum; rows Cube
+            puts in the wrong group break the NULL group. A path with a one_to_many (or unknown) step gets no
+            test, because a row legitimately counts in several groups; not_applicable lists it for not_proven,
+            and so it lists an additive path whose NULL group no configuration entry describes.
   pair      measures of cubes joined to the same parent, queried together, equal the same measures queried
             alone, per key: the closure `qty` with each closure-joined measure (grouped by the closure end the
             measure is joined on, `ancestor` in the demo) and every two measures joined to the same node cube
@@ -28,6 +34,12 @@ smallest number of mismatching keys of which a sample of n out of N keys holds a
 more, assuming the mismatching keys are independent of the fixed md5 order; fewer mismatching keys may all lie outside
 the sample.
 Details hold counts and flags only, never totals or keys.
+
+The additive tests are bounded by the configuration: one per additive measure and cube with the class column that
+Cube can join it to (in a generated model: the node cube of each measure with a node, and the ancestor and
+descendant copies for `qty` and `pairs`), with as many groups as the column has values. The NULL group's SQL side
+(null_group_sql) is read once per test, like a pair test's key sample, and reused by every replay; its detail holds
+whether the two NULL groups are equal and the row counts of the anti-join (null_group_rows, orphan_rows).
 """
 
 import math
@@ -37,6 +49,10 @@ from . import canon, compare, cube_gen, db, ident, naming, sweep
 
 PAIR_KEY_CAP = 2000
 MISS = 20          # the detection bound allows a miss probability of at most 1/MISS (5%)
+ADDITIVE_STEPS = ("many_to_one", "one_to_one")
+_RELATIONSHIPS = {"belongs_to": "many_to_one", "belongsTo": "many_to_one", "has_many": "one_to_many",
+                  "hasMany": "one_to_many", "has_one": "one_to_one", "hasOne": "one_to_one"}
+_INVERSE = {"many_to_one": "one_to_many", "one_to_many": "many_to_one", "one_to_one": "one_to_one"}
 
 
 def _m(cube: str, name: str) -> str:
@@ -76,24 +92,142 @@ def _totals(cfg, cubes: dict) -> list[dict]:
     return out
 
 
-def _additive(cfg, cubes: dict) -> list[dict]:
-    col = cfg.ontology.class_column
-    if not col:
-        return []
+def relationship(join: dict) -> str:
+    """A join's relationship in snake_case (Cube's has_many / belongs_to / has_one aliases folded); any other value is
+    kept as it is (an absent one as ''), so it is never taken for an additive step."""
+    r = join.get("relationship") or ""
+    return _RELATIONSHIPS.get(r, r)
+
+
+def _directed(cubes: dict, start: str, goal: str) -> list[tuple] | None:
+    """The shortest chain of declared joins start -> ... -> goal as [(cube, next cube, relationship)], or None."""
+    prev: dict[str, tuple | None] = {start: None}
+    todo = [start]
+    while todo and goal not in prev:
+        nxt = []
+        for c in todo:
+            for j in (cubes.get(c) or {}).get("joins", []):
+                n = j.get("name")
+                if n in cubes and n not in prev:
+                    prev[n] = (c, relationship(j))
+                    nxt.append(n)
+        todo = nxt
+    if goal == start or goal not in prev:
+        return None
+    steps, n = [], goal
+    while prev[n] is not None:
+        c, r = prev[n]
+        steps.append((c, n, r))
+        n = c
+    return steps[::-1]
+
+
+def join_path(cubes: dict, measure_cube: str, dim_cube: str) -> list[tuple] | None:
+    """The join path of a query of a measure of `measure_cube` grouped by a dimension of `dim_cube`, seen from the
+    measure: [(cube, next cube, relationship from the cube to the next)]. Cube joins the cubes of a query from one of
+    them through declared joins, so either the measure's cube reaches the dimension's cube (relationships as
+    declared) or the dimension's cube reaches the measure's (each step reversed and inverted: a dimension cube that
+    declares one_to_many reaches measure rows that each belong to one of its rows). None when neither reaches the
+    other: Cube cannot join the two cubes on their own, so there is no such query to test."""
+    forward = _directed(cubes, measure_cube, dim_cube)
+    if forward:
+        return forward
+    back = _directed(cubes, dim_cube, measure_cube)
+    if back is None:
+        return None
+    return [(b, a, _INVERSE.get(r, r)) for a, b, r in reversed(back)]
+
+
+def additive_path(steps: list | None) -> bool:
+    """Whether every row of the measure's cube reaches at most one row of the dimension's cube: a non-empty path made
+    of many_to_one and one_to_one steps only."""
+    return bool(steps) and all(r in ADDITIVE_STEPS for _a, _b, r in steps)
+
+
+def _path_text(steps: list) -> str:
+    return steps[0][0] + "".join(f" -> {b} ({r or 'no relationship'})" for _a, b, r in steps)
+
+
+def _measure_type(cube: dict, name: str) -> str:
+    return next((m.get("type", "") for m in cube.get("measures", []) if m.get("name") == name), "")
+
+
+def _additive_measures(cfg, cubes: dict) -> list[tuple]:
+    """(cube, measure name, aggregation, config_ref, source) of every measure whose groups must add up: sum and count
+    measures of the configuration and the closure's qty and pairs. Other aggregations (min, max, count_distinct,
+    avg, ...) are not additive and get no test."""
     out = []
     for m in cfg.measures.values():
         mc = naming.cube_measure(m.name)
-        if m.agg not in ("sum", "count") or m.date_column or not m.node or mc not in cubes:
+        if m.agg not in ("sum", "count") or m.date_column or mc not in cubes:
             continue
-        nc = naming.cube_entity(m.node)
-        join = _joins(cubes.get(nc)).get(mc)
-        dims = {d["name"] for d in cubes.get(nc, {}).get("dimensions", [])}
-        if not join or join.get("relationship") != "one_to_one" or col not in dims:
+        if _measure_type(cubes[mc], naming.MEASURE_VALUE) not in ("sum", "count"):
             continue
-        measure, dim = _m(mc, naming.MEASURE_VALUE), _m(nc, col)
-        out.append({"id": f"additive:{measure}:{dim}", "kind": "additive", "members": [measure, dim],
-                    "measure": measure, "dimension": dim, "config_ref": f"measures.{m.name}"})
+        out.append((mc, naming.MEASURE_VALUE, m.agg, f"measures.{m.name}", {"measure": m.name}))
+    for h in cfg.hierarchies.values():
+        cc = naming.cube_closure(h.name)
+        for col in naming.CLOSURE_MEASURES if cc in cubes else ():
+            agg = _measure_type(cubes[cc], col)
+            if agg in ("sum", "count"):
+                out.append((cc, col, agg, f"hierarchies.{h.name}", {"hierarchy": h.name, "closure_column": col}))
     return out
+
+
+def _null_source(cfg, source: dict, dim_cube: str) -> dict | None:
+    """The configuration's description of the join from a measure source to the cube `dim_cube` (dimension table, its
+    key and the source column that refers to it), or None when no configuration entry describes that join."""
+    if "measure" in source:
+        m = cfg.measures[source["measure"]]
+        node = cfg.entities.get(m.node)
+        if node and len(node.key) == 1 and dim_cube == naming.cube_entity(m.node):
+            return {**source, "dim_table": node.table, "dim_key": node.key[0], "fk": m.by}
+        return None
+    h = cfg.hierarchies[source["hierarchy"]]
+    node = cfg.entities[h.node]
+    for end, cube in (("ancestor", naming.cube_ancestor(h.name)), ("descendant", naming.cube_descendant(h.name))):
+        if dim_cube == cube:
+            return {**source, "dim_table": node.table, "dim_key": node.key[0], "fk": end}
+    return None
+
+
+def _additive_plan(cfg, cubes: dict) -> tuple[list[dict], list[str]]:
+    """(additive tests, not_proven lines for the measure / class-column pairs Cube can join but that get no test)."""
+    col = cfg.ontology.class_column
+    if not col:
+        return [], []
+    dims = [name for name, c in cubes.items() if any(d.get("name") == col for d in c.get("dimensions", []))]
+    out, notes = [], []
+    for mc, name, agg, ref, source in _additive_measures(cfg, cubes):
+        for dc in dims:
+            steps = None if dc == mc else join_path(cubes, mc, dc)
+            if steps is None:
+                continue
+            measure, dim = _m(mc, name), _m(dc, col)
+            tid = f"additive:{measure}:{dim}"
+            if not additive_path(steps):
+                notes.append(f"v3:{tid}: not applicable: the join path {_path_text(steps)} has a step that is not "
+                             "many_to_one or one_to_one, so a row can count in several groups; no additivity check")
+                continue
+            null_source = _null_source(cfg, source, dc)
+            if null_source is None:
+                notes.append(f"v3:{tid}: not compared: no configuration entry describes the join path "
+                             f"{_path_text(steps)}, so its NULL group has no independent SQL; no additivity check")
+                continue
+            out.append({"id": tid, "kind": "additive", "members": [measure, dim], "measure": measure,
+                        "dimension": dim, "agg": agg, "path": [list(s) for s in steps],
+                        "null_source": {**null_source, "class_column": col}, "config_ref": ref})
+    return out, notes
+
+
+def _additive(cfg, cubes: dict) -> list[dict]:
+    return _additive_plan(cfg, cubes)[0]
+
+
+def not_applicable(cfg, model: dict) -> list[str]:
+    """not_proven lines for the measure / class-column pairs of the model that get no additive test although Cube can
+    join them: a join path with a step that is not many_to_one or one_to_one, or one no configuration entry
+    describes."""
+    return _additive_plan(cfg, {c["name"]: c for c in model.get("cubes", [])})[1]
 
 
 def _closure_pairs(cfg, cubes: dict, kinds: dict) -> list[dict]:
@@ -147,6 +281,26 @@ def measure_total_sql(cfg, m) -> str:
 def closure_total_sql(cfg, h: str, column: str) -> str:
     agg = f"sum({ident.quote('qty')})" if column == "qty" else "count(*)"
     return f"SELECT {agg} FROM {naming.closure_table(cfg, h)}"
+
+
+def null_group_sql(cfg, test: dict) -> str:
+    """The NULL group of an additive test by the configuration, independent of the Cube model: (the measure over the
+    source rows that have no dimension row with a non-null class value, the number of those rows, the number of
+    source rows with no dimension row at all). Under a many_to_one join these rows, and only these, fall into the
+    NULL group: rows with no dimension row (an anti-join, NOT EXISTS) and rows whose dimension row has no class."""
+    src = test["null_source"]
+    dim, key, fk = ident.qualified(src["dim_table"]), ident.quote(src["dim_key"]), f"t.{ident.quote(src['fk'])}"
+    matched = f"SELECT 1 FROM {dim} d WHERE d.{key} = {fk}"
+    null_group = f"NOT EXISTS ({matched} AND d.{ident.quote(src['class_column'])} IS NOT NULL)"
+    if "measure" in src:
+        m = cfg.measures[src["measure"]]
+        table = ident.qualified(cfg.entity(m.entity, f"measures.{m.name}").table)
+        value, where = f"{m.agg}(t.{ident.quote(m.column)})", f" WHERE {cube_gen.where_sql(m)}"
+    else:
+        table, where = naming.closure_table(cfg, src["hierarchy"]), ""
+        value = f"sum(t.{ident.quote('qty')})" if src["closure_column"] == "qty" else "count(*)"
+    return (f"SELECT {value} FILTER (WHERE {null_group}), count(*) FILTER (WHERE {null_group}), "
+            f"count(*) FILTER (WHERE NOT EXISTS ({matched})) FROM {table} t{where}")
 
 
 def pair_keys(conn, cfg, test: dict) -> tuple[int, list | None]:
@@ -263,13 +417,32 @@ def _sum(values: list):
     return sum(present, Decimal(0)) if present else None
 
 
+def _null_group(conn, cfg, test: dict) -> tuple:
+    """null_group_sql of the test, read once: the test dict keeps (value, rows, orphan rows) in memory for the mutant
+    replays. The value is a database quantity, so it never goes into a detail or a result."""
+    if "sql_null_group" not in test:
+        with db.read_only(conn, cfg.source.statement_timeout_ms):
+            rows = conn.run(null_group_sql(cfg, test))
+        if not rows or len(rows) != 1:
+            raise ValueError("expected one row from the NULL group query")
+        value, n, orphans = rows[0]
+        test["sql_null_group"] = (value, int(n or 0), int(orphans or 0))
+    return test["sql_null_group"]
+
+
 def _run_additive(conn, client, cfg, test: dict) -> tuple[str, dict]:
     measure, dim = test["measure"], test["dimension"]
     total = _single(client.load({"measures": [measure]}), measure)
     groups = client.load({"dimensions": [dim], "measures": [measure]})
+    sql_null, null_rows, orphans = _null_group(conn, cfg, test)
+    cube_null = _sum([g.get(measure) for g in groups if g.get(dim) is None])
+    if test["agg"] == "count":   # a count over no rows is 0 in SQL, NULL as a sum of per-key counts
+        cube_null, sql_null = cube_null or 0, sql_null or 0
     equal = canon.same(_sum([g.get(measure) for g in groups]), total)
-    detail = {"equal": equal, "groups": len(groups), "null_class_groups": sum(1 for g in groups if g.get(dim) is None)}
-    return ("pass" if equal else "fail"), detail
+    null_equal = canon.same(cube_null, sql_null)
+    detail = {"equal": equal, "groups": len(groups), "null_class_groups": sum(1 for g in groups if g.get(dim) is None),
+              "null_group_equal": null_equal, "null_group_rows": null_rows, "orphan_rows": orphans}
+    return ("pass" if equal and null_equal else "fail"), detail
 
 
 def _keyed(rows: list[dict], key: str, kind: str | None) -> tuple[dict, int]:

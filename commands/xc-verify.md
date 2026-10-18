@@ -28,7 +28,11 @@ python "${CLAUDE_PLUGIN_ROOT}/skills/semantic-crosscheck/scripts/sxc.py" verify 
   exact decimals (`2.50` is `2.5`), `time` columns as UTC timestamps (a date is its midnight) and
   `boolean` columns as booleans. Duplicate keys fail and `zero_if_null` is the only declared equivalence.
 - V3 checks query shapes derived from the model: totals against SQL, additivity over the ontology class
-  column, and measures queried together against the same measures queried alone (join fan-out). A pair
+  column of every cube joined to the measure through many-to-one or one-to-one steps only (the node cube,
+  and the closure's ancestor and descendant copies for `qty` and `pairs`), with the NULL group compared
+  against an anti-join over the measure source, and measures queried together against the same measures
+  queried alone (join fan-out). A join path with a one-to-many step gets no additivity check and is listed
+  in not proven as not applicable. A pair
   test over more than 2,000 keys compares a deterministic sample of 2,000 keys (ordered with
   `verify.seed`, counted and drawn in one read-only snapshot) and says so in not proven, with the
   sample's detection bound (detail `d95_keys`, `d95_rate`): a mismatch affecting at least that many
@@ -57,7 +61,7 @@ python "${CLAUDE_PLUGIN_ROOT}/skills/semantic-crosscheck/scripts/sxc.py" verify 
 Exit code 0: every check passed (`v1:<gold>`, `v2:<gold>:<stratum>`, `v3:total:<member>`,
 `v3:additive:<member>:<member>`, `v3:pair:<member>+<member>`, `v4:<operator>:<target>`) and none was left
 out. A pass means only what these checks prove on this data. Always show the NOT PROVEN lines (empty
-strata, equivalent mutants, sampled pair tests) next to the verdict.
+strata, equivalent mutants, sampled pair tests, join paths additivity does not apply to) next to the verdict.
 
 ## Failures
 
@@ -71,8 +75,11 @@ that generated the model. Fix `crosscheck.toml` or the gold SQL file, never the 
   differs (`'1.10'` and `'1.1'` are different text).
 - `v3:total:<member>` fails: Cube's total differs from SQL computed from the configuration (filters,
   normalisation, rows whose grain column is NULL).
-- `v3:additive:<member>:<member>` fails: the groups do not add up to the total (NULL class values or
-  fan-out).
+- `v3:additive:<member>:<member>` fails: the groups, NULL group included, do not add up to the total
+  (`equal` false: a relationship declared many-to-one that is one-to-many in the data, such as a repeated
+  node key, or measure keys missing from the node table), or Cube's NULL group differs from the rows
+  without a classified dimension row (`null_group_equal` false; `orphan_rows` counts the rows with no
+  dimension row at all).
 - `v3:pair:<member>+<member>` fails: measures queried together differ from the same measures queried
   alone, which is join fan-out (wrong grain or relationship).
 - `v4:<operator>:<target>` fails: a mutant that changes results on this data survived, so the gold suite

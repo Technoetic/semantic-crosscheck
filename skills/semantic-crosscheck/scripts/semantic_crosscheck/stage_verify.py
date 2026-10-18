@@ -13,7 +13,9 @@ One Cube process (cube_run.serve on <out>/cube, log in verify/server.log) serves
   v3:<test>             the shape_q tests derived from the model; a pair test over more keys than
                         shape_q.PAIR_KEY_CAP compares a deterministic sample and says so in not_proven, with the
                         sample's detection bound (and so does V4, whose suite replays the same sample; a survivor of
-                        a suite with such a sampled item is marked sample_blind_possible)
+                        a suite with such a sampled item is marked sample_blind_possible); the measure / class-column
+                        pairs Cube can join that get no additive test (a join path with a one_to_many step) are
+                        listed in not_proven (shape_q.not_applicable)
 Gold and Cube values are compared in the form of the Cube member type of each mapped column (compare.member_kinds of
 the model): text exactly, numbers as exact decimals, dates and timestamps in UTC, booleans as booleans.
 
@@ -283,6 +285,7 @@ class _Verify:
             if "v3" in self.only:
                 for t, gate in tests:
                     self.v3(conn, client, t, gate)
+                self.res.not_proven.extend(shape_q.not_applicable(self.cfg, self.model))
             if "v4" in self.only:
                 for iid, _cid, fn in self.items:
                     if iid not in self.baseline:

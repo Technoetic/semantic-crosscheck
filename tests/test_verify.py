@@ -7,7 +7,10 @@
   VerifyStageTest   (database + Cube)  the clean demo passes every V1/V2/V3 check; a closure that did not pass
                                        in build turns the closure checks into not_run; a bom_line quantity
                                        changed after the closure was built fails exactly the bindings that reach
-                                       the changed edge, and nothing else.
+                                       the changed edge, and nothing else; the V3 additive tests over the
+                                       closure's many_to_one joins to the node copies fail when the node table
+                                       repeats a key (the declared many_to_one is one-to-many in the data) and pass
+                                       with a non-empty NULL group when a closure end has no node row.
 
 Database names start with sxc_t_verify. Skipped unless SXC_TEST_ADMIN_DSN names a superuser connection and, for
 the Cube tests, the adapter is installed (SXC_CUBE_HOME or the per-user default) with node on PATH.
@@ -34,10 +37,17 @@ V2_STRATA = {"q01_explosion": ["top", "mid", "deep", "leaf_parent", "empty"], "q
 V3_TESTS = ["total:m_firm_open.value", "total:m_firm_open_dated.value", "total:m_on_hand.value", "total:m_consigned.value",
             "total:has_component_closure.qty", "total:has_component_closure.pairs",
             "additive:m_firm_open.value:part.part_class", "additive:m_on_hand.value:part.part_class",
-            "additive:m_consigned.value:part.part_class", "pair:has_component_closure.qty+m_firm_open.value",
+            "additive:m_consigned.value:part.part_class",
+            "additive:has_component_closure.qty:has_component_ancestor.part_class",
+            "additive:has_component_closure.qty:has_component_descendant.part_class",
+            "additive:has_component_closure.pairs:has_component_ancestor.part_class",
+            "additive:has_component_closure.pairs:has_component_descendant.part_class",
+            "pair:has_component_closure.qty+m_firm_open.value",
             "pair:m_firm_open.value+m_on_hand.value", "pair:m_firm_open.value+m_consigned.value",
             "pair:m_on_hand.value+m_consigned.value"]
-CLOSURE_V3 = {"total:has_component_closure.qty", "total:has_component_closure.pairs", "pair:has_component_closure.qty+m_firm_open.value"}
+CLOSURE_ADDITIVE = [t for t in V3_TESTS if t.startswith("additive:has_component_closure")]
+CLOSURE_V3 = {"total:has_component_closure.qty", "total:has_component_closure.pairs",
+              "pair:has_component_closure.qty+m_firm_open.value", *CLOSURE_ADDITIVE}
 
 
 def graph(data: dict) -> tuple[set, dict, dict]:
@@ -269,6 +279,11 @@ class VerifyStageTest(unittest.TestCase):
         self.assertEqual(v2["v2:q01_explosion:empty"]["empty_bindings"], 8, "roots without children: both sides empty")
         self.assertGreater(v2["v2:q02_where_used:shared"]["declared_null_as_zero"], 0)
         self.assertTrue((self.out / "verify" / "server.log").is_file())
+        additive = {c.id: c.detail for c in res.checks if c.id.startswith("v3:additive:")}
+        self.assertEqual(len(additive), 7)
+        for cid, d in additive.items():
+            self.assertEqual((d["equal"], d["null_group_equal"], d["orphan_rows"]), (True, True, 0), cid)
+            self.assertGreater(d["groups"], 1, cid)
 
     def test_closure_that_did_not_pass_turns_closure_checks_into_not_run(self):
         out = self.tmp / "gated"
@@ -346,6 +361,74 @@ class VerifyStageTest(unittest.TestCase):
             self.assertRegex(c.detail["killed_by"], r"^v[123]:\S+$")
         self.assertEqual(res.not_proven, [])
         self.assertEqual({c.id for c in res.checks if c.status == "not_run"}, {"scope:v1", "scope:v2", "scope:v3"})
+
+    def node_variant(self, table: str, edit: str) -> tuple:
+        """(configuration, output directory) whose node entity is `table`: a copy of sxc_demo.part without its primary
+        key, changed by `edit` (SQL run as the loader), with build's closure result and a model generated from it."""
+        owner = db.connect("SXC_PG_OWNER_DSN")
+        try:
+            with db.write_tx(owner):
+                owner.run(f"CREATE TABLE sxc_demo.{table} AS SELECT * FROM sxc_demo.part")
+                owner.run(edit.format(table=f"sxc_demo.{table}"))
+        finally:
+            owner.close()
+        self.addCleanup(self.drop, table)
+        cfg = config.load(pgfixture.DEMO_CONFIG)
+        cfg.entities["part"].table = f"sxc_demo.{table}"
+        out = self.tmp / table
+        shutil.copytree(self.out / "build", out / "build")
+        conn = self.fx.check_conn()
+        try:
+            with db.read_only(conn):
+                model, _notes = cube_gen.generate(cfg, conn)
+        finally:
+            conn.close()
+        cube_gen.write_model(model, out / "cube" / "model")
+        cube = Result("cube")
+        cube.add("cube:model", "pass", "", cubes=len(model["cubes"]))
+        cube.write(out)
+        return cfg, out
+
+    @staticmethod
+    def drop(table: str):
+        owner = db.connect("SXC_PG_OWNER_DSN")
+        try:
+            with db.write_tx(owner):
+                owner.run(f"DROP TABLE IF EXISTS sxc_demo.{table}")
+        finally:
+            owner.close()
+
+    def test_many_to_one_join_that_is_one_to_many_in_the_data_fails_the_additive_tests(self):
+        # a part that is an ancestor and a descendant in the closure appears twice: every closure row reaching it
+        # joins two node rows, so its qty and pairs count twice in the groups by part_class
+        cfg, out = self.node_variant("part_fanout", "INSERT INTO {table} SELECT * FROM {table} WHERE part_id = "
+                                     "(SELECT min(b.child_id) FROM sxc_demo.bom_line b JOIN sxc_demo.bom_line c "
+                                     "ON c.parent_id = b.child_id)")
+        res = self.verify(out, ["v3"], cfg)
+        checks = {c.id: c for c in res.checks}
+        for t in CLOSURE_ADDITIVE:
+            c = checks[f"v3:{t}"]
+            self.assertEqual((c.status, c.detail["equal"], c.detail["null_group_equal"]), ("fail", False, True), c.id)
+            self.assertEqual(c.config_ref, "hierarchies.has_component")
+        self.assertEqual(checks["v3:total:has_component_closure.qty"].status, "pass", "the total alone has no join")
+        self.assertEqual(checks["v3:total:has_component_closure.pairs"].status, "pass")
+        self.assertEqual(res.status, "fail")
+
+    def test_closure_ends_without_a_node_row_fall_into_the_null_group(self):
+        # a part removed from the node table: the closure rows of its end join no node row, Cube puts them in the
+        # NULL group, and the anti-join over the closure finds the same rows, so the closure tests still pass
+        cfg, out = self.node_variant("part_gap", "DELETE FROM {table} WHERE part_id = "
+                                     "(SELECT min(b.child_id) FROM sxc_demo.bom_line b JOIN sxc_demo.bom_line c "
+                                     "ON c.parent_id = b.child_id)")
+        res = self.verify(out, ["v3"], cfg)
+        checks = {c.id: c for c in res.checks}
+        for t in CLOSURE_ADDITIVE:
+            c = checks[f"v3:{t}"]
+            self.assertEqual(c.status, "pass", (c.id, c.detail))
+            self.assertEqual((c.detail["null_class_groups"], c.detail["null_group_equal"]), (1, True), c.id)
+            self.assertGreater(c.detail["orphan_rows"], 0, c.id)
+            self.assertEqual(c.detail["orphan_rows"], c.detail["null_group_rows"], c.id)
+        self.assertEqual(res.not_proven, [])
 
     @staticmethod
     def change(owner, lines: set, sign: str):

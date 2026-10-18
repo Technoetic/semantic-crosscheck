@@ -7,7 +7,7 @@
 **설정 하나에서 네 계층을 만들고, 서로의 결과를 교차 검증합니다.**<br/>
 계층마다 그럴듯한 설명을 넘어, **검사 ID · 건수 · 종료 코드로 일치 여부를 확인합니다.**
 
-[![Release](https://img.shields.io/badge/Release-v0.4.0-0D9488?style=for-the-badge)](docs/releases/v0.4.0.md)
+[![Release](https://img.shields.io/badge/Release-v0.5.0-0D9488?style=for-the-badge)](docs/releases/v0.5.0.md)
 [![CI](https://img.shields.io/github/actions/workflow/status/Technoetic/semantic-crosscheck/tests.yml?branch=main&style=for-the-badge&label=CI&logo=github)](https://github.com/Technoetic/semantic-crosscheck/actions/workflows/tests.yml)
 [![MIT](https://img.shields.io/badge/License-MIT-8B5CF6?style=for-the-badge)](LICENSE)
 [![Claude Code](https://img.shields.io/badge/Claude_Code-Plugin-191919?style=for-the-badge&logo=anthropic&logoColor=white)](#claude-code)
@@ -148,7 +148,7 @@ semantic-crosscheck는 같은 질문의 **서로 다른 표현을 비교**합니
 |---|---|---|
 | **V1 · 엄격 비교** | Cube와 기준 SQL이 같은 행을 반환하는가? | Cube 멤버 타입에 맞춰 모든 비교 열과 행을 대조 |
 | **V2 · 층별 비교** | 특정 종류·범위에서만 어긋나지는 않는가? | 재현 가능한 층별 파라미터 순회 |
-| **V3 · 질의 모양** | 합계·그룹 합·지표 조합이 서로 맞는가? | 모델에서 만든 합계·가산성·지표 쌍 검사 |
+| **V3 · 질의 모양** | 합계·그룹 합·지표 조합과 원본 계층의 폐포가 맞는가? | 합계·가산성·지표 쌍 검사와 독립 Python 폐포 검산 |
 | **V4 · 변이 검사** | 모델을 일부러 망가뜨렸을 때 기준 질의가 잡아내는가? | 변형한 모델을 gold suite로 검사하고 살아남은 이유 확인 |
 | **V5 · OWL 대조** | 추론한 관계·분류가 SQL과 같은가? | HermiT의 전이 폐포·정의 클래스 ↔ SQL · `reason` 단계 |
 
@@ -212,7 +212,7 @@ Cube는 항상 Tesseract SQL 플래너(`CUBEJS_TESSERACT_SQL_PLANNER=true`)로 �
 릴리스 태그를 고정해 등록합니다.
 
 ```text
-codex plugin marketplace add Technoetic/semantic-crosscheck --ref v0.4.0
+codex plugin marketplace add Technoetic/semantic-crosscheck --ref v0.5.0
 codex plugin add semantic-crosscheck@semantic-crosscheck-local
 ```
 
@@ -229,7 +229,7 @@ Windows PowerShell에서 실행 정책 때문에 `codex.ps1`이 거부되면 두
    python -m pip install -r "<plugin root>/requirements/reason.txt"
    ```
 
-   `<plugin root>` 예: `~/.claude/plugins/cache/semantic-crosscheck/semantic-crosscheck/0.4.0` 또는 `~/.codex/plugins/cache/semantic-crosscheck-local/semantic-crosscheck/0.4.0`. 패키지가 없으면 `/xc-doctor`가 실제 경로에 맞는 설치 명령을 안내합니다.
+   `<plugin root>` 예: `~/.claude/plugins/cache/semantic-crosscheck/semantic-crosscheck/0.5.0` 또는 `~/.codex/plugins/cache/semantic-crosscheck-local/semantic-crosscheck/0.5.0`. 패키지가 없으면 `/xc-doctor`가 실제 경로에 맞는 설치 명령을 안내합니다.
 2. psql을 사용하는 superuser가 `docs/setup-roles.sql`로 **loader·check 역할**을 만듭니다.
 3. Java를 `PATH`에 추가하거나 `SXC_JAVA`를 지정합니다.
 4. Node.js와 npm을 준비하고 `/xc-install` 또는 `sxc.py cube-install`로 **Cube 어댑터**를 한 번 설치합니다.
@@ -413,12 +413,12 @@ python skills/semantic-crosscheck/scripts/sxc.py <stage> [--config PATH] [--out 
 | `doctor` | Python·pg8000·DSN·PostgreSQL·검사 역할 권한·선택 구성 요소 확인 | `--require core,reason,cube` | `doctor/result.json` |
 | `demo` | loader 역할로 가상 데이터 적재 | `--variant clean\|dirty`, `--seed N`, `--scale N` | `demo/result.json`, `demo/expected.json` |
 | `build` | 위반 뷰·계층 폐포 생성 | `--hierarchy NAME` | `build/result.json`, `build/build.sql`, `build/shapes.ttl`, `build/fk_review.sql` |
-| `reason` | SHACL ↔ SQL, OWL 일관성·폐포·분류 대조 | `--only shacl,owl` | `reason/result.json` |
+| `reason` | SHACL ↔ SQL, OWL 일관성·폐포·분류 대조 | `--only shacl,owl`, `--synthetic-witnesses` | `reason/result.json` |
 | `cube` | Cube 모델 생성·시작·검사 | 별도 옵션 없음 | `cube/result.json`, `cube/model/*.yml`, `cube/model.json`, `cube/server.log` |
 | `verify` | V1·V2·V3·V4 검증 | `--only v1,v2,v3,v4`, `--gold ID` | `verify/result.json`, `verify/server.log`, `verify/mutants/*/` |
 | `report` | 필수 단계의 실행·최신성·통과 여부 종합 | 별도 옵션 없음 | `report/result.json`, `report.md`, `report.json` |
 | `cube-install` | 사용자별 고정 Cube 어댑터 설치 | `--home DIR`, `--native-file PATH`, `--force` | `cube_install/result.json`, `cube_install/npm-ci.log`, `cube_install/smoke.log` |
-| `counterexample` | 합성 데이터에서 두 SQL의 차이를 찾고 행 삭제로 축소·재현 | `--reference-sql FILE`, `--candidate-sql FILE`, `--metamorphic-sql FILE`, `--scenario nulls`, `--seed N`, `--max-examples N`, `--max-shrink-steps N`, `--dsn-env NAME`, `--statement-timeout-ms N`, `--constraints FILE`, `--replay FILE` | `counterexample/result.json`, `counterexample/fixture.json` |
+| `counterexample` | 합성 데이터에서 SQL의 차이·BOM 변환 관계를 검사하고 축소·재현 | `--reference-sql FILE`, `--candidate-sql FILE`, `--metamorphic-sql FILE`, `--mutation-operator NAME`, `--gold-sql FILE`, `--scenario nulls`, `--seed N`, `--max-examples N`, `--max-shrink-steps N`, `--dsn-env NAME`, `--statement-timeout-ms N`, `--constraints FILE`, `--replay FILE` | `counterexample/result.json`, `counterexample/fixture.json` |
 
 **공통 옵션**
 
@@ -456,19 +456,22 @@ NOT NULL·FK·CHECK를 지키는 데이터만 실행하고 축소합니다. FK�
 재현용 `fixture.json`, 적용할 변환이 없으면 `not_run`입니다. 변환에 불변인 오류(간선 방향, 잘못된
 수량 열)는 잡지 못하며 gold 비교(V1/V3/V5)를 대신하지 않습니다.
 
-개발 중인 다음 버전에는 세 가지 검사를 추가했습니다.
+v0.5.0에는 독립 검산과 합성 예제 검사를 추가했습니다.
 
 - **BOM 독립 검산:** V3가 원본 연결과 저장된 폐포를 같은 읽기 전용 스냅샷에서 읽고,
   별도의 Python 계산으로 소요 수량·논리 경로 수·최단/최장 깊이를 대조합니다. 같은 두 부품의
   여러 BOM 줄은 수량을 합친 하나의 연결로 계산합니다. 순환 보고 모드·미지원 자료형·계산 상한은
-  `not_run`이며 일부만 읽고 통과하지 않습니다.
+  `not_run`이며 일부만 읽고 통과하지 않습니다. 오류 모드의 순환과 설정한 최대 깊이 초과는
+  실패입니다. 논리 경로 수는 중복 BOM 줄 수를 세지 않습니다.
 - **변이 검출용 합성 데이터:** `--mutation-operator`로 잘못 바꾼 SQL의 차이를 드러낼 데이터를
-  생성합니다. `--gold-sql`을 함께 주면 원본과 기준 SQL의 일치도 확인합니다. 실제 Cube 모델과의
+  생성합니다. V4의 9개 연산자 이름을 지원하며, `--gold-sql`을 함께 주면 원본과 기준 SQL이
+  일치할 때만 기준 SQL이 변이를 검출했다고 기록합니다. 실제 Cube 모델과의
   대응은 별도 확인이 필요하며, 이 결과가 실제 데이터의 V4 판정을 바꾸지는 않습니다.
 - **OWL 합성 예제:** `reason --synthetic-witnesses`가 정의된 분류에 들어가야 하는 예제와
   분류가 추론되지 않아야 하는 대조 예제를 HermiT·SQL·독립 기대 결과로 검사합니다.
   실제 데이터에서 비어 있는 분류의 `not_proven`은 유지합니다. 분류되지 않았다는 사실을
-  명시적인 부정 사실로 해석하지 않습니다.
+  명시적인 부정 사실로 해석하지 않습니다. 합성 문자열 키의 논리 검사는 실제 열의 모든 자료형을
+  검증하지 않습니다.
 
 ```text
 python skills/semantic-crosscheck/scripts/sxc.py reason --config crosscheck.toml --synthetic-witnesses
@@ -543,9 +546,11 @@ flowchart TD
 | build | `closure:<h>`, `closure_apply:<h>` | 순환 정책·최대 깊이 충족, 적용한 폐포가 재계산과 일치 |
 | reason | `shacl:<id>` | pySHACL의 위반 대상과 SQL 위반 키 일치 |
 | reason | `owl:consistency`, `v5:closure:<h>`, `v5:defined:<name>` | OWL 일관성, OWL의 폐포·정의 클래스가 SQL과 일치 |
+| reason | `v5:witness:<name>` | 선택한 합성 예제에서 HermiT·SQL이 독립 기대 결과와 일치; 실제 데이터의 공허성은 별도 유지 |
 | cube | `cube:model`, `cube:meta`, `cube:gold_members:<gold>` | 모델 생성, 공개 멤버 목록 정확(Cube 버전·SQL 플래너 기록), gold 질의 멤버 존재·공개 |
 | verify | `v1:<gold>`, `v2:<gold>:<stratum>` | Cube 타입에 맞춘 기준 SQL·Cube 행 일치 |
 | verify | `v3:total:<member>`, `v3:additive:<member>:<member>`, `v3:pair:<member>+<member>` | 합계·그룹 합(NULL 그룹과 독립 SQL 비교 포함)·지표 조합 일치 |
+| verify | `v3:closure_oracle:<h>` | 원본 연결의 독립 계산과 저장 폐포의 정확한 수량·논리 경로 수·최단/최장 깊이 일치 |
 | verify | `v4:<operator>:<target>` | gold suite의 실패 항목이 변형 모델을 검출 |
 | report | `stage:<name>` | 단계가 실행되었고 최신이며 통과 |
 | build·reason·cube·verify / report | `data_revision:stable`, `data_revision:current` | 구성된 데이터 버전이 안정적이며 현재 근거와 일치; 조회 오류는 실패로 닫음 |
@@ -626,6 +631,8 @@ Cube의 기본 오류 로그에는 오류 클래스·코드·대략적인 범주
 | SQL에서만 비교한 규칙 | `sql_violation`과 한 shape에 class와 범위가 함께 있는 제약(`class_and_bounds`). 같은 열에 서로 다른 RDF 값 유형이 필요한 shapes(class와 범위, 서로 다른 class)는 값 그룹별 데이터 그래프로 나눠 SHACL과 비교함 |
 | 비어 있는 정의 클래스 | OWL과 SQL 양쪽 모두 멤버가 없어 비교가 공허하게 성립 |
 | V3 지표 쌍의 표본 | 2,000키를 넘으면 재현 가능한 2,000키 표본으로 비교. not_proven에 95% 탐지 한계(`d95_keys`)를 함께 적으며, 그보다 적은 키에만 있는 불일치는 놓칠 수 있음 |
+| 독립 폐포 검산의 범위 | 자료형·원본 50,000줄·폐포 100,000쌍·10,000노드·계산 예산의 상한과 순환 보고 모드 제한. 지원하지 않는 범위는 `not_run`이며 표본 통과로 대체하지 않음 |
+| 합성 SQL·OWL 예제 | 지정한 SQL의 차이와 합성 그래프의 논리만 검사. 실제 Cube 변이와의 대응·실제 열 자료형·업무 규칙 전체의 정확성은 별도 확인 필요 |
 | 선택 구성 요소·단계 | 설치되지 않았거나 선택 단계가 실행되지 않음 |
 
 <details>
@@ -647,16 +654,16 @@ Cube의 기본 오류 로그에는 오류 클래스·코드·대략적인 범주
 <a id="development"></a>
 ## 🧪 검증 근거와 개발
 
-| v0.4.0의 확인 근거 | 범위 |
+| v0.5.0의 확인 근거 | 범위 |
 |---|---|
-| [릴리스 검증 JSON](https://github.com/Technoetic/semantic-crosscheck/releases/download/v0.4.0/verification.json) | 실제 소스 커밋, 원시 CI 로그의 테스트·제외, 독립 검증, archive SHA-256 |
+| [릴리스 검증 JSON](https://github.com/Technoetic/semantic-crosscheck/releases/download/v0.5.0/verification.json) | 공개 시 실제 소스 커밋, 원시 CI 로그의 테스트·제외, 독립 검증, archive SHA-256 기록 |
 | [GitHub Actions](https://github.com/Technoetic/semantic-crosscheck/actions/workflows/tests.yml) | 6개 OS/Python 단위 작업 + PostgreSQL·HermiT·Cube 통합 + 보안 검사 = 8개 작업 |
 | 엄격한 통합 runner | 미실행 검사·빈 suite·실패·오류가 있으면 CI 실패 |
-| 실제 runtime 선택 모드 | 완전 실행 환경의 성공·설정 변경·근거 누락 시 PASS 차단을 통합 CI에서 확인 |
-| 로컬 전체 스택 검증 | Windows·PostgreSQL 17.5·Java 21·Cube 1.8.3에서 744개·제외 0·실패/오류 0 · 최종 공개 커밋의 CI와 구분 |
-| 공개 배포 파일 | [소스 ZIP](https://github.com/Technoetic/semantic-crosscheck/releases/download/v0.4.0/semantic-crosscheck-0.4.0.zip) · [SHA256SUMS](https://github.com/Technoetic/semantic-crosscheck/releases/download/v0.4.0/SHA256SUMS) |
+| 실제 runtime 선택 모드 | 완전 실행 환경의 성공·설정 변경·근거 누락 시 PASS 차단을 실행하는 통합 CI |
+| 릴리스 전 로컬 소스 검증 | Windows·PostgreSQL 17.5·Java 21·Cube 1.8.3에서 809개·제외 0·실패/오류 0 · 소스 커밋 `bf3c9a3`의 감사이며 최종 공개 커밋의 CI와 구분 |
+| 릴리스 배포 파일 | [소스 ZIP](https://github.com/Technoetic/semantic-crosscheck/releases/download/v0.5.0/semantic-crosscheck-0.5.0.zip) · [SHA256SUMS](https://github.com/Technoetic/semantic-crosscheck/releases/download/v0.5.0/SHA256SUMS) |
 
-최종 공개 커밋·CI 작업 URL·실제 집계는 **v0.4.0 검증 JSON**에서 확인합니다. 원시 CI 로그에서 읽은 집계만 공개 커밋의 근거로 사용하며, 이전 로컬 검증과 전체 엔진 통합 CI를 구분합니다.
+최종 공개 커밋·CI 작업 URL·실제 집계는 릴리스와 함께 제공하는 **v0.5.0 검증 JSON**에서 확인합니다. 원시 CI 로그에서 읽은 집계만 공개 커밋의 근거로 사용하며, 이전 로컬 검증과 전체 엔진 통합 CI를 구분합니다.
 
 ```bash
 python -m unittest discover -s tests -v
@@ -711,13 +718,13 @@ CI는 전체 이력을 가진 clone의 작업 트리·이력을 일반 패턴과
 
 **MIT** · [LICENSE](LICENSE). 런타임 의존성을 저장소에 포함하지 않으며 의존성 라이선스는 [THIRD_PARTY.md](THIRD_PARTY.md)에 정리했습니다.
 
-[설계 문서](docs/design.md) · [설정 레퍼런스](skills/semantic-crosscheck/references/config.md) · [문제와 함정](skills/semantic-crosscheck/references/pitfalls.md) · [변경 이력](CHANGELOG.md) · [v0.4.0 릴리스 노트](docs/releases/v0.4.0.md)
+[설계 문서](docs/design.md) · [설정 레퍼런스](skills/semantic-crosscheck/references/config.md) · [문제와 함정](skills/semantic-crosscheck/references/pitfalls.md) · [변경 이력](CHANGELOG.md) · [v0.5.0 릴리스 노트](docs/releases/v0.5.0.md)
 
 <div align="center">
 
 **한 계층의 설명을 믿기 전에, 다른 계층의 답과 대조합니다.**
 
-[빠른 시작으로 이동 ↑](#quick-start-with-the-demo) · [GitHub 릴리스](https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.4.0)
+[빠른 시작으로 이동 ↑](#quick-start-with-the-demo) · [GitHub 릴리스](https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.5.0)
 
 </div>
 
@@ -725,4 +732,4 @@ CI는 전체 이력을 가진 clone의 작업 트리·이력을 일반 패턴과
 
 설정 하나로 PostgreSQL의 계층·규칙, SHACL, OWL·HermiT, Cube 모델을 만들고 서로와 gold SQL을 비교합니다. `not_run`은 통과가 아니며, 전체 판정은 `report`와 `not_proven`을 함께 읽습니다. 원본 조회와 생성 스키마 기록을 분리하고, 데모 적재는 별도의 loader 역할을 사용합니다.
 
-요구 환경은 **Python 3.11 이상 · PostgreSQL 17 이상 · Java 11 이상 · Node.js 22 이상**입니다. Linux Cube에는 **glibc 2.34** 이상(x64), 2.30 이상(arm64)이 필요합니다. Codex 설치 태그는 **v0.4.0**, 라이선스는 MIT입니다.
+요구 환경은 **Python 3.11 이상 · PostgreSQL 17 이상 · Java 11 이상 · Node.js 22 이상**입니다. Linux Cube에는 **glibc 2.34** 이상(x64), 2.30 이상(arm64)이 필요합니다. Codex 설치 태그는 **v0.5.0**, 라이선스는 MIT입니다.

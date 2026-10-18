@@ -10,7 +10,10 @@ to the data.
                              filters including nested and/or, timeDimensions, order, and map) exists in the
                              model and is public: Cube answers a query on a hidden member with HTTP 500
   cube:meta                  /meta of the running adapter lists exactly the public members of the model
-                             (a primary-key dimension without public: true is hidden and must not be listed)
+                             (a primary-key dimension without public: true is hidden and must not be listed);
+                             whatever its outcome, its detail records the Cube version and the SQL planner the
+                             adapter was started with (cube_version, sql_planner: cube_run.runtime_facts), which
+                             report compares with the ones this checkout pins
 
 The catalog is read in a READ ONLY transaction and Cube runs read-only sessions (cube_run). Cube errors are
 recorded by HTTP status only, because response bodies can quote values. The adapter writes each error to
@@ -130,7 +133,9 @@ def config_message(e: ValueError) -> str:
 def generate(cfg) -> tuple[dict, list[str]]:
     conn = db.connect(cfg.source.dsn_env)
     try:
-        with db.read_only(conn, cfg.source.statement_timeout_ms):
+        # The information_schema queries the model is built from read one snapshot (the to_regclass probes are
+        # catalog lookups outside it); nothing waits on Cube inside this transaction.
+        with db.read_only(conn, cfg.source.statement_timeout_ms, isolation="repeatable read"):
             return cube_gen.generate(cfg, conn)
     except ValueError as e:
         raise StageError(config_message(e), EXIT_CONFIG) from e
@@ -195,18 +200,21 @@ def run(cfg, args, out: Path) -> Result:
 
     log_path = cube_dir / "server.log"
     log_path.write_text("", encoding="utf-8")
-    meta = None
+    meta, answered = None, False
     with cube_run.serve(cfg, cube_dir, log_path) as client:
+        # only what serve() recorded about the child it started; nothing is filled in when it is missing
+        served = dict(getattr(client, "runtime", None) or {})
         try:
-            meta = client.meta()
+            meta, answered = client.meta(), True
         except CubeError as e:
-            res.add("cube:meta", "error", "", http_status=http_status(e))
+            res.add("cube:meta", "error", "", http_status=http_status(e), **served)
         except (OSError, ValueError, http.client.HTTPException) as e:   # reset, timeout, truncated or non-JSON body
-            res.add("cube:meta", "error", "", reason=type(e).__name__)
+            res.add("cube:meta", "error", "", reason=type(e).__name__, **served)
+    # every served run leaves one cube:meta with the runtime facts: report reads them (cube_runtime_missing otherwise)
     if isinstance(meta, dict):
         status, detail = meta_check(public, meta)
-        res.add("cube:meta", status, "", cubes=len(meta.get("cubes", []) or []), **detail)
-    elif meta is not None:
-        res.add("cube:meta", "error", "", reason="unexpected_response")
+        res.add("cube:meta", status, "", cubes=len(meta.get("cubes", []) or []), **detail, **served)
+    elif answered:   # any other JSON body, `null` included
+        res.add("cube:meta", "error", "", reason="unexpected_response", **served)
     res.next_safe_action = _next_action(res, cfg, cube_names, Path(out))
     return res

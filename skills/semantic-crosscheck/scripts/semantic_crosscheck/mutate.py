@@ -39,7 +39,11 @@ not run proves nothing about the mutant.
 
 Witness SQL is read-only, takes identifiers from ident/naming or the generated model, and repeats filter values
 only as the config-trusted literals of cube_gen.where_sql. Checks and notes carry counts and ids only: the
-suite's items must be check ids, and errors keep an exception type or SQLSTATE.
+suite's items must be check ids, and errors keep an exception type or SQLSTATE. A survivor of a suite whose V3 pair
+items compare only a sample of their keys is marked sample_blind_possible (it may change only unsampled keys); the
+marker never changes a status.
+
+The witness is one statement, so it reads one snapshot in the default READ COMMITTED transaction.
 """
 
 import copy
@@ -433,7 +437,8 @@ def _judge(cfg, out: Path, mutant: Mutant, n: int, suite) -> tuple[str, dict]:
     return check, {"witness": n, **detail}
 
 
-def run_mutants(cfg, out: Path, conn, model: dict, suite, closure: dict | None = None) -> tuple[list[tuple], list[str]]:
+def run_mutants(cfg, out: Path, conn, model: dict, suite, closure: dict | None = None,
+                sampled_items=()) -> tuple[list[tuple], list[str]]:
     """Witness, serve and judge every selected mutant.
 
     suite(client) -> (status, item) runs the gold suite against one CubeClient and stops at the first item that does
@@ -443,9 +448,14 @@ def run_mutants(cfg, out: Path, conn, model: dict, suite, closure: dict | None =
     are not_run. Each observable mutant is served from out/verify/mutants/<operator>__<target>/ (model/*.yml,
     model.json, server.log). Returns (checks, not_proven); checks are (check_id, status, config_ref, detail) tuples as
     in closure.build, and every detail carries the run's summary counts (OUTCOMES).
+
+    sampled_items names the suite's V3 pair items that compare a sample of their keys (fewer than all): the detail of
+    a mutant that survives such a suite gets sample_blind_possible = True and sampled_items, because the mutant may
+    change only keys outside the samples. It is a marker only and never changes a status.
     """
     out = Path(out)
     closure = closure_status(cfg, out) if closure is None else closure
+    sampled = sorted(str(i) for i in sampled_items or ())
     rows: list[tuple] = []
     not_proven: list[str] = []
     tally = dict.fromkeys(OUTCOMES, 0)
@@ -481,6 +491,8 @@ def run_mutants(cfg, out: Path, conn, model: dict, suite, closure: dict | None =
             tally["equivalent"] += 1
             continue
         status, detail = _judge(cfg, out, mutant, n, suite)
+        if status == "fail" and sampled:
+            detail = {**detail, "sample_blind_possible": True, "sampled_items": sampled}
         tally[{"pass": "killed", "fail": "survived"}.get(status, "error")] += 1
         rows.append((cid, status, mutant.config_ref, detail))
     return [(cid, st, ref, {**detail, "summary": dict(tally)}) for cid, st, ref, detail in rows], not_proven

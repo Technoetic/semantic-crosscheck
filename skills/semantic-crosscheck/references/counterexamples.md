@@ -77,6 +77,68 @@ equivalence. Invalid arguments or replay files are configuration errors. Runtime
 errors. `result.json` contains statistics and identifiers only; `fixture.json` alone contains the
 generated rows, together with generator/replay metadata and SQL fingerprints.
 
+## BOM metamorphic relations (one SQL, no gold)
+
+A two-file comparison cannot see an error that the reference SQL shares with the candidate, for example
+when gold and configuration were written from the same misunderstanding. `--metamorphic-sql FILE` checks a
+single trusted closure SELECT against relations that follow from the BOM path-product meaning alone: Q(a, d) is
+the sum over all paths a -> d of the product of `qty_per`. The SQL must return one row per (ancestor, descendant)
+pair with the columns `ancestor`, `descendant` and `qty` (more columns are ignored), like
+`examples/counterexamples/bom_diamond-reference.sql`.
+
+```text
+python skills/semantic-crosscheck/scripts/sxc.py counterexample --metamorphic-sql examples/counterexamples/bom_diamond-reference.sql --seed 7 --out .sxc
+```
+
+The mode uses only the `bom_diamond` generator (also with `--constraints`) and cannot be combined with
+`--reference-sql`/`--candidate-sql`. For every admissible case the SQL runs on the original fixture and on four
+transformed fixtures, each in its own read-only REPEATABLE READ transaction with bound values:
+
+| Check | Transform | Expected answer |
+|---|---|---|
+| `counterexample:metamorphic:mr1_unfold` | copy shared sub-assemblies so the DAG becomes a forest; copies get fresh ids and copied part rows | for every instance i of part x and original part d, the sum of Q'(i, c) over the copies c of d equals Q(x, d) |
+| `counterexample:metamorphic:mr2_scale` | multiply one line (u, v, q) on a multi-path by K = 2 | Q'(a, d) = Q(a, d) + (K-1)·q·Q(a, u)·Q(v, d) for every pair of either answer |
+| `counterexample:metamorphic:mr3_disjoint` | add a fresh component containing a diamond | pairs of original ids unchanged; no pair crosses the components |
+| `counterexample:metamorphic:mr4_unit_node` | replace (u, v, q) by (u, w, q) and (w, v, 1) through a fresh part w | original pairs unchanged; Q'(a, w) = Q(a, u)·q and Q'(w, d) = Q(v, d) |
+
+An absent pair counts as 0. Q(x, x) = 1 (the empty path) is used only inside the formulas; reflexive answer
+rows are never compared. Expected values are computed with exact decimal arithmetic and compared in the exact
+`number` form (`6.000` equals `6`, nothing is rounded); a float `qty` cannot be checked exactly and is an error.
+The line chosen for scaling or splitting is deterministic in the seed and case index.
+
+A relation is `not_run` for a case when it would compare nothing or could not be computed exactly. Every
+relation of a case is `not_run` when the fixture has no BOM line (`no_bom_lines`), a line with a NULL parent,
+child or `qty_per` (`null_bom_value`), a `qty_per` that is not a valid `numeric(18,6)` value
+(`invalid_bom_value`), or lines that form a cycle (`cycle`). A single relation is `not_run` with no diamond
+(`no_diamond`), no line on a multi-path (`no_multi_path_edge`), no quantity other than 1 to split
+(`no_non_unit_quantity`), a transformed fixture outside the column types or the profile (`type_domain`,
+`integrity_profile`), more than 10,000 rows in a fixture or answer (`size_bound`), an expected value that exact
+decimal arithmetic cannot represent (`inexact_arithmetic`), or no compared pair (`no_pairs`). `not_run_reasons`
+counts them. A relation passes only when it compared pairs in at least one case and every comparison agreed; one
+that ran in no case is `not_run` with `reason` `no_admissible_generated_examples` (no case was checked) or
+`vacuous_for_every_case`. Unrun relations make the result `not_run` unless another relation failed; nothing is
+proven for them.
+
+The search stops at the first case that violates any relation: the violated relations `fail` (exit 1, like a
+comparison mismatch) and `fixture.json` (format `sxc-synthetic-metamorphic`) holds the original generated rows,
+the failed relation ids and every transform specification. Results hold pair counts, the seed, K and SHA-256
+hashes of the transform specifications and fixture. Replay needs the same SQL file, `--seed` and profile;
+the transforms are recomputed from the saved rows and a file whose recorded transforms differ is refused before
+connecting. A missing `ancestor`/`descendant`/`qty` column, a duplicate pair, NULLs, non-text ids or a
+non-numeric `qty` is the `counterexample:metamorphic:shape` error; database, driver and connection failures stay
+`counterexample:query`. Any other exception is a fault of the tool, not a statement about the SQL, and is
+recorded as `stage` error.
+
+What the relations do not cover: errors that every transform preserves, such as a reversed edge direction, the
+wrong quantity column or a mis-mapped filter; correctness of the business rule; and any SQL other than the given
+file. The generated closure is tied to gold through V1/V3/V5 on real data; a passing relation upgrades no other
+check. With the shipped examples, the `sum` reference passes all four relations, while the `min` candidate fails
+unfolding (and scaling whenever the scaled line lies off the minimal path), and a `UNION` instead of `UNION ALL`
+fails unfolding when two paths have the same product and depth.
+
+The principle (transform the data so that the expected result is known) follows EDC, "Detecting Logic Bugs in
+DBMSs via Equivalent Data Construction", PACMMOD 3(6), 2025; no EDC code is used.
+
 This capability adopts generated-test-input and shrinking ideas described by
 [Hypothesis](https://github.com/HypothesisWorks/hypothesis), and the counterexample/reduction approach
 in [SQLancer](https://github.com/sqlancer/sqlancer). Neither project is bundled or copied, and no new

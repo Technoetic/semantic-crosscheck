@@ -13,10 +13,16 @@
   debugger port or preload code), every variable whose value holds a postgres:// URL (the loader's DSN, a test admin
   DSN) and every SXC_* variable (the adapter reads only SXC_PORT, SXC_MODEL_DIR and SXC_CUBE_DEBUG, set here); plus
   the connection parsed from the Cube DSN variable, a random per-run API secret, development mode and telemetry off,
-  TLS settings from the DSN's sslmode, and a statement timeout of cube.query_timeout_s, so a query the client gave up
-  on also stops in PostgreSQL instead of running on and holding Cube's queue. The timeout is set twice because Cube's Postgres driver runs `SET statement_timeout` from
+  the Tesseract SQL planner, TLS settings from the DSN's sslmode, and a statement timeout of cube.query_timeout_s, so
+  a query the client gave up on also stops in PostgreSQL instead of running on and holding Cube's queue. The timeout is set twice because Cube's Postgres driver runs `SET statement_timeout` from
   CUBEJS_DB_QUERY_TIMEOUT (default 10 minutes, also its queue's execution timeout) on every connection, overriding the
   PGOPTIONS default; PGOPTIONS also makes every Cube session read-only.
+- The SQL planner is pinned: Cube 1.8.3 reads CUBEJS_TESSERACT_SQL_PLANNER (default true, Tesseract; false selects the
+  legacy planner, which Cube says it will remove), and the runner sets it to true itself, so neither Cube's implicit
+  default nor an inherited value decides which planner serves a result. serve() records the planner it started the
+  child with next to the Cube version on client.runtime (runtime_facts), the cube stage writes both into cube:meta and
+  report counts a cube result that recorded another planner or version as stale. The value lives in this file, which
+  the engine fingerprint (provenance.engine_fingerprint) hashes.
 - It listens on 127.0.0.1 (port from [cube].port, 0 = ephemeral); the chosen port is read from "SXC_READY <port>".
 - Stopping closes the child's stdin (the adapter exits) and kills it if it does not.
 Messages name where the install was looked for (SXC_CUBE_HOME or the default location), never the local path.
@@ -49,6 +55,9 @@ MIN_NODE = 22                       # packages in the locked tree declare engine
 STARTUP_TAGS = ("SXC_ERROR", "SXC_CUBE_ERROR")                   # redacted adapter lines (SXC_DEBUG lines are not)
 CHUNK = 1 << 20
 _DSN_VALUE = re.compile(r"postgres(?:ql)?://", re.IGNORECASE)
+SQL_PLANNER_VAR = "CUBEJS_TESSERACT_SQL_PLANNER"
+PLANNER_ENV = {SQL_PLANNER_VAR: "true"}     # fixed in every Cube child; inherited CUBEJS_* values are dropped
+_PLANNERS = {"true": "tesseract", "false": "legacy"}
 _STATE_HINT = {
     "missing": "the Cube adapter is not installed ({where}): run `sxc.py cube-install`",
     "incomplete": "the Cube adapter install ({where}) is incomplete: run `sxc.py cube-install`",
@@ -123,6 +132,18 @@ def ssl_env(sslmode: str, rootcert: str) -> dict:
     return {"CUBEJS_DB_SSL": "false"}
 
 
+def sql_planner(env: dict) -> str:
+    """The SQL planner a Cube child started with `env` uses: 'tesseract' or 'legacy' for the values the runner can
+    set, 'unknown' for anything else (Cube's own default when the variable is absent is not assumed)."""
+    return _PLANNERS.get(env.get(SQL_PLANNER_VAR), "unknown")
+
+
+def runtime_facts(version: str, env: dict | None = None) -> dict:
+    """Cube version and SQL planner of a child started with `env` (the fixed PLANNER_ENV when None): small enums for
+    results and runtime evidence, never paths or values."""
+    return {"cube_version": version, "sql_planner": sql_planner(PLANNER_ENV if env is None else env)}
+
+
 def _inherited(name: str, value: str, dropped: set) -> bool:
     upper = name.upper()
     if upper.startswith(("CUBEJS_", "PG", "SXC_")) or upper == "NODE_OPTIONS" or upper in dropped:
@@ -147,6 +168,7 @@ def child_env(cfg, port: int, secret: str) -> dict:
         "CUBEJS_TELEMETRY": "false",
         "CUBEJS_LOG_LEVEL": "error",
         "CUBEJS_DB_QUERY_TIMEOUT": str(timeout_s),
+        **PLANNER_ENV,
         "PGOPTIONS": f"-c default_transaction_read_only=on -c statement_timeout={timeout_s * 1000}",
         "SXC_PORT": str(port),
         "SXC_MODEL_DIR": "model",
@@ -209,6 +231,7 @@ def serve(cfg, run_dir: Path, log_path: Path | None = None):
             time.sleep(0.1)
         client = CubeClient(f"http://127.0.0.1:{ready['port']}", secret, timeout_s=cfg.cube.query_timeout_s)
         client.errors = lines          # recent adapter lines (redacted unless SXC_CUBE_DEBUG=1), for diagnostics
+        client.runtime = runtime_facts(cfg.cube.version, env)   # what this child was started with
         yield client
     finally:
         try:

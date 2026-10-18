@@ -139,10 +139,16 @@ bound, or `sql_violation`; when it has several, a row violating any of them viol
 not proven, "checked only in SQL", instead of compared:
 
 - a shape with `sql_violation` (also when it has `class` or bounds as well);
-- a shape that combines `class` with bounds;
-- shapes on the same `target` and `path` that need different kinds of RDF value: a `class` shape and a
-  bound shape, or `class` shapes naming different entities (`shared_path`). None of them is compared, so
-  adding a shape can remove the SHACL comparison of another one.
+- a shape that combines `class` with bounds.
+
+Shapes on the same `target` and `path` that need different kinds of RDF value (a `class` shape and a
+bound shape, or `class` shapes naming different entities) are all compared: `reason` puts each shape in
+the first value group in which its column carries no other kind of value, and validates each group on its own
+data graph. Without such a shared column every shape is in one group (`main`) and the export is the same
+as without groups. A shape that collides opens an extra group (`extra:1`, `extra:2`, ...), which exports
+its target rows (and referenced keys) again; `verify.shacl_max_rows` counts the rows of all groups
+together, so adding a colliding shape can push the export over the limit, and then every SHACL check,
+not only the new shape's, is `not_run` (`resource_limit`).
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
@@ -186,7 +192,7 @@ Optional. When present, `reason` builds an OWL ontology for one hierarchy (and `
 |---|---|---|---|
 | `iri` | string | `"https://example.org/sxc#"` | Base IRI for classes, properties, rows and shapes; an http(s) IRI ending with `#` or `/`. |
 | `hierarchy` | string | required | Hierarchy modelled in OWL. |
-| `class_column` | string | `""` | Column of the node entity holding the class value. |
+| `class_column` | string | `""` | Column of the node entity holding the class value. V3 `additive` tests group the sum/count measures by it on every cube Cube joins through many-to-one or one-to-one steps (the node cube and the closure's ancestor and descendant copies); without it there are none. |
 | `classes` | table of strings | `{}` | Column value to OWL class name, for example `{ raw = "RawMaterial" }`. Names match `^[A-Za-z_][A-Za-z0-9_]*$` and are distinct; the classes are pairwise disjoint subclasses of the node class. |
 | `no_children` | list of strings | `[]` | Class values (keys of `classes`) whose items must not have children; each becomes the axiom `C SubClassOf not (<h> some Thing)`. |
 | `defined` | list of tables | `[]` | Defined classes, written as `[[ontology.defined]]` entries (below). |

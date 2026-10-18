@@ -33,7 +33,7 @@ python skills/semantic-crosscheck/scripts/sxc.py --version
 | `verify` | V1 strict compare, V2 strata sweep, V3 query shapes, V4 mutation tests | `--only v1,v2,v3,v4` (default all), `--gold ID` (repeatable) | `verify/result.json`, `verify/server.log`, `verify/mutants/<operator>__<target>/` (`model/*.yml`, `model.json`, `server.log`) |
 | `report` | summary of every stage | none | `report/result.json`, `report.md`, `report.json` |
 | `cube-install` | installs the pinned Cube adapter once per user | `--home DIR`, `--native-file PATH`, `--force` | `cube_install/result.json`, `cube_install/npm-ci.log`, `cube_install/smoke.log` |
-| `counterexample` | optional synthetic SQL mismatch search and reduction | `--reference-sql`, `--candidate-sql`, `--scenario`, `--seed`, `--max-examples`, `--max-shrink-steps`, `--dsn-env`, `--statement-timeout-ms`, `--constraints`, `--replay` | `counterexample/result.json`, `counterexample/fixture.json` |
+| `counterexample` | optional synthetic SQL mismatch search and reduction, or BOM metamorphic relations for one closure SQL | `--reference-sql`, `--candidate-sql`, `--metamorphic-sql`, `--scenario`, `--seed`, `--max-examples`, `--max-shrink-steps`, `--dsn-env`, `--statement-timeout-ms`, `--constraints`, `--replay` | `counterexample/result.json`, `counterexample/fixture.json` |
 
 Common options:
 
@@ -95,7 +95,8 @@ exit 3, so one run lists everything to fix.
   `<python>` and `<plugin>`, which `sxc.py` expands only when it prints, so a printed hint works from any
   directory while result files stay path-free (a `--home` directory the user typed is repeated as typed).
 - `res.not_proven` lists what the run could not prove (an empty stratum, an equivalent mutant, a shape compared
-  only in SQL, a vacuous defined class, a sampled pair test, a component that is not installed). It does not
+  only in SQL, a vacuous defined class, a sampled pair test, a join path additivity does not apply to, a
+  component that is not installed). It does not
   change the status; `report` shows every line.
 - `res.next_safe_action` is one sentence the agent can follow.
 - `started_at` and `finished_at` are local times with UTC offset at one-second resolution; `report` uses them
@@ -117,11 +118,20 @@ exit 3, so one run lists everything to fix.
   CREATE on the schema), `privileges:temporary` (temporary tables for the closure) and `output_schema`.
 - **Transactions.** `doctor`, `reason`, the catalog reads of `cube` and every read of `verify` (gold SQL,
   sampling, witnesses, V3 SQL) run in `READ ONLY` transactions with `source.statement_timeout_ms`
-  (`db.read_only`). `build` reads the source tables inside its write transactions (it counts the shape views and
-  copies the edges into temporary tables there) and relies on the check role's privileges; it writes only to
-  the output schema and to temporary tables. Each build transaction first takes
-  `pg_advisory_xact_lock(hashtext('semantic-crosscheck build <output_schema>'))`, so two builds of one output
-  schema wait for each other. `demo` writes with the loader role under its own advisory lock, in one
+  (`db.read_only`). The SQL reads inside one check share one snapshot: where a check combines the results of
+  several statements, they run in one `REPEATABLE READ` transaction (the key count and the key sample of a V3
+  pair test, and the `information_schema` reads the `cube` stage builds the model from, through
+  `db.read_only(..., isolation="repeatable read")`; the row exports of `reason` and the counterexample
+  comparisons set the same level inside their transaction). A read of one statement (gold SQL, a witness, a
+  strata sample, a V3 total) keeps the default `READ COMMITTED`, under which that statement sees one snapshot.
+  Catalog lookups such as `to_regclass` are not frozen by either level. No transaction stays open while Cube
+  answers, and no snapshot is exported to another session: Cube's sessions, the stages, and the SQL reads
+  before and after a Cube query share no snapshot, so a run relies on stable data or on the
+  `source.data_revision_sql_file` contract (section 8). `build` reads the source tables inside its write
+  transactions (it counts the shape views and copies the edges into temporary tables there) and relies on the
+  check role's privileges; it writes only to the output schema and to temporary tables. Each build transaction
+  first takes `pg_advisory_xact_lock(hashtext('semantic-crosscheck build <output_schema>'))`, so two builds of
+  one output schema wait for each other. `demo` writes with the loader role under its own advisory lock, in one
   transaction with a 10-minute statement timeout.
 - **Cube sessions are read-only and bounded.** Cube connects with the check role (or `[cube].dsn_env`), with
   `PGOPTIONS='-c default_transaction_read_only=on -c statement_timeout=<cube.query_timeout_s * 1000>'` and
@@ -131,8 +141,19 @@ exit 3, so one run lists everything to fix.
 - **The Cube child's environment** is the inherited one minus every `CUBEJS_*`, `PG*` and `SXC_*` variable,
   `NODE_OPTIONS`, every variable whose value contains `postgres://` or `postgresql://` and the configured DSN
   variable names; plus the connection parsed from the Cube DSN, a random per-run API secret, development mode
-  and telemetry off, `CUBEJS_LOG_LEVEL=error`, TLS settings from the DSN's `sslmode`, `SXC_PORT`,
-  `SXC_MODEL_DIR` and, only when it is `1`, `SXC_CUBE_DEBUG`. `node` is looked up on `PATH` only.
+  and telemetry off, `CUBEJS_LOG_LEVEL=error`, `CUBEJS_TESSERACT_SQL_PLANNER=true`, TLS settings from the DSN's
+  `sslmode`, `SXC_PORT`, `SXC_MODEL_DIR` and, only when it is `1`, `SXC_CUBE_DEBUG`. `node` is looked up on
+  `PATH` only.
+- **The Cube SQL planner is pinned and recorded.** Cube 1.8.3 picks its SQL planner from
+  `CUBEJS_TESSERACT_SQL_PLANNER` (default `true`, the Tesseract planner; `false` selects the legacy planner, which
+  Cube warns it will remove). The runner sets `true` itself (`cube_run.PLANNER_ENV`), so neither Cube's implicit
+  default nor an inherited value (dropped with every other `CUBEJS_*` variable) decides which planner serves a
+  result. The legacy-planner SQL injection GHSA-cfx6-94gc-h774 affected Cube 1.7.x and earlier, not the pinned
+  1.8.3; pinning the planner keeps a later Cube move from silently changing it. `serve` records the Cube version
+  and the planner the child was started with (`cube_run.runtime_facts`: `cube_version`, `sql_planner`), the cube
+  stage writes both into the `cube:meta` detail and `report` treats a cube result that recorded another version or
+  planner, or neither, as stale (section 8). The value is the one the runner passes, not one read back from Cube;
+  it lives in `cube_run.py`, which the engine fingerprint hashes.
 - **The adapter listens on 127.0.0.1 only** and requires an HS256 JWT signed with the per-run secret. The client
   talks to it through an opener without proxies, so `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY` and the system
   proxy settings never see the JWT or filter values, and no `NO_PROXY` entry is needed. `cube-install` downloads
@@ -186,17 +207,17 @@ parameters are ignored.
 | `ident` | `check`, `quote`, `qualified('schema.table')`, `split` |
 | `canon` | `canon(v, kind=None)`: strict canonical form; `kind` is one of `KINDS = ('string', 'number', 'time', 'boolean')`, `None` compares untyped; `same(a, b, kind=None)`; `key(v)`: text exactly, other values untyped (RDF IRIs and key sets) |
 | `config` | `load(path) -> Config` (dataclasses; see the module); `cfg.hierarchy(name='')`, `cfg.entity(name, ref)`, `cfg.cube_dsn_env()` |
-| `db` | `connect(env_name, require_pg17=True)` (doctor passes `False`), `parse_dsn`, `redact`, `rows(conn, sql, **params) -> list[dict]`, `scalar`, `read_only(conn, ms)`, `write_tx(conn, ms)`, `server_version_num` |
+| `db` | `connect(env_name, require_pg17=True)` (doctor passes `False`), `parse_dsn`, `redact`, `rows(conn, sql, **params) -> list[dict]`, `scalar`, `read_only(conn, ms, isolation=None)` (`None` or `"repeatable read"`), `write_tx(conn, ms)`, `server_version_num` |
 | `procutil` | `which(name)`: absolute path of a program on `PATH`, never the current directory |
 | `naming` | every generated name: closure/cycles tables, shape views, cube and member names, RDF IRIs, OWL property names |
 | `closure` | `build(conn, cfg, h) -> (checks, sql_log)` inside the caller's transaction, which holds the output schema's build lock |
 | `cube_gen` | `generate(cfg, conn) -> (model, notes)`, `members(model)`, `to_yaml`, `write_model(model, dir)`, `load_model(out)`, `where_sql(measure)`, `measure_cube(cfg, m, cols)`, `columns(conn, table)` |
-| `cube_run` | `cube_home()` (absolute), `install_state(home) -> 'ok'\|'missing'\|'incomplete'\|'stale'`, `installed(home)`, `adapter_hashes()`, `serve(cfg, run_dir, log_path) -> CubeClient` (context manager), `ADAPTER_DIR`, `MIN_NODE` |
+| `cube_run` | `cube_home()` (absolute), `install_state(home) -> 'ok'\|'missing'\|'incomplete'\|'stale'`, `installed(home)`, `adapter_hashes()`, `serve(cfg, run_dir, log_path) -> CubeClient` (context manager; `client.runtime` is `runtime_facts` of the started child), `runtime_facts(version, env=None) -> {'cube_version', 'sql_planner'}`, `sql_planner(env) -> 'tesseract'\|'legacy'\|'unknown'`, `PLANNER_ENV`, `ADAPTER_DIR`, `MIN_NODE` |
 | `cube_client` | `CubeClient.load(query) -> list[dict]` (polls "Continue wait", explicit limit 50,000, never `renewQuery`, no proxies), `meta()` |
 | `compare` | `run_binding(conn, client, cfg, gold, params, cache=None, types=None)`, `compare_rows(gold, g_rows, c_rows, types=None)`, `member_kinds(model)`, `gold_kinds(gold, kinds)` |
 | `sweep` | `bindings(conn, cfg, gold)`, `strata_names(gold)`, `md5_order(column)` |
-| `shape_q` | `tests(cfg, model)`, `run_test(...)`, `pair_keys(conn, cfg, test)`, `sampled(test)`, `PAIR_KEY_CAP = 2000` |
-| `mutate` | `OPERATORS`, `CLOSURE_OPERATORS`, `OUTCOMES`, `selected(cfg)`, `run_mutants(cfg, out, conn, model, suite, closure=None)`, `verdict(status, item)`, `closure_status(cfg, out)` |
+| `shape_q` | `tests(cfg, model)`, `run_test(...)`, `pair_keys(conn, cfg, test)`, `sampled(test)`, `d95_keys(sampled, total)`, `sample_note(detail)`, `PAIR_KEY_CAP = 2000`, `join_path(cubes, measure_cube, dim_cube)`, `additive_path(steps)`, `null_group_sql(cfg, test)`, `not_applicable(cfg, model)` |
+| `mutate` | `OPERATORS`, `CLOSURE_OPERATORS`, `OUTCOMES`, `selected(cfg)`, `run_mutants(cfg, out, conn, model, suite, closure=None, sampled_items=())`, `verdict(status, item)`, `closure_status(cfg, out)` |
 | `demo` | `build(dirty, seed, scale) -> {"parts","edges","orders","stock","malformed","expected"}`, `load(conn, data)`, `reference(expected, variant, seed, scale)`, `TABLES`, `TableMismatch` |
 
 ## 5. Generated objects (names from `naming.py`)
@@ -232,6 +253,8 @@ configuration ids; `<member>` is a Cube member (`cube.member`); `<stratum>` is a
 | report | `runtime_evidence:current` | error check only | `error` when opted-in current runtime cannot be read; missing/changed stage binding is also stale |
 | counterexample | `counterexample:search` | never proves general equivalence | `fail` with a reduced successful mismatch; `not_run` when bounded examples agree |
 | counterexample | `counterexample:query`, `counterexample:recheck`, `counterexample:inputs` | error checks only | `error` on query failure, unstable witness or a SQL edit during execution; no new replay fixture |
+| counterexample | `counterexample:metamorphic:<relation>` | `--metamorphic-sql` only (`<relation>`: `mr1_unfold`, `mr2_scale`, `mr3_disjoint`, `mr4_unit_node`): every admissible case with a non-vacuous transform agrees exactly with the relation's expected path-product answer | `fail` on a violated relation (replay fixture saved); `not_run` when vacuous in every case (`not_run_reasons`) |
+| counterexample | `counterexample:metamorphic:shape` | error check only | `error` when the SQL answer is not closure-shaped (`reason`: missing or duplicate columns, duplicate pair, NULL, non-text id, non-exact qty) |
 | doctor | `python` | Python >= 3.11 | `fail` |
 | doctor | `pg8000` | pg8000 can be imported | `fail`, with the absolute pip command as the next action |
 | doctor | `dsn` | the check-role DSN variable (`source.dsn_env`, or `SXC_PG_DSN` without a configuration) is set | `fail`; the database checks after it are `not_run` (`no_dsn`) |
@@ -257,11 +280,11 @@ configuration ids; `<member>` is a Cube member (`cube.member`); `<stratum>` is a
 | reason | `scope:shacl`, `scope:owl` | never passes | `not_run` (`excluded_by_only`): the part `--only` left out |
 | cube | `cube:model` | the model was generated (a generator error is exit 2 instead) | none |
 | cube | `cube:gold_members:<gold>` | every member the gold entry names exists in the model and is public | `fail` (`missing`, `hidden`, `malformed` counts) |
-| cube | `cube:meta` | Cube's `/meta` lists exactly the public members of the model | `fail` (`missing`, `extra`); `error` (HTTP status, connection error, unexpected response) |
+| cube | `cube:meta` | Cube's `/meta` lists exactly the public members of the model | `fail` (`missing`, `extra`); `error` (HTTP status, connection error, unexpected response). Every outcome records `cube_version` and `sql_planner` of the adapter that answered |
 | verify | `v1:<gold>` | the first binding matches exactly | `fail`; `error` (gold or Cube side: error type, SQLSTATE, HTTP status, `cube` `timeout`/`row_limit`/`query_error`; `members_not_in_model`; `bindings_failed`); `not_run` (`closure_not_passed`, `no_binding`) |
 | verify | `v2:<gold>:<stratum>` | every binding of the stratum matches exactly; an empty stratum passes (`empty_stratum`) and is listed in `not_proven` | as `v1:<gold>`, without `no_binding` |
 | verify | `v3:total:<member>` | the Cube total equals SQL computed from the configuration (or the closure table) | `fail`; `error`; `not_run` (`closure_not_passed`) |
-| verify | `v3:additive:<member>:<member>` | the groups of the measure by the ontology class column add up to its total | as `v3:total:<member>` |
+| verify | `v3:additive:<member>:<member>` | the groups of the measure by the ontology class column of a cube joined through many_to_one / one_to_one steps only, the NULL group included, add up to its total, and the NULL group equals independent SQL over the measure source (`null_group_equal`: an anti-join, or the matched rows without a class when Cube roots the query at the dimension's cube) | as `v3:total:<member>`; a join path with a one_to_many or unknown step gets no check, only a `not_proven` line (not applicable) |
 | verify | `v3:pair:<member>+<member>` | the two measures queried together equal the same measures queried alone, per key | as `v3:total:<member>` |
 | verify | `v4:<operator>:<target>` | the mutant was killed: a suite item failed against it (`killed_by`) | `fail` (it survived); `error` (`suite_error`, `startup`, `cube`, `write`, `model_mismatch`, `witness`); `not_run` (`closure_not_passed`, `suite_incomplete`). Equivalent and not applicable mutants get no check, only a `not_proven` line |
 | verify | `v4:suite` | never passes | `not_run` (`no_passing_suite_item`): no suite item passes on the unmutated model |
@@ -316,14 +339,53 @@ a failure; a gold query without any binding is `not_run` (`no_binding`) in V1.
 
 **V3 query shapes** (derived from the model): `total` compares each measure's Cube total with SQL computed from
 the configuration (`cube_gen.where_sql`), and the closure cube's `qty`/`pairs` with the closure table (a NULL
-count total counts as 0, flagged `null_as_zero`); `additive` checks that groups by the ontology class column add
-up to the total for sum/count measures joined one-to-one to their node cube; `pair` checks that measures queried
+count total counts as 0, flagged `null_as_zero`); `additive` checks that the groups by the ontology class column
+add up to the total; `pair` checks that measures queried
 together (the closure `qty` with each closure-joined measure, and every two measures joined to the same node
 cube) equal the same measures queried one at a time, per key, which exposes join fan-out. Pair-test keys are
 typed like V1/V2 keys. A pair test whose key source (the node table key, or the closure end) has more than
 `shape_q.PAIR_KEY_CAP` = 2,000 distinct values compares a deterministic sample of 2,000 keys (ordered by
-`md5(key || seed) COLLATE "C", key`), read once and filtered with an `equals` filter in each of its queries; the
-detail gains `sampled_keys` and `total_keys`, and `not_proven` says `compared 2000 of N keys`. The cap is fixed.
+`md5(key || seed) COLLATE "C", key`), read once (the key count and the sample in one `REPEATABLE READ` snapshot)
+and filtered with an `equals` filter in each of its queries; the detail gains `sampled_keys` and `total_keys`, and
+`not_proven` says `compared 2000 of N keys`. The cap is fixed. The detail also gains the sample's detection bound
+`d95_keys`, the smallest D >= 1 with C(N - D, n) / C(N, n) <= 0.05 for n sampled out of N keys (zero-acceptance
+hypergeometric sampling, computed exactly on integers), and `d95_rate` = D / N; for n = 2,000 the bound is 6 at
+N = 5,000, 29 at N = 20,000, 149 at N = 100,000 and 1,496 at N = 1,000,000. The `not_proven` line keeps its prefix
+and adds that a mismatch affecting at least D keys (r%) is detected with 95% probability, assuming the mismatching
+keys are independent of the fixed md5 sample order, and that fewer mismatching keys may be missed. The bound is a
+statement about the sample, not a verdict: the check's status is unchanged.
+
+**V3 additivity over join paths.** Predefined joins inflate totals when a row matches several rows of the
+joined cube ("Aggregation Consistency Errors in Semantic Layers and How to Avoid Them", HILDA 2023,
+arXiv 2307.00417). An `additive` test exists for every sum/count measure (each configuration measure with `agg`
+`sum` or `count` and no `date_column`, and the closure cube's `qty` and `pairs`; `min`, `max` and any other
+aggregation are not additive) and every cube exposing `ontology.class_column` that Cube can join to the measure's
+cube on its own. Cube joins the cubes of a query from one of them through declared joins, so the join path
+(`shape_q.join_path`, shortest, joins in declaration order) runs from the measure's cube to the dimension's cube
+with the relationships as declared, or from the dimension's cube to the measure's with each step inverted, and is
+read from the measure's side. Only a path made of `many_to_one` and `one_to_one` steps gets a test (Cube's
+`belongs_to`/`has_many`/`has_one` spellings are folded); a path with a `one_to_many` step or a relationship Cube
+does not define (many-to-many) gets none, because a row legitimately counts in several groups, and is listed in
+`not_proven` as not applicable. In a generated model the tests are the node cube of each measure with a node
+(joined one-to-one) and, per hierarchy, `qty` and `pairs` over the ancestor and descendant copies (joined
+many-to-one), so the demo has seven; the class column bounds the number of groups. Each test sums every group,
+the NULL group included, against the measure's Cube total (`equal`), and compares the NULL group with SQL from the
+configuration (`null_group_equal`): the measure over the source rows (the measure's entity table with its WHERE
+clause, or the closure table) that Cube puts in the NULL group. Which rows those are depends on the cube Cube roots
+the grouped query at, recorded per test as `root`. When the measure's cube reaches the dimension's cube itself (a
+forward path, the closure ends: `root = measure`), Cube left-joins the dimension to every measure row, and the NULL
+group is the rows for which no dimension row with that key has a non-null class: the rows with no dimension row at
+all (an anti-join, `NOT EXISTS`) and the rows whose dimension row has no class. When only the dimension's cube
+reaches the measure's (a backward path, a generated node cube's one-to-one join to its measure cube:
+`root = dimension`), Cube starts from the dimension rows and drops the measure rows with no dimension row instead
+of grouping them, so the NULL group is only the matched rows whose class is NULL. A count's empty NULL group
+counts as 0 on both sides. The test fails unless both hold; its detail adds `null_group_rows` and `orphan_rows`
+(the source rows of the SQL NULL group and those without any dimension row; under a backward path the orphans are
+counted but are not in the NULL group), never the values. Measure rows with values that Cube drops (a measure key
+missing from the node table, which Cube's node-rooted join leaves out) fail the sum; orphan rows that add up to 0
+change neither side and pass. A join declared many-to-one that matches several rows (a repeated node key) fails the sum.
+The SQL side is read once per test and reused by the V4 replays. An additive path no configuration entry
+describes (a hand-edited model) has no independent SQL, gets no test and is listed in `not_proven`.
 
 **V4 mutation tests.** Each operator patches a deep copy of the model; a fresh Cube process serves each mutant
 (from `verify/mutants/<operator>__<target>/`) and the suite runs against it. The suite replays V1 (the first
@@ -348,7 +410,10 @@ suite items are missing because a closure gated them, their gold query could not
 (`suite_incomplete`, detail `excluded`) instead of failed: the missing items might have killed it. A kill by part
 of the suite is still a pass. A closure operator whose closure cube is not in the model is listed in
 `not_proven` (not applicable). Every V4 detail holds `witness` and the run's `summary` counts (`killed`,
-`survived`, `equivalent`, `error`, `not_applicable`, `not_run`).
+`survived`, `equivalent`, `error`, `not_applicable`, `not_run`). The detail of a mutant that survived a suite
+replaying a sampled V3 pair test (fewer keys compared than exist) also holds `sample_blind_possible = true` and
+`sampled_items` (those V3 check ids): the mutant may change only keys outside the samples. The marker changes no
+status.
 
 | Operator | Applies to | Mutation | Witness (rows of the current data) |
 |---|---|---|---|
@@ -370,19 +435,40 @@ targeting the entity class, with one property shape (`sh:class`, `sh:minExclusiv
 `sh:maxInclusive`) and the configured severity. `reason` exports the needed rows as RDF in memory (target rows
 with the shape paths; referenced entities with their types) in one read-only `REPEATABLE READ` transaction,
 counting them first against `verify.shacl_max_rows`, runs pySHACL without inference and compares, per shape, the
-set of focus-node keys with the keys in `v_shape_<id>` (both in `canon.key` form). Above the row limit, every
-planned shape leaves a `not_run` check with `reason=resource_limit`; the explanation also appears in
-`not_proven`. Three kinds of shape are not
-compared and are listed in `not_proven` instead ("checked only in SQL"):
+set of focus-node keys with the keys in `v_shape_<id>` (both in `canon.key` form).
+
+One RDF predicate carries one kind of value, and shapes on the same target column can need different kinds (a
+`class` shape and a bound shape, or `class` shapes naming different entities): in one graph each value would
+violate the other shape's constraint. The compared shapes are therefore split into value groups
+(`shacl_check.groups`): each shape goes, in configuration order, to the first group in which its column
+(target, path) carries no other kind of value (`bound` literals or `class:<entity>` row IRIs), and a shape whose
+column carries another kind in every group so far opens a new group. The first group is `main`, the others are
+`extra:1`, `extra:2`, ... in the order they are opened. Every shape that needs no split stays in `main`, so a
+configuration without a column shared by two value kinds (the demo included) exports one graph with exactly the
+rows of 0.3.0; only the colliding shapes move to extra groups. Each group gets its own data graph with only what
+its shapes need (their target rows and paths; the typed keys of the class entities they reference), and pySHACL
+validates every group graph once with the same shapes graph. The focus nodes of a group graph are read only for
+that group's shapes, so every group has the single-kind semantics above. Counting, exporting every group and
+reading the views stay in the one transaction. The row limit applies to the sum over the groups (a table that two
+groups read counts twice, so an extra group adds the rows it exports again), so it does not grow with the number
+of groups; above it, every planned shape leaves a `not_run` check with `reason=resource_limit`, and the
+explanation also appears in `not_proven`. When validating one group graph fails (pySHACL returns no results graph
+or raises any exception), only that group's shapes are `error` (`reason=validation_failure`; `exception` holds a
+type name only, the raised exception's or the type of pySHACL's non-graph answer, never a message); the other
+groups are still compared. The row cap and
+database errors occur before validation and still decide every shape. Each `shacl:<id>` check names its
+`value_group` and `group_rows`; `rows_exported` is the sum over the groups.
+
+Two kinds of shape are not compared and are listed in `not_proven` instead ("checked only in SQL"):
 
 - `sql_violation`: any shape with an `sql_violation` predicate, also when it has `class` or bounds as well
   (no SHACL form);
 - `class_and_bounds`: a shape that combines `class` with bounds (its value cannot be a row IRI and a number at
-  once in RDF; no SHACL form);
-- `shared_path`: shapes with a SHACL form on the same target column that need different kinds of RDF value (a
-  `class` shape and a bound shape, or `class` shapes naming different entities). One RDF predicate carries one
-  kind of value, so none of those shapes is compared. Adding a shape can therefore remove another shape's SHACL
-  comparison.
+  once in RDF; no SHACL form). Value groups do not split it: its one view ORs both constraints, so it would need
+  the value as an IRI and as a literal in the same graph.
+
+Releases up to 0.3.0 left every shape on a column shared by two value kinds uncompared (`shared_path`); value
+groups replace that exclusion.
 
 `shapes.ttl` must equal what the configuration generates now; otherwise `reason` stops with exit 2 (rerun
 `build`).
@@ -419,6 +505,11 @@ never touches the database.
   stage that depends on a stale one (`stale_dependency`) and one whose run times cannot be read
   (`no_timestamp`). A stale required stage counts as at least `not_run` (`reason=stale`, `after`, `why`,
   `last_status`).
+- **Cube runtime.** A cube result whose `cube:meta` recorded another `cube_version` or `sql_planner` than
+  `cube_run.runtime_facts` of the configured (pinned) Cube version is stale (`after=Cube runtime`,
+  `why=cube_runtime_changed`); one whose `cube:meta` lacks either value is stale too (`why=cube_runtime_missing`,
+  for example a result from a release that did not pin the planner). verify then follows as `stale_dependency`. A
+  cube result without `cube:meta` (the stage stopped before Cube answered) is left to its own error.
 - **Optional stages** (`doctor`, `demo`): a present result that passed, failed or errored is mirrored (a failing
   doctor or demo fails the report); one that is `not_run` or stale gets only a `not_proven` line. A missing
   `doctor` adds the `not_proven` line that the check role's privileges were not verified.
@@ -451,6 +542,33 @@ are rejected without cascading. Minimality is then relative to admissible single
 Profiles bind exact file bytes and mode in replay; constrained text uses explicit `C` collation.
 Only the separate synthetic replay
 artifact contains generated row values; results and reports contain statistics, IDs and hashes.
+
+`--metamorphic-sql FILE` replaces the two-file comparison with a gold-independent check of one trusted
+closure SELECT (columns `ancestor`, `descendant`, `qty`) over seeded `bom_diamond` fixtures, with or without
+`--constraints`. Q(a, d) is the path-product quantity: the sum over all paths of the product of `qty_per`. Each
+admissible case runs the SQL on the original fixture and on four transformed fixtures, each in its own read-only
+REPEATABLE READ transaction with bound values: `mr1_unfold` (shared sub-assemblies copied into a forest; summed
+over copies, every instance answers like its original), `mr2_scale` (one multi-path line times K = 2:
+Q'(a, d) = Q(a, d) + (K-1)·q·Q(a, u)·Q(v, d)), `mr3_disjoint` (a fresh component leaves original pairs unchanged
+and adds no cross pair) and `mr4_unit_node` (a line split through a fresh unit node: original pairs unchanged,
+Q'(a, w) = Q(a, u)·q, Q'(w, d) = Q(v, d)). Expected values use exact decimal arithmetic and the `number`
+canonical form; absent pairs are 0, Q(x, x) = 1 only inside the formulas, and reflexive answer rows are not
+compared. Every relation of a case is `not_run` when its fixture has no BOM line (`no_bom_lines`), a NULL parent,
+child or quantity (`null_bom_value`), a quantity outside `numeric(18,6)` (`invalid_bom_value`) or a cycle
+(`cycle`); a single relation is `not_run` without a diamond (`no_diamond`), a multi-path line
+(`no_multi_path_edge`) or a quantity other than 1 (`no_non_unit_quantity`) where it needs one, when its
+transformed fixture leaves the type domain or the profile (`type_domain`, `integrity_profile`), exceeds the row
+bound (`size_bound`), needs an expected value exact arithmetic cannot represent (`inexact_arithmetic`), or
+compares no pair (`no_pairs`); never `pass` without a compared pair. A relation `not_run` in every case gives the
+check reason `no_admissible_generated_examples` (no case was checked) or `vacuous_for_every_case`. Database,
+driver and connection errors are `counterexample:query` errors; any other exception propagates to `stage`
+(error). The search stops at the first case that
+violates any relation and saves the original rows, the failed relations and every transform specification in
+`fixture.json` (format `sxc-synthetic-metamorphic`); replay recomputes the transforms and refuses a file whose
+recorded ones differ. Results carry counts, the seed and transform hashes. These relations cannot see errors
+invariant under them (edge direction, a wrong quantity column, a filter mapping) and test only the given SQL:
+the generated closure is tied to gold through V1/V3/V5, and a passing relation upgrades no other check. The idea
+follows EDC (Detecting Logic Bugs in DBMSs via Equivalent Data Construction, PACMMOD 3(6), 2025); no code is used.
 See [counterexample reference](../skills/semantic-crosscheck/references/counterexamples.md).
 
 Optional `source.data_revision_sql_file` supplies a trusted, read-only single-text-scalar probe.
@@ -464,7 +582,9 @@ and reference queries remain trusted code, not a security boundary. The engine d
 Python/CLI sources, adapter files/pins and Python/direct Python package-version metadata. Optional
 `source.runtime_evidence=true` separately binds actual PG endpoint versions/semantic settings,
 Node/Java executable versions, the used HermiT JAR/classpath and the selected Cube installation's consumed
-contents. It requires the complete installed runtime, adds bounded metadata/version/hash probes,
+contents, with the pinned Cube version and the SQL planner the runner fixes (`cube_version`, `sql_planner`;
+configured values, not read back from Cube) next to its package versions, so evidence recorded under another
+planner no longer matches. It requires the complete installed runtime, adds bounded metadata/version/hash probes,
 and invalidates missing/errored/changed evidence. With it disabled, no new runtime probes occur.
 Historical results without current fingerprints must be rerun. These are observed boundary facts,
 not cryptographic authentication, runtime attestation or a shared cross-session snapshot.

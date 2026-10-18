@@ -182,10 +182,20 @@ def scalar(conn, sql: str, **params):
     return r[0][0] if r else None
 
 
+ISOLATION_LEVELS = (None, "repeatable read")
+
+
 @contextmanager
-def read_only(conn, timeout_ms: int = 60000):
-    """READ ONLY transaction with a statement timeout; always rolled back."""
-    conn.run("BEGIN TRANSACTION READ ONLY")
+def read_only(conn, timeout_ms: int = 60000, isolation: str | None = None):
+    """READ ONLY transaction with a statement timeout; always rolled back.
+
+    isolation None keeps the server default (READ COMMITTED: every statement takes a new snapshot); "repeatable read"
+    makes every statement of the transaction read one snapshot, for a check that combines the results of several
+    statements. Any other value is a programming error (ValueError) raised before a transaction is opened. Keep such
+    a transaction short: never wait on Cube inside it, since an open REPEATABLE READ snapshot holds back vacuum."""
+    if isolation not in ISOLATION_LEVELS:
+        raise ValueError(f"read_only: isolation must be one of {ISOLATION_LEVELS}")
+    conn.run("BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY" if isolation else "BEGIN TRANSACTION READ ONLY")
     try:
         conn.run(f"SET LOCAL statement_timeout = {int(timeout_ms)}")
         yield conn

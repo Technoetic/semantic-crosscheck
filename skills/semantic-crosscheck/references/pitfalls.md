@@ -13,7 +13,16 @@ gold SQL and `crosscheck.toml` avoid them too.
   (an `error` check with `cube=row_limit`) instead of comparing a truncated answer. The limit is not
   configurable: a query that needs more rows must be narrowed (filters, parameters) rather than compared
   partially. V3 pair tests group by every key, so above 2,000 keys they compare a deterministic sample of
-  2,000 keys instead.
+  2,000 keys instead; their detail and not proven line give the sample's 95% detection bound
+  (`d95_keys`), and a mismatch on fewer keys can be missed.
+- **A many-to-one join that is one-to-many in the data inflates totals.** Cube trusts a declared
+  `many_to_one` (or `one_to_one`) relationship and sums without deduplication, so a repeated key in the
+  joined table counts the measure rows once per match. V3 `additive` tests sum the groups by the class
+  column over such joins (the NULL group included) and compare them with the total, and compare the NULL
+  group with independent SQL (an anti-join when Cube starts from the measure's cube; the matched rows
+  without a class when it starts from the node cube and drops measure rows without a node row, which then
+  fail the sum); give the node entity's key a primary key or unique constraint. A path with a
+  `one_to_many` step is not additive by nature and gets no test (listed as not applicable).
 - **Primary keys are hidden.** A primary-key dimension is not public unless it says `public: true`;
   querying a hidden member fails (HTTP 500). The generator makes single-column keys public. The
   synthetic `sxc_pk` of a composite-key cube stays hidden, so gold queries cannot use it and `/meta`
@@ -39,6 +48,12 @@ gold SQL and `crosscheck.toml` avoid them too.
   `PGOPTIONS=-c default_transaction_read_only=on -c statement_timeout=...`, which makes every Cube
   transaction read-only. Starting the adapter by hand without it, or with another role, loses that
   guarantee.
+- **The SQL planner is pinned by the runner.** Cube 1.8.3 chooses between its Tesseract and legacy SQL
+  planners from `CUBEJS_TESSERACT_SQL_PLANNER` (default `true`). The runner always sets `true` and drops an
+  inherited value with the other `CUBEJS_*` variables, and `cube:meta` records `cube_version` and
+  `sql_planner`. A cube result that recorded another planner or version, or none, is stale in `report`
+  (`cube_runtime_changed`, `cube_runtime_missing`): rerun cube and verify. Starting the adapter by hand
+  without the variable leaves the choice to Cube's default.
 - **Cube overrides `statement_timeout`.** Cube's Postgres driver runs `SET statement_timeout` on every
   connection from `CUBEJS_DB_QUERY_TIMEOUT` (default 10 minutes, also its queue's execution timeout),
   which replaces the value from `PGOPTIONS`. The runner sets both from `cube.query_timeout_s`, so a query
@@ -116,8 +131,13 @@ gold SQL and `crosscheck.toml` avoid them too.
 - **One RDF predicate carries one kind of value.** A column is one predicate in the exported RDF. A
   `class` shape needs its values as row IRIs and a bound shape as numbers, so when shapes on the same
   column need different kinds of value (or `class` shapes name different entities), each value would
-  violate the other shape's constraint. Those shapes are reported as `shared_path` and checked only in
-  SQL: adding a shape can remove the SHACL comparison of another shape on the same column.
+  violate the other shape's constraint in one graph. `reason` therefore puts each shape in the first value
+  group in which its column carries no other kind of value (`main`, then `extra:1`, `extra:2`, ... for the
+  colliding shapes), validates each group on its own data graph and reads a group's results only for its
+  own shapes; the check detail names the `value_group`. Without a colliding shape there is only `main`.
+  Each extra group exports its target rows again, and `verify.shacl_max_rows` limits the sum over all
+  groups, so splitting one column across value kinds can push a large export over the limit (every SHACL
+  check is then `not_run`).
 
 ## Comparing values
 

@@ -4,6 +4,72 @@ All notable changes to this project are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-10-18
+
+Release notes: [docs/releases/v0.4.0.md](docs/releases/v0.4.0.md).
+
+### Added
+
+- V3 `additive` tests now cover every sum/count measure (configuration measures and the closure's
+  `qty`/`pairs`) grouped by `ontology.class_column` on every cube that Cube joins through
+  many_to_one / one_to_one steps only (4 new checks in the demo, 42 -> 46). Each test also compares
+  Cube's NULL group with independent SQL over the measure source; a mismatch fails. The SQL follows
+  the cube Cube roots the query at: from the measure's cube (the closure ends) an anti-join, rows
+  without a dimension row with a class; from the dimension's cube (a node cube's one_to_one join to
+  its measure cube) only the matched rows without a class, as Cube drops the measure rows without a
+  node row (they fail the sum unless they add up to 0, and are counted as `orphan_rows`). Join
+  paths with a one_to_many or unknown step get no test and are listed in not_proven as not
+  applicable (aggregation-consistency errors, HILDA 2023, arXiv 2307.00417).
+- Sampled V3 pair tests report their 95% detection bound: the detail gains `d95_keys` and `d95_rate`
+  (zero-acceptance hypergeometric sampling, computed exactly), and the not_proven line keeps
+  "compared 2000 of N keys" and appends the bound and its independence assumption. A V4 mutant that
+  survives a suite replaying a sampled pair test carries `sample_blind_possible` and `sampled_items`;
+  no status changes.
+- `counterexample --metamorphic-sql FILE` checks one trusted closure SQL (columns ancestor,
+  descendant, qty) over seeded bom_diamond fixtures against four BOM metamorphic relations without a
+  gold query: `mr1_unfold`, `mr2_scale`, `mr3_disjoint`, `mr4_unit_node`. Comparison is exact decimal,
+  vacuous relations are `not_run`, and a violation fails with exit 1 and writes a replayable
+  `fixture.json` (format `sxc-synthetic-metamorphic`). `--constraints` is supported. The principle
+  follows EDC (PACMMOD 3(6), 2025); no code is borrowed.
+- `cube:meta` records `cube_version` and `sql_planner` on every outcome, and the selected-Cube
+  runtime component carries them when `source.runtime_evidence = true`.
+
+### Changed
+
+- The Cube child always gets `CUBEJS_TESSERACT_SQL_PLANNER=true`; an inherited value, including
+  `false` for the legacy planner, is dropped with every other `CUBEJS_*` variable. The Cube pin stays
+  at 1.8.3 (GHSA-cfx6-94gc-h774, a legacy-planner SQL injection published 2026-09-21, affected 1.7.x
+  and earlier only). `report` treats a cube result that recorded another Cube version or planner
+  (`cube_runtime_changed`), or none (`cube_runtime_missing`, e.g. results from 0.3.0), as stale;
+  verify follows as a stale dependency. Rerun cube and verify after upgrading.
+- reason: shapes on the same column that need different RDF value kinds (a class shape and a bound
+  shape, or class shapes naming different entities) are no longer skipped as `shared_path`. Each shape
+  goes, in configuration order, to the first value group in which its column carries no other kind of
+  value: `main` holds every shape that needs no split, so a configuration without such a column (the
+  demo included) exports one graph with the same rows as 0.3.0, and only a colliding shape opens an
+  extra group (`extra:1`, `extra:2`, ... in the order they are opened). All groups are exported in the
+  same READ ONLY REPEATABLE READ snapshot and validated with the same shapes graph.
+  `verify.shacl_max_rows` limits the sum of the rows over all groups (an extra group adds the rows it
+  exports again), so a configuration with a shared column near the limit can become `not_run`
+  (`resource_limit`) where those shapes were skipped before. If validating one group fails (pySHACL
+  returns no results graph or raises any exception), only that group's shapes are `error`
+  (`validation_failure`, with a type name only). `shacl:<id>` details gain `value_group` and
+  `group_rows`; `shacl_check.export_graph` is replaced by `export_graphs`. `class_and_bounds` remains
+  SQL-only.
+- The `v3:additive` detail gains `null_group_equal`, `null_group_rows` and `orphan_rows`; a test passes
+  only when the groups add up and the NULL groups agree.
+- `counterexample`: `--reference-sql` and `--candidate-sql` are enforced by the stage (still exit 2,
+  now with a result.json), and the default `--scenario` depends on the mode (nulls, or bom_diamond
+  with `--metamorphic-sql`).
+
+### Fixed
+
+- SQL reads that one check combines from several statements share one snapshot: the V3 pair-test key
+  count and key sample, and the information_schema reads the cube stage builds the model from, run in
+  one READ ONLY REPEATABLE READ transaction (`db.read_only(..., isolation="repeatable read")`).
+  Single-statement reads keep READ COMMITTED. Cube sessions and stage boundaries still have no shared
+  snapshot and rely on the data_revision contract.
+
 ## [0.3.0] - 2026-10-17
 
 Release notes: [docs/releases/v0.3.0.md](docs/releases/v0.3.0.md).
@@ -118,6 +184,7 @@ First release. Release notes: [docs/releases/v0.1.0.md](docs/releases/v0.1.0.md)
   followed by the clean and dirty demo end to end through the command line; whitespace check and a leak
   scan of the working tree and the whole history.
 
+[0.4.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.4.0
 [0.3.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.3.0
 [0.2.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.2.0
 [0.1.1]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.1.1

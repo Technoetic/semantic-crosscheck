@@ -208,9 +208,12 @@ def _read_sql(path):
         raw = Path(path).read_bytes()
         if not raw or len(raw) > 1024 * 1024:
             raise ValueError('SQL file size')
-        return raw.decode('utf-8-sig'), hashlib.sha256(raw).hexdigest()
+        text = raw.decode('utf-8-sig')
+        if not text.strip():
+            raise ValueError('blank SQL file')
+        return text, hashlib.sha256(raw).hexdigest()
     except (OSError, UnicodeError, ValueError, TypeError):
-        raise StageError('counterexample: trusted SQL file missing, too large or not UTF-8', EXIT_CONFIG) from None
+        raise StageError('counterexample: trusted SQL file missing, blank, too large or not UTF-8', EXIT_CONFIG) from None
 
 
 def _replay(raw, scenario, seed, digests, profile=None):
@@ -244,12 +247,20 @@ def _replay(raw, scenario, seed, digests, profile=None):
 
 
 def run(cfg, args, out):
-    """Search/row-delete shrink actual SQL disagreements; no operational config needed."""
+    """Search/row-delete shrink actual SQL disagreements; no operational config needed.
+
+    With --metamorphic-sql the stage instead checks one closure SQL against BOM metamorphic relations.
+    """
+    if getattr(args, 'metamorphic_sql', None) is not None:
+        from . import metamorphic   # imported here: metamorphic builds on this module
+        return metamorphic.run(cfg, args, out)
+    if args.reference_sql is None or args.candidate_sql is None:
+        raise StageError('counterexample: pass --reference-sql and --candidate-sql, or one --metamorphic-sql file', EXIT_CONFIG)
     seed = _int(args.seed, -(2**63), 2**63 - 1, 'seed')
     maximum = _int(args.max_examples, 1, 1000, 'max_examples')
     budget = _int(args.max_shrink_steps, 0, 10000, 'max_shrink_steps')
     timeout = _int(getattr(args, 'statement_timeout_ms', 10000), 1000, 120000, 'statement_timeout_ms')
-    scenario = args.scenario
+    scenario = args.scenario or 'nulls'
     if scenario not in SCENARIOS or not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', args.dsn_env):
         raise StageError('counterexample: invalid scenario or DSN environment variable name', EXIT_CONFIG)
     profile_path = getattr(args, 'constraints', None)

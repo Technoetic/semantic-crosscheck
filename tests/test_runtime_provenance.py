@@ -275,6 +275,36 @@ class RuntimeTests(unittest.TestCase):
                 runtime._cube(self.cfg)
             self.assertEqual(raised.exception.reason, 'cube_native_changed')
 
+    def test_selected_cube_records_the_pinned_version_and_sql_planner(self):
+        self.need_runtime()
+        home = self.cube_fixture()
+        with mock.patch.object(runtime.cube_run, 'cube_home', return_value=home):
+            actual = runtime._cube(self.cfg)
+            self.assertEqual((actual['cube_version'], actual['sql_planner']), (config.CUBE_VERSION, 'tesseract'))
+            self.assertEqual(actual['package_versions']['@cubejs-backend/server-core'], actual['cube_version'])
+            with mock.patch.dict(runtime.cube_run.PLANNER_ENV, {runtime.cube_run.SQL_PLANNER_VAR: 'false'}):
+                legacy = runtime._cube(self.cfg)
+        self.assertEqual(legacy['sql_planner'], 'legacy')
+        self.assertEqual(legacy['installation_sha256'], actual['installation_sha256'],
+                         'the planner is a fact of the run, not of the installed bytes')
+
+    def test_a_different_sql_planner_changes_the_runtime_fingerprint_and_makes_results_stale(self):
+        self.need_runtime()
+        self.enabled()
+        pg = {'server_version_num': 170006, 'settings_sha256': 'a' * 64}
+        cube = {'installation_sha256': 'c' * 64, 'cube_version': config.CUBE_VERSION, 'sql_planner': 'tesseract'}
+        with mock.patch.object(runtime, '_postgres', return_value=pg), \
+             mock.patch.object(runtime, '_version', side_effect=lambda kind: '22.13.1' if kind == 'node' else '21.0.2'), \
+             mock.patch.object(runtime, '_hermit', return_value={'jar_sha256': 'b' * 64}), \
+             mock.patch.object(runtime, '_cube', side_effect=[cube, cube, cube, {**cube, 'sql_planner': 'legacy'}]):
+            recorded = provenance.finish(self.cfg, self.passed('cube'), provenance.begin(self.cfg, 'cube')).runtime_evidence
+            self.assertEqual(recorded['components']['cube']['sql_planner'], 'tesseract')
+            same = runtime.current_probe(self.cfg)
+            self.assertIsNone(runtime.evidence_staleness(recorded, same))
+            other = runtime.current_probe(self.cfg)
+        self.assertNotEqual(same['sha256'], other['sha256'])
+        self.assertEqual(runtime.evidence_staleness(recorded, other), 'runtime_evidence_changed')
+
     def test_cube_package_version_adapter_and_file_limits_fail_closed(self):
         self.need_runtime()
         home = self.cube_fixture()

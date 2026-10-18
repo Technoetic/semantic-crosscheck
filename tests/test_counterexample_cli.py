@@ -39,6 +39,18 @@ class CounterexampleCLI(unittest.TestCase):
             sxc.config_path("counterexample", "crosscheck.toml")
         self.assertEqual(caught.exception.exit_code, 2)
 
+    def test_blank_trusted_sql_is_a_configuration_error_in_both_modes(self):
+        from semantic_crosscheck import counterexample
+        with tempfile.TemporaryDirectory() as tmp:
+            blank = Path(tmp) / "blank.sql"
+            blank.write_bytes(b"  \n\t\n")
+            with self.assertRaises(StageError) as caught:
+                counterexample._read_sql(blank)
+            self.assertEqual(caught.exception.exit_code, 2)
+            query = Path(tmp) / "query.sql"
+            query.write_bytes(b"SELECT 1\n")
+            self.assertEqual(counterexample._read_sql(query)[0], "SELECT 1\n")
+
     def test_dispatch_does_not_load_config_or_fingerprint_operational_data(self):
         seen = []
 

@@ -208,9 +208,12 @@ def _read_sql(path):
         raw = Path(path).read_bytes()
         if not raw or len(raw) > 1024 * 1024:
             raise ValueError('SQL file size')
-        return raw.decode('utf-8-sig'), hashlib.sha256(raw).hexdigest()
+        text = raw.decode('utf-8-sig')
+        if not text.strip():
+            raise ValueError('blank SQL file')
+        return text, hashlib.sha256(raw).hexdigest()
     except (OSError, UnicodeError, ValueError, TypeError):
-        raise StageError('counterexample: trusted SQL file missing, too large or not UTF-8', EXIT_CONFIG) from None
+        raise StageError('counterexample: trusted SQL file missing, blank, too large or not UTF-8', EXIT_CONFIG) from None
 
 
 def _replay(raw, scenario, seed, digests, profile=None):

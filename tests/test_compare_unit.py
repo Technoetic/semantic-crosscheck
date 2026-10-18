@@ -396,6 +396,10 @@ class ShapeCatalogueTest(unittest.TestCase):
             "total:has_component_closure.qty", "total:has_component_closure.pairs",
             "additive:m_firm_open.value:part.part_class", "additive:m_on_hand.value:part.part_class",
             "additive:m_consigned.value:part.part_class",
+            "additive:has_component_closure.qty:has_component_ancestor.part_class",
+            "additive:has_component_closure.qty:has_component_descendant.part_class",
+            "additive:has_component_closure.pairs:has_component_ancestor.part_class",
+            "additive:has_component_closure.pairs:has_component_descendant.part_class",
             "pair:has_component_closure.qty+m_firm_open.value",
             "pair:m_firm_open.value+m_on_hand.value", "pair:m_firm_open.value+m_consigned.value",
             "pair:m_on_hand.value+m_consigned.value",
@@ -447,10 +451,12 @@ class ShapeCatalogueTest(unittest.TestCase):
         measure, dim = t["measure"], t["dimension"]
         groups = [{dim: "assembly", measure: "1.5"}, {dim: "raw", measure: None}, {dim: None, measure: "2"}]
         ok = FakeClient(answers={((), (measure,)): [{measure: "3.50"}], ((dim,), (measure,)): groups})
-        self.assertEqual(shape_q.run_test(FakeConn(), ok, self.cfg, {}, t),
-                         ("pass", {"equal": True, "groups": 3, "null_class_groups": 1}))
+        null_group = FakeConn(rows=[[Decimal("2"), 1, 0]])      # the anti-join's NULL group (see test_additive_unit)
+        self.assertEqual(shape_q.run_test(null_group, ok, self.cfg, {}, t),
+                         ("pass", {"equal": True, "groups": 3, "null_class_groups": 1, "null_group_equal": True,
+                                   "null_group_rows": 1, "orphan_rows": 0}))
         lost = FakeClient(answers={((), (measure,)): [{measure: "4"}], ((dim,), (measure,)): groups})
-        self.assertEqual(shape_q.run_test(FakeConn(), lost, self.cfg, {}, t)[0], "fail")
+        self.assertEqual(shape_q.run_test(null_group, lost, self.cfg, {}, t)[0], "fail")
 
     def test_pair_exposes_fan_out_per_key(self):
         t = next(t for t in shape_q.tests(self.cfg, demo_model(self.cfg)) if t["id"] == "pair:m_firm_open.value+m_on_hand.value")

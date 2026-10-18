@@ -251,6 +251,11 @@ def run(cfg, args, out):
 
     With --metamorphic-sql the stage instead checks one closure SQL against BOM metamorphic relations.
     """
+    if getattr(args, 'gold_sql', None) is not None and getattr(args, 'mutation_operator', None) is None:
+        raise StageError('counterexample: --gold-sql requires --mutation-operator', EXIT_CONFIG)
+    if getattr(args, 'mutation_operator', None) is not None:
+        from . import mutation_fixtures
+        return mutation_fixtures.run(cfg, args, out)
     if getattr(args, 'metamorphic_sql', None) is not None:
         from . import metamorphic   # imported here: metamorphic builds on this module
         return metamorphic.run(cfg, args, out)

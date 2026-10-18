@@ -22,8 +22,9 @@ python "${CLAUDE_PLUGIN_ROOT}/skills/semantic-crosscheck/scripts/sxc.py" cube --
 - The model is generated from the configuration and the live catalog (read in a read-only transaction)
   into `.sxc/cube/model/*.yml` (one file per cube) and `.sxc/cube/model.json`.
 - The pinned Cube adapter runs as a child process on 127.0.0.1 (port from `cube.port`, 0 picks a free
-  one) with a random per-run API secret, development mode and telemetry off. Every Cube database session
-  is read-only and limited to `cube.query_timeout_s` (`PGOPTIONS` with
+  one) with a random per-run API secret, development mode and telemetry off, and the Tesseract SQL
+  planner (`CUBEJS_TESSERACT_SQL_PLANNER=true`, set by the runner whatever the environment says). Every
+  Cube database session is read-only and limited to `cube.query_timeout_s` (`PGOPTIONS` with
   `default_transaction_read_only=on` and `statement_timeout`, plus `CUBEJS_DB_QUERY_TIMEOUT`). It
   connects with the check role, or with the variable named by `cube.dsn_env`, and gets no other DSN or
   `SXC_*` variable. The client talks to it directly, never through a proxy.
@@ -38,7 +39,8 @@ python "${CLAUDE_PLUGIN_ROOT}/skills/semantic-crosscheck/scripts/sxc.py" cube --
 
 Exit code 0 with `cube:model` (the model was generated; generator notes such as skipped columns or a
 closure table that is not built yet are listed as not proven), `cube:meta` (Cube's metadata lists
-exactly the public members of the model) and `cube:gold_members:<gold>` (every member each gold query
+exactly the public members of the model; its detail records `cube_version` and `sql_planner`, which
+`report` compares with the pinned ones) and `cube:gold_members:<gold>` (every member each gold query
 names exists and is public). Then continue with [/xc-verify](xc-verify.md).
 
 ## Failures

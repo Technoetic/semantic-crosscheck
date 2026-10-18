@@ -39,6 +39,12 @@ gold SQL and `crosscheck.toml` avoid them too.
   `PGOPTIONS=-c default_transaction_read_only=on -c statement_timeout=...`, which makes every Cube
   transaction read-only. Starting the adapter by hand without it, or with another role, loses that
   guarantee.
+- **The SQL planner is pinned by the runner.** Cube 1.8.3 chooses between its Tesseract and legacy SQL
+  planners from `CUBEJS_TESSERACT_SQL_PLANNER` (default `true`). The runner always sets `true` and drops an
+  inherited value with the other `CUBEJS_*` variables, and `cube:meta` records `cube_version` and
+  `sql_planner`. A cube result that recorded another planner or version, or none, is stale in `report`
+  (`cube_runtime_changed`, `cube_runtime_missing`): rerun cube and verify. Starting the adapter by hand
+  without the variable leaves the choice to Cube's default.
 - **Cube overrides `statement_timeout`.** Cube's Postgres driver runs `SET statement_timeout` on every
   connection from `CUBEJS_DB_QUERY_TIMEOUT` (default 10 minutes, also its queue's execution timeout),
   which replaces the value from `PGOPTIONS`. The runner sets both from `cube.query_timeout_s`, so a query

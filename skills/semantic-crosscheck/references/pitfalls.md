@@ -13,7 +13,8 @@ gold SQL and `crosscheck.toml` avoid them too.
   (an `error` check with `cube=row_limit`) instead of comparing a truncated answer. The limit is not
   configurable: a query that needs more rows must be narrowed (filters, parameters) rather than compared
   partially. V3 pair tests group by every key, so above 2,000 keys they compare a deterministic sample of
-  2,000 keys instead.
+  2,000 keys instead; their detail and not proven line give the sample's 95% detection bound
+  (`d95_keys`), and a mismatch on fewer keys can be missed.
 - **Primary keys are hidden.** A primary-key dimension is not public unless it says `public: true`;
   querying a hidden member fails (HTTP 500). The generator makes single-column keys public. The
   synthetic `sxc_pk` of a composite-key cube stays hidden, so gold queries cannot use it and `/meta`

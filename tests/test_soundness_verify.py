@@ -249,8 +249,11 @@ class CubeVerifyTest(unittest.TestCase):
             self.assertEqual((c.status, c.detail["sampled_keys"], c.detail["duplicate_keys"]), ("pass", 40, 0), c.id)
             self.assertGreater(c.detail["total_keys"], 40, c.id)
             self.assertLessEqual(c.detail["keys"], 40, c.id)
-            self.assertIn(f"{c.id}: compared 40 of {c.detail['total_keys']} keys (a deterministic sample with verify.seed); "
-                          "the other keys were not compared", res.not_proven)
+            note = (f"{c.id}: compared 40 of {c.detail['total_keys']} keys (a deterministic sample with verify.seed); "
+                    "the other keys were not compared")
+            self.assertEqual(c.detail["d95_keys"], shape_q.d95_keys(40, c.detail["total_keys"]), c.id)
+            prefix = f"{note}; a mismatch affecting at least {c.detail['d95_keys']} keys ("
+            self.assertTrue(any(line.startswith(prefix) for line in res.not_proven), c.id)
         self.assertEqual([c.id for c in res.checks if c.status not in ("pass",) and not c.id.startswith("scope:")], [])
 
 

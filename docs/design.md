@@ -204,8 +204,8 @@ parameters are ignored.
 | `cube_client` | `CubeClient.load(query) -> list[dict]` (polls "Continue wait", explicit limit 50,000, never `renewQuery`, no proxies), `meta()` |
 | `compare` | `run_binding(conn, client, cfg, gold, params, cache=None, types=None)`, `compare_rows(gold, g_rows, c_rows, types=None)`, `member_kinds(model)`, `gold_kinds(gold, kinds)` |
 | `sweep` | `bindings(conn, cfg, gold)`, `strata_names(gold)`, `md5_order(column)` |
-| `shape_q` | `tests(cfg, model)`, `run_test(...)`, `pair_keys(conn, cfg, test)`, `sampled(test)`, `PAIR_KEY_CAP = 2000` |
-| `mutate` | `OPERATORS`, `CLOSURE_OPERATORS`, `OUTCOMES`, `selected(cfg)`, `run_mutants(cfg, out, conn, model, suite, closure=None)`, `verdict(status, item)`, `closure_status(cfg, out)` |
+| `shape_q` | `tests(cfg, model)`, `run_test(...)`, `pair_keys(conn, cfg, test)`, `sampled(test)`, `d95_keys(sampled, total)`, `sample_note(detail)`, `PAIR_KEY_CAP = 2000` |
+| `mutate` | `OPERATORS`, `CLOSURE_OPERATORS`, `OUTCOMES`, `selected(cfg)`, `run_mutants(cfg, out, conn, model, suite, closure=None, sampled_items=())`, `verdict(status, item)`, `closure_status(cfg, out)` |
 | `demo` | `build(dirty, seed, scale) -> {"parts","edges","orders","stock","malformed","expected"}`, `load(conn, data)`, `reference(expected, variant, seed, scale)`, `TABLES`, `TableMismatch` |
 
 ## 5. Generated objects (names from `naming.py`)
@@ -333,7 +333,13 @@ typed like V1/V2 keys. A pair test whose key source (the node table key, or the 
 `shape_q.PAIR_KEY_CAP` = 2,000 distinct values compares a deterministic sample of 2,000 keys (ordered by
 `md5(key || seed) COLLATE "C", key`), read once (the key count and the sample in one `REPEATABLE READ` snapshot)
 and filtered with an `equals` filter in each of its queries; the detail gains `sampled_keys` and `total_keys`, and
-`not_proven` says `compared 2000 of N keys`. The cap is fixed.
+`not_proven` says `compared 2000 of N keys`. The cap is fixed. The detail also gains the sample's detection bound
+`d95_keys`, the smallest D >= 1 with C(N - D, n) / C(N, n) <= 0.05 for n sampled out of N keys (zero-acceptance
+hypergeometric sampling, computed exactly on integers), and `d95_rate` = D / N; for n = 2,000 the bound is 6 at
+N = 5,000, 29 at N = 20,000, 149 at N = 100,000 and 1,496 at N = 1,000,000. The `not_proven` line keeps its prefix
+and adds that a mismatch affecting at least D keys (r%) is detected with 95% probability, assuming the mismatching
+keys are independent of the fixed md5 sample order, and that fewer mismatching keys may be missed. The bound is a
+statement about the sample, not a verdict: the check's status is unchanged.
 
 **V4 mutation tests.** Each operator patches a deep copy of the model; a fresh Cube process serves each mutant
 (from `verify/mutants/<operator>__<target>/`) and the suite runs against it. The suite replays V1 (the first
@@ -358,7 +364,10 @@ suite items are missing because a closure gated them, their gold query could not
 (`suite_incomplete`, detail `excluded`) instead of failed: the missing items might have killed it. A kill by part
 of the suite is still a pass. A closure operator whose closure cube is not in the model is listed in
 `not_proven` (not applicable). Every V4 detail holds `witness` and the run's `summary` counts (`killed`,
-`survived`, `equivalent`, `error`, `not_applicable`, `not_run`).
+`survived`, `equivalent`, `error`, `not_applicable`, `not_run`). The detail of a mutant that survived a suite
+replaying a sampled V3 pair test (fewer keys compared than exist) also holds `sample_blind_possible = true` and
+`sampled_items` (those V3 check ids): the mutant may change only keys outside the samples. The marker changes no
+status.
 
 | Operator | Applies to | Mutation | Witness (rows of the current data) |
 |---|---|---|---|

@@ -30,7 +30,10 @@ python "${CLAUDE_PLUGIN_ROOT}/skills/semantic-crosscheck/scripts/sxc.py" verify 
 - V3 checks query shapes derived from the model: totals against SQL, additivity over the ontology class
   column, and measures queried together against the same measures queried alone (join fan-out). A pair
   test over more than 2,000 keys compares a deterministic sample of 2,000 keys (ordered with
-  `verify.seed`) and says so in not proven.
+  `verify.seed`, counted and drawn in one read-only snapshot) and says so in not proven, with the
+  sample's detection bound (detail `d95_keys`, `d95_rate`): a mismatch affecting at least that many
+  keys is detected with 95% probability if the mismatching keys are independent of the sample order;
+  fewer can be missed.
 - V4 patches copies of the model and serves each mutant in a fresh Cube process. Only suite items that
   pass against the unmutated model are replayed (V1, the first `verify.mutant_bindings` bindings per
   stratum, V3), and the suite stops at the first item that does not pass. Only a failing item kills a
@@ -74,7 +77,10 @@ that generated the model. Fix `crosscheck.toml` or the gold SQL file, never the 
   alone, which is join fan-out (wrong grain or relationship).
 - `v4:<operator>:<target>` fails: a mutant that changes results on this data survived, so the gold suite
   cannot see that kind of error. Add a gold query, a mapped column or a stratum that would observe it,
-  then rerun. Do not drop the operator from `verify.mutation_operators` to hide a survivor.
+  then rerun. Do not drop the operator from `verify.mutation_operators` to hide a survivor. When the
+  detail says `sample_blind_possible`, the suite's sampled pair tests (`sampled_items`) compared only
+  part of their keys, so the mutant may change only keys outside the sample: a gold query over those
+  keys can still observe it.
 - `v4:<operator>:<target>` is `error`: `suite_error` (a suite item could not run against the mutant;
   keep PostgreSQL and Cube reachable for the whole run), `startup` or `cube` (the mutant's Cube process
   did not serve; check with `/xc-doctor --require cube`), `model_mismatch` (rerun [/xc-cube](xc-cube.md)),

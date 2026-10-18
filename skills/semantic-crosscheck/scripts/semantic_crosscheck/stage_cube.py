@@ -130,7 +130,9 @@ def config_message(e: ValueError) -> str:
 def generate(cfg) -> tuple[dict, list[str]]:
     conn = db.connect(cfg.source.dsn_env)
     try:
-        with db.read_only(conn, cfg.source.statement_timeout_ms):
+        # The information_schema queries the model is built from read one snapshot (the to_regclass probes are
+        # catalog lookups outside it); nothing waits on Cube inside this transaction.
+        with db.read_only(conn, cfg.source.statement_timeout_ms, isolation="repeatable read"):
             return cube_gen.generate(cfg, conn)
     except ValueError as e:
         raise StageError(config_message(e), EXIT_CONFIG) from e

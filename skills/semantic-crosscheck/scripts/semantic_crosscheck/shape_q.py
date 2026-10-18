@@ -21,7 +21,8 @@ A pair test groups by every key of its node entity or closure end. Cube joins th
 with a nested loop, so its cost grows with the square of the keys, and the client's row limit caps the answer.
 Above PAIR_KEY_CAP keys the test therefore compares a deterministic sample of PAIR_KEY_CAP keys (sweep.md5_order with
 verify.seed, read once from the node table or the closure table and reused by every replay), filtered in each of
-its queries, and its detail says how many keys were compared out of how many (sampled_keys, total_keys).
+its queries, and its detail says how many keys were compared out of how many (sampled_keys, total_keys). The key
+count and the sample are read in one REPEATABLE READ snapshot, so the sample is drawn from the keys that were counted.
 Details hold counts and flags only, never totals or keys.
 """
 
@@ -144,10 +145,11 @@ def closure_total_sql(cfg, h: str, column: str) -> str:
 
 def pair_keys(conn, cfg, test: dict) -> tuple[int, list | None]:
     """(distinct keys a pair test groups by, a deterministic sample of PAIR_KEY_CAP of them or None when there are not
-    more than that), read from test["keys_from"] (table, column) in one READ ONLY transaction."""
+    more than that), read from test["keys_from"] (table, column) in one READ ONLY REPEATABLE READ transaction, so the
+    count and the sample see the same rows."""
     table, column = test["keys_from"]
     col, source = f"t.{ident.quote(column)}", ident.qualified(table)
-    with db.read_only(conn, cfg.source.statement_timeout_ms):
+    with db.read_only(conn, cfg.source.statement_timeout_ms, isolation="repeatable read"):
         total = int(db.scalar(conn, f"SELECT count(DISTINCT {col}) FROM {source} t") or 0)
         if total <= PAIR_KEY_CAP:
             return total, None

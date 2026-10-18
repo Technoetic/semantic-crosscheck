@@ -40,6 +40,8 @@ not run proves nothing about the mutant.
 Witness SQL is read-only, takes identifiers from ident/naming or the generated model, and repeats filter values
 only as the config-trusted literals of cube_gen.where_sql. Checks and notes carry counts and ids only: the
 suite's items must be check ids, and errors keep an exception type or SQLSTATE.
+
+The witness is one statement, so it reads one snapshot in the default READ COMMITTED transaction.
 """
 
 import copy

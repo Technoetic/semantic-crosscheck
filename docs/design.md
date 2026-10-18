@@ -95,7 +95,8 @@ exit 3, so one run lists everything to fix.
   `<python>` and `<plugin>`, which `sxc.py` expands only when it prints, so a printed hint works from any
   directory while result files stay path-free (a `--home` directory the user typed is repeated as typed).
 - `res.not_proven` lists what the run could not prove (an empty stratum, an equivalent mutant, a shape compared
-  only in SQL, a vacuous defined class, a sampled pair test, a component that is not installed). It does not
+  only in SQL, a vacuous defined class, a sampled pair test, a join path additivity does not apply to, a
+  component that is not installed). It does not
   change the status; `report` shows every line.
 - `res.next_safe_action` is one sentence the agent can follow.
 - `started_at` and `finished_at` are local times with UTC offset at one-second resolution; `report` uses them
@@ -195,7 +196,7 @@ parameters are ignored.
 | `cube_client` | `CubeClient.load(query) -> list[dict]` (polls "Continue wait", explicit limit 50,000, never `renewQuery`, no proxies), `meta()` |
 | `compare` | `run_binding(conn, client, cfg, gold, params, cache=None, types=None)`, `compare_rows(gold, g_rows, c_rows, types=None)`, `member_kinds(model)`, `gold_kinds(gold, kinds)` |
 | `sweep` | `bindings(conn, cfg, gold)`, `strata_names(gold)`, `md5_order(column)` |
-| `shape_q` | `tests(cfg, model)`, `run_test(...)`, `pair_keys(conn, cfg, test)`, `sampled(test)`, `PAIR_KEY_CAP = 2000` |
+| `shape_q` | `tests(cfg, model)`, `run_test(...)`, `pair_keys(conn, cfg, test)`, `sampled(test)`, `PAIR_KEY_CAP = 2000`, `join_path(cubes, measure_cube, dim_cube)`, `additive_path(steps)`, `null_group_sql(cfg, test)`, `not_applicable(cfg, model)` |
 | `mutate` | `OPERATORS`, `CLOSURE_OPERATORS`, `OUTCOMES`, `selected(cfg)`, `run_mutants(cfg, out, conn, model, suite, closure=None)`, `verdict(status, item)`, `closure_status(cfg, out)` |
 | `demo` | `build(dirty, seed, scale) -> {"parts","edges","orders","stock","malformed","expected"}`, `load(conn, data)`, `reference(expected, variant, seed, scale)`, `TABLES`, `TableMismatch` |
 
@@ -261,7 +262,7 @@ configuration ids; `<member>` is a Cube member (`cube.member`); `<stratum>` is a
 | verify | `v1:<gold>` | the first binding matches exactly | `fail`; `error` (gold or Cube side: error type, SQLSTATE, HTTP status, `cube` `timeout`/`row_limit`/`query_error`; `members_not_in_model`; `bindings_failed`); `not_run` (`closure_not_passed`, `no_binding`) |
 | verify | `v2:<gold>:<stratum>` | every binding of the stratum matches exactly; an empty stratum passes (`empty_stratum`) and is listed in `not_proven` | as `v1:<gold>`, without `no_binding` |
 | verify | `v3:total:<member>` | the Cube total equals SQL computed from the configuration (or the closure table) | `fail`; `error`; `not_run` (`closure_not_passed`) |
-| verify | `v3:additive:<member>:<member>` | the groups of the measure by the ontology class column add up to its total | as `v3:total:<member>` |
+| verify | `v3:additive:<member>:<member>` | the groups of the measure by the ontology class column of a cube joined through many_to_one / one_to_one steps only, the NULL group included, add up to its total, and the NULL group equals the anti-join over the measure source (`null_group_equal`) | as `v3:total:<member>`; a join path with a one_to_many or unknown step gets no check, only a `not_proven` line (not applicable) |
 | verify | `v3:pair:<member>+<member>` | the two measures queried together equal the same measures queried alone, per key | as `v3:total:<member>` |
 | verify | `v4:<operator>:<target>` | the mutant was killed: a suite item failed against it (`killed_by`) | `fail` (it survived); `error` (`suite_error`, `startup`, `cube`, `write`, `model_mismatch`, `witness`); `not_run` (`closure_not_passed`, `suite_incomplete`). Equivalent and not applicable mutants get no check, only a `not_proven` line |
 | verify | `v4:suite` | never passes | `not_run` (`no_passing_suite_item`): no suite item passes on the unmutated model |
@@ -316,14 +317,39 @@ a failure; a gold query without any binding is `not_run` (`no_binding`) in V1.
 
 **V3 query shapes** (derived from the model): `total` compares each measure's Cube total with SQL computed from
 the configuration (`cube_gen.where_sql`), and the closure cube's `qty`/`pairs` with the closure table (a NULL
-count total counts as 0, flagged `null_as_zero`); `additive` checks that groups by the ontology class column add
-up to the total for sum/count measures joined one-to-one to their node cube; `pair` checks that measures queried
+count total counts as 0, flagged `null_as_zero`); `additive` checks that the groups by the ontology class column
+add up to the total; `pair` checks that measures queried
 together (the closure `qty` with each closure-joined measure, and every two measures joined to the same node
 cube) equal the same measures queried one at a time, per key, which exposes join fan-out. Pair-test keys are
 typed like V1/V2 keys. A pair test whose key source (the node table key, or the closure end) has more than
 `shape_q.PAIR_KEY_CAP` = 2,000 distinct values compares a deterministic sample of 2,000 keys (ordered by
 `md5(key || seed) COLLATE "C", key`), read once and filtered with an `equals` filter in each of its queries; the
 detail gains `sampled_keys` and `total_keys`, and `not_proven` says `compared 2000 of N keys`. The cap is fixed.
+
+**V3 additivity over join paths.** Predefined joins inflate totals when a row matches several rows of the
+joined cube ("Aggregation Consistency Errors in Semantic Layers and How to Avoid Them", HILDA 2023,
+arXiv 2307.00417). An `additive` test exists for every sum/count measure (each configuration measure with `agg`
+`sum` or `count` and no `date_column`, and the closure cube's `qty` and `pairs`; `min`, `max` and any other
+aggregation are not additive) and every cube exposing `ontology.class_column` that Cube can join to the measure's
+cube on its own. Cube joins the cubes of a query from one of them through declared joins, so the join path
+(`shape_q.join_path`, shortest, joins in declaration order) runs from the measure's cube to the dimension's cube
+with the relationships as declared, or from the dimension's cube to the measure's with each step inverted, and is
+read from the measure's side. Only a path made of `many_to_one` and `one_to_one` steps gets a test (Cube's
+`belongs_to`/`has_many`/`has_one` spellings are folded); a path with a `one_to_many` step or a relationship Cube
+does not define (many-to-many) gets none, because a row legitimately counts in several groups, and is listed in
+`not_proven` as not applicable. In a generated model the tests are the node cube of each measure with a node
+(joined one-to-one) and, per hierarchy, `qty` and `pairs` over the ancestor and descendant copies (joined
+many-to-one), so the demo has seven; the class column bounds the number of groups. Each test sums every group,
+the NULL group included, against the measure's Cube total (`equal`), and compares the NULL group with SQL from the
+configuration (`null_group_equal`): the measure over the source rows (the measure's entity table with its WHERE
+clause, or the closure table) for which no dimension row with that key has a non-null class, which are the rows
+with no dimension row at all (an anti-join, `NOT EXISTS`) and the rows whose dimension row has no class. A count's
+empty NULL group counts as 0 on both sides. The test fails unless both hold; its detail adds `null_group_rows`
+and `orphan_rows` (the source rows of the SQL NULL group and those without any dimension row), never the values.
+Measure rows with values that Cube drops (a measure key missing from the node table, which Cube's node-rooted
+join leaves out) fail both comparisons; a join declared many-to-one that matches several rows (a repeated node key) fails the sum.
+The SQL side is read once per test and reused by the V4 replays. An additive path no configuration entry
+describes (a hand-edited model) has no independent SQL, gets no test and is listed in `not_proven`.
 
 **V4 mutation tests.** Each operator patches a deep copy of the model; a fresh Cube process serves each mutant
 (from `verify/mutants/<operator>__<target>/`) and the suite runs against it. The suite replays V1 (the first

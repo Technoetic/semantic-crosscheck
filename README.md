@@ -350,7 +350,7 @@ CLI 출력 원문을 유지했습니다. 아래 검사 수와 `NOT PROVEN` 문�
 [sxc cube] PASS  checks: 7 pass, 0 fail, 0 error, 0 not_run  -> .../demo/.sxc/cube/result.json
   NOT PROVEN  runtime evidence is unbound: actual PostgreSQL, Node, Java, HermiT and selected Cube installation were not bound; local engine/package metadata alone does not establish the executing runtime
   NOT PROVEN  data revision is unbound: no owner-maintained revision was checked; separate database sessions and cached gold answers are not proven to observe one data version
-[sxc verify] PASS  checks: 42 pass, 0 fail, 0 error, 0 not_run  -> .../demo/.sxc/verify/result.json
+[sxc verify] PASS  checks: 46 pass, 0 fail, 0 error, 0 not_run  -> .../demo/.sxc/verify/result.json
   NOT PROVEN  v4:measure_normalization_drop:on_hand equivalent on this data
   NOT PROVEN  v4:measure_normalization_drop:consigned equivalent on this data
   NOT PROVEN  runtime evidence is unbound: actual PostgreSQL, Node, Java, HermiT and selected Cube installation were not bound; local engine/package metadata alone does not establish the executing runtime

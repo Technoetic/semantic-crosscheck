@@ -14,6 +14,12 @@ gold SQL and `crosscheck.toml` avoid them too.
   configurable: a query that needs more rows must be narrowed (filters, parameters) rather than compared
   partially. V3 pair tests group by every key, so above 2,000 keys they compare a deterministic sample of
   2,000 keys instead.
+- **A many-to-one join that is one-to-many in the data inflates totals.** Cube trusts a declared
+  `many_to_one` (or `one_to_one`) relationship and sums without deduplication, so a repeated key in the
+  joined table counts the measure rows once per match. V3 `additive` tests sum the groups by the class
+  column over such joins (the NULL group included) and compare them with the total, and compare the NULL
+  group with an anti-join; give the node entity's key a primary key or unique constraint. A path with a
+  `one_to_many` step is not additive by nature and gets no test (listed as not applicable).
 - **Primary keys are hidden.** A primary-key dimension is not public unless it says `public: true`;
   querying a hidden member fails (HTTP 500). The generator makes single-column keys public. The
   synthetic `sxc_pk` of a composite-key cube stays hidden, so gold queries cannot use it and `/meta`

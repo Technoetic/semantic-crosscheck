@@ -4,7 +4,9 @@ All notable changes to this project are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.4.0] - 2026-10-18
+
+Release notes: [docs/releases/v0.4.0.md](docs/releases/v0.4.0.md).
 
 ### Added
 
@@ -182,6 +184,7 @@ First release. Release notes: [docs/releases/v0.1.0.md](docs/releases/v0.1.0.md)
   followed by the clean and dirty demo end to end through the command line; whitespace check and a leak
   scan of the working tree and the whole history.
 
+[0.4.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.4.0
 [0.3.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.3.0
 [0.2.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.2.0
 [0.1.1]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.1.1

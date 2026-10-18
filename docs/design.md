@@ -284,7 +284,7 @@ configuration ids; `<member>` is a Cube member (`cube.member`); `<stratum>` is a
 | verify | `v1:<gold>` | the first binding matches exactly | `fail`; `error` (gold or Cube side: error type, SQLSTATE, HTTP status, `cube` `timeout`/`row_limit`/`query_error`; `members_not_in_model`; `bindings_failed`); `not_run` (`closure_not_passed`, `no_binding`) |
 | verify | `v2:<gold>:<stratum>` | every binding of the stratum matches exactly; an empty stratum passes (`empty_stratum`) and is listed in `not_proven` | as `v1:<gold>`, without `no_binding` |
 | verify | `v3:total:<member>` | the Cube total equals SQL computed from the configuration (or the closure table) | `fail`; `error`; `not_run` (`closure_not_passed`) |
-| verify | `v3:additive:<member>:<member>` | the groups of the measure by the ontology class column of a cube joined through many_to_one / one_to_one steps only, the NULL group included, add up to its total, and the NULL group equals the anti-join over the measure source (`null_group_equal`) | as `v3:total:<member>`; a join path with a one_to_many or unknown step gets no check, only a `not_proven` line (not applicable) |
+| verify | `v3:additive:<member>:<member>` | the groups of the measure by the ontology class column of a cube joined through many_to_one / one_to_one steps only, the NULL group included, add up to its total, and the NULL group equals independent SQL over the measure source (`null_group_equal`: an anti-join, or the matched rows without a class when Cube roots the query at the dimension's cube) | as `v3:total:<member>`; a join path with a one_to_many or unknown step gets no check, only a `not_proven` line (not applicable) |
 | verify | `v3:pair:<member>+<member>` | the two measures queried together equal the same measures queried alone, per key | as `v3:total:<member>` |
 | verify | `v4:<operator>:<target>` | the mutant was killed: a suite item failed against it (`killed_by`) | `fail` (it survived); `error` (`suite_error`, `startup`, `cube`, `write`, `model_mismatch`, `witness`); `not_run` (`closure_not_passed`, `suite_incomplete`). Equivalent and not applicable mutants get no check, only a `not_proven` line |
 | verify | `v4:suite` | never passes | `not_run` (`no_passing_suite_item`): no suite item passes on the unmutated model |
@@ -371,12 +371,19 @@ does not define (many-to-many) gets none, because a row legitimately counts in s
 many-to-one), so the demo has seven; the class column bounds the number of groups. Each test sums every group,
 the NULL group included, against the measure's Cube total (`equal`), and compares the NULL group with SQL from the
 configuration (`null_group_equal`): the measure over the source rows (the measure's entity table with its WHERE
-clause, or the closure table) for which no dimension row with that key has a non-null class, which are the rows
-with no dimension row at all (an anti-join, `NOT EXISTS`) and the rows whose dimension row has no class. A count's
-empty NULL group counts as 0 on both sides. The test fails unless both hold; its detail adds `null_group_rows`
-and `orphan_rows` (the source rows of the SQL NULL group and those without any dimension row), never the values.
-Measure rows with values that Cube drops (a measure key missing from the node table, which Cube's node-rooted
-join leaves out) fail both comparisons; a join declared many-to-one that matches several rows (a repeated node key) fails the sum.
+clause, or the closure table) that Cube puts in the NULL group. Which rows those are depends on the cube Cube roots
+the grouped query at, recorded per test as `root`. When the measure's cube reaches the dimension's cube itself (a
+forward path, the closure ends: `root = measure`), Cube left-joins the dimension to every measure row, and the NULL
+group is the rows for which no dimension row with that key has a non-null class: the rows with no dimension row at
+all (an anti-join, `NOT EXISTS`) and the rows whose dimension row has no class. When only the dimension's cube
+reaches the measure's (a backward path, a generated node cube's one-to-one join to its measure cube:
+`root = dimension`), Cube starts from the dimension rows and drops the measure rows with no dimension row instead
+of grouping them, so the NULL group is only the matched rows whose class is NULL. A count's empty NULL group
+counts as 0 on both sides. The test fails unless both hold; its detail adds `null_group_rows` and `orphan_rows`
+(the source rows of the SQL NULL group and those without any dimension row; under a backward path the orphans are
+counted but are not in the NULL group), never the values. Measure rows with values that Cube drops (a measure key
+missing from the node table, which Cube's node-rooted join leaves out) fail the sum; orphan rows that add up to 0
+change neither side and pass. A join declared many-to-one that matches several rows (a repeated node key) fails the sum.
 The SQL side is read once per test and reused by the V4 replays. An additive path no configuration entry
 describes (a hand-edited model) has no independent SQL, gets no test and is listed in `not_proven`.
 
@@ -432,17 +439,25 @@ set of focus-node keys with the keys in `v_shape_<id>` (both in `canon.key` form
 
 One RDF predicate carries one kind of value, and shapes on the same target column can need different kinds (a
 `class` shape and a bound shape, or `class` shapes naming different entities): in one graph each value would
-violate the other shape's constraint. The compared shapes are therefore split into value groups: one `bound` group
-(literal values) and one `class:<entity>` group per referenced class entity. Each group gets its own data graph
-with only what its shapes need (their target rows and paths; for a class group the typed keys of its entity), and
-pySHACL validates every group graph once with the same shapes graph. The focus nodes of a group graph are read
-only for that group's shapes, so every group has the single-kind semantics above. Counting, exporting every group
-and reading the views stay in the one transaction. The row limit applies to the sum over the groups (a table that
-two groups read counts twice), so it does not grow with the number of groups; above it, every planned shape
-leaves a `not_run` check with `reason=resource_limit`, and the explanation also appears in `not_proven`. When
-pySHACL cannot validate one group graph, only that group's shapes are `error` (`reason=validation_failure`); the
-other groups are still compared. Each `shacl:<id>` check names its `value_group` and `group_rows`;
-`rows_exported` is the sum over the groups.
+violate the other shape's constraint. The compared shapes are therefore split into value groups
+(`shacl_check.groups`): each shape goes, in configuration order, to the first group in which its column
+(target, path) carries no other kind of value (`bound` literals or `class:<entity>` row IRIs), and a shape whose
+column carries another kind in every group so far opens a new group. The first group is `main`, the others are
+`extra:1`, `extra:2`, ... in the order they are opened. Every shape that needs no split stays in `main`, so a
+configuration without a column shared by two value kinds (the demo included) exports one graph with exactly the
+rows of 0.3.0; only the colliding shapes move to extra groups. Each group gets its own data graph with only what
+its shapes need (their target rows and paths; the typed keys of the class entities they reference), and pySHACL
+validates every group graph once with the same shapes graph. The focus nodes of a group graph are read only for
+that group's shapes, so every group has the single-kind semantics above. Counting, exporting every group and
+reading the views stay in the one transaction. The row limit applies to the sum over the groups (a table that two
+groups read counts twice, so an extra group adds the rows it exports again), so it does not grow with the number
+of groups; above it, every planned shape leaves a `not_run` check with `reason=resource_limit`, and the
+explanation also appears in `not_proven`. When validating one group graph fails (pySHACL returns no results graph
+or raises any exception), only that group's shapes are `error` (`reason=validation_failure`; `exception` holds a
+type name only, the raised exception's or the type of pySHACL's non-graph answer, never a message); the other
+groups are still compared. The row cap and
+database errors occur before validation and still decide every shape. Each `shacl:<id>` check names its
+`value_group` and `group_rows`; `rows_exported` is the sum over the groups.
 
 Two kinds of shape are not compared and are listed in `not_proven` instead ("checked only in SQL"):
 
@@ -536,11 +551,18 @@ REPEATABLE READ transaction with bound values: `mr1_unfold` (shared sub-assembli
 over copies, every instance answers like its original), `mr2_scale` (one multi-path line times K = 2:
 Q'(a, d) = Q(a, d) + (K-1)·q·Q(a, u)·Q(v, d)), `mr3_disjoint` (a fresh component leaves original pairs unchanged
 and adds no cross pair) and `mr4_unit_node` (a line split through a fresh unit node: original pairs unchanged,
-Q'(a, w) = Q(a, u)·q, Q'(w, d) = Q(v, d)). Expected values use exact decimal arithmetic (inexact is `not_run`)
-and the `number` canonical form; absent pairs are 0, Q(x, x) = 1 only inside the formulas, and reflexive answer
-rows are not compared. A relation is `not_run` for a case without a diamond, a multi-path line or a quantity
-other than 1 where it needs one, when its transformed fixture leaves the type domain or the profile, exceeds the
-row bound, or compares no pair; never `pass` without a compared pair. The search stops at the first case that
+Q'(a, w) = Q(a, u)·q, Q'(w, d) = Q(v, d)). Expected values use exact decimal arithmetic and the `number`
+canonical form; absent pairs are 0, Q(x, x) = 1 only inside the formulas, and reflexive answer rows are not
+compared. Every relation of a case is `not_run` when its fixture has no BOM line (`no_bom_lines`), a NULL parent,
+child or quantity (`null_bom_value`), a quantity outside `numeric(18,6)` (`invalid_bom_value`) or a cycle
+(`cycle`); a single relation is `not_run` without a diamond (`no_diamond`), a multi-path line
+(`no_multi_path_edge`) or a quantity other than 1 (`no_non_unit_quantity`) where it needs one, when its
+transformed fixture leaves the type domain or the profile (`type_domain`, `integrity_profile`), exceeds the row
+bound (`size_bound`), needs an expected value exact arithmetic cannot represent (`inexact_arithmetic`), or
+compares no pair (`no_pairs`); never `pass` without a compared pair. A relation `not_run` in every case gives the
+check reason `no_admissible_generated_examples` (no case was checked) or `vacuous_for_every_case`. Database,
+driver and connection errors are `counterexample:query` errors; any other exception propagates to `stage`
+(error). The search stops at the first case that
 violates any relation and saves the original rows, the failed relations and every transform specification in
 `fixture.json` (format `sxc-synthetic-metamorphic`); replay recomputes the transforms and refuses a file whose
 recorded ones differ. Results carry counts, the seed and transform hashes. These relations cannot see errors

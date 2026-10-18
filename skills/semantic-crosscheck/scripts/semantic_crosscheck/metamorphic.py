@@ -100,8 +100,7 @@ def closure_map(columns, rows):
 
 def answer(conn, fixture, sql, timeout_ms, profile=None):
     """Columns and rows of the trusted SQL on one fixture, in its own read-only REPEATABLE READ transaction."""
-    with db.read_only(conn, timeout_ms):
-        conn.run('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ')
+    with db.read_only(conn, timeout_ms, isolation='repeatable read'):
         wrapped, params = ce.wrap_sql(sql, fixture, profile=profile)
         prepared = conn.prepare(wrapped)
         try:
@@ -486,6 +485,17 @@ def _not_proven(result, profile):
                              'reflexive (x, x) answer rows are not compared.')
 
 
+def query_errors():
+    """Exceptions meaning the trusted SQL could not be answered: the driver's (pg8000.exceptions.Error, database errors
+    with their SQLSTATE and interface errors) and OSError (a reset or timed-out connection), the database part of
+    compare.expected_errors. Anything else is a fault of this code: it propagates and sxc.main records stage:error."""
+    try:
+        from pg8000.exceptions import Error as PgError
+    except ImportError:
+        return (OSError,)
+    return (OSError, PgError)
+
+
 def run(cfg, args, out):
     """Metamorphic mode of the counterexample stage: one trusted closure SQL, four relations per generated case."""
     seed = ce._int(args.seed, -(2**63), 2**63 - 1, 'seed')
@@ -553,7 +563,7 @@ def run(cfg, args, out):
                 break
     except StageError:
         raise
-    except Exception as error:   # error text can quote data: keep only the type and SQLSTATE
+    except query_errors() as error:   # error text can quote data: keep only the type and SQLSTATE
         arg = error.args[0] if error.args else None
         code = arg.get('C', '') if isinstance(arg, dict) else ''
         result.add('counterexample:query', 'error', '', exception=type(error).__name__,

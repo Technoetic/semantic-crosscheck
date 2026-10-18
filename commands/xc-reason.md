@@ -47,10 +47,12 @@ listed as not proven, "checked only in SQL":
 - `class_and_bounds`: a shape that combines `class` with bounds (no SHACL form).
 
 Shapes on the same target column that need different kinds of RDF value (a `class` shape and a bound
-shape, or `class` shapes naming different entities) are all compared: each value group (`bound`, one
-`class:<entity>` per referenced entity) is validated on its own data graph, and each `shacl:<id>` names
-its `value_group`. `verify.shacl_max_rows` bounds the rows of all groups together. If pySHACL cannot
-validate one group, only that group's shapes are `error`.
+shape, or `class` shapes naming different entities) are all compared: each shape goes to the first value
+group whose column carries the same kind of value (`main`; a colliding shape opens `extra:1`, `extra:2`,
+...), each group is validated on its own data graph, and each `shacl:<id>` names its `value_group`.
+Without a colliding shape there is one group, `main`. `verify.shacl_max_rows` bounds the rows of all
+groups together. If validating one group fails (pySHACL returns no results graph or raises), only that
+group's shapes are `error` (`validation_failure`, with the exception type only).
 
 A defined class without members in OWL or in SQL passes vacuously and is listed as not proven.
 

@@ -14,17 +14,20 @@ documents:
   - NULL gives no triple: never a violation, as the views test IS NOT NULL
 One RDF predicate carries one kind of value. Shapes on the same target column can need different kinds (a class and
 a bound, or two class entities), and in one graph each value would violate the other shape's constraint. So the
-compared shapes are split into value groups (groups()): one group for the bound shapes (literal values) and one per
-referenced class entity. Every group gets its own data graph holding only what its shapes need (their targets and
-paths; for a class group the keys of its class entity), pySHACL validates each group graph with the same shapes
-graph, and the focus nodes of a group are read only for that group's shapes. Within a group every column carries one
-kind of value, so each group keeps the single-kind semantics above.
+compared shapes are split into value groups (groups()): each shape goes, in configuration order, to the first group
+in which its column carries no other kind of value. "main" holds every shape that needs no split, so a configuration
+without such a column exports one graph exactly as 0.3.0 did; a shape whose column already carries another kind in
+every group opens the next one ("extra:1", "extra:2", ...). Every group gets its own data graph holding only what its
+shapes need (their targets and paths; the keys of the class entities they reference), pySHACL validates each group
+graph with the same shapes graph, and the focus nodes of a group are read only for that group's shapes. Within a
+group every column carries one kind of value, so each group keeps the single-kind semantics above.
 
 Counting, exporting and reading the views happen in one READ ONLY transaction at REPEATABLE READ, so the RDF of every
 group and the views see the same snapshot; pySHACL then runs without inference after the transaction has ended.
 verify.shacl_max_rows bounds the sum of the rows every group exports (a table read by two groups counts twice), so
-the cap does not grow with the number of groups. A group whose validation fails leaves only its own shapes without
-an answer; the other groups are still compared. Keys are
+the cap does not grow with the number of groups, and an extra group adds the rows it exports again. A group whose
+validation fails (pySHACL returns no results graph, or raises any exception) leaves only its own shapes without an
+answer, recorded by the exception type only; the other groups are still compared. Keys are
 compared in canon.key form (text exactly, other values canonical), which is also what rdf_node encodes, so a focus
 node maps back with rdf_key and two text keys such as '1.10' and '1.1' never share an IRI.
 rdflib and pyshacl are imported lazily: only the reason stage needs them.
@@ -51,8 +54,12 @@ class ValidationError(Exception):
 
 
 # ---- which shapes are compared ------------------------------------------------------------------------
-def value_group(shape) -> str:
-    """The value group of a shape with a SHACL form: "class:<entity>" (row IRIs of that entity) or "bound" (literals)."""
+MAIN_GROUP = "main"
+
+
+def value_kind(shape) -> str:
+    """The kind of RDF value a shape with a SHACL form needs on its column: "class:<entity>" (row IRIs of that entity)
+    or "bound" (literals)."""
     return f"class:{shape.class_}" if shape.class_ else "bound"
 
 
@@ -66,12 +73,21 @@ def plan(cfg) -> tuple[list, dict]:
 
 
 def groups(planned) -> list[tuple[str, list]]:
-    """[(value group, its planned shapes)] in the order of the first shape of each group. Every column of a group
-    carries one kind of value: bound shapes literals, the shapes of a class group row IRIs of its class entity."""
-    out = {}
+    """[(value group, its planned shapes)]. Each shape goes, in configuration order, to the first group in which its
+    column (target, path) carries no other kind of value (value_kind); a shape whose column carries another kind in
+    every group so far opens a new group. Every column of a group therefore carries one kind of value. Labels: "main"
+    for the first group, "extra:<n>" (n = 1, 2, ...) for the others in the order they are opened. Without a column
+    that needs two kinds of value, every shape stays in "main": one graph, the export of 0.3.0."""
+    out = []   # [(label, {(target, path): value kind}, shapes)]
     for s in planned:
-        out.setdefault(value_group(s), []).append(s)
-    return list(out.items())
+        column, kind = (s.target, s.path), value_kind(s)
+        for _label, kinds, members in out:
+            if kinds.setdefault(column, kind) == kind:
+                members.append(s)
+                break
+        else:
+            out.append((f"extra:{len(out)}" if out else MAIN_GROUP, {column: kind}, [s]))
+    return [(label, members) for label, _kinds, members in out]
 
 
 # ---- RDF ----------------------------------------------------------------------------------------------
@@ -235,7 +251,10 @@ def run(conn, cfg, shapes_ttl_text: str) -> dict[str, dict]:
 
     One read-only REPEATABLE READ transaction counts the rows of every group (TooManyRows when their sum exceeds
     verify.shacl_max_rows, before anything is exported), exports them and reads the views; pySHACL then validates each
-    group graph with the same shapes graph. A ValidationError leaves only that group's shapes without an answer."""
+    group graph with the same shapes graph. Any exception while one group is built, validated or read back (a
+    ValidationError, or whatever pySHACL raises) leaves only that group's shapes without an answer: validation_error is
+    the exception's type name (for a ValidationError the type pySHACL returned), never its message, which can quote
+    values. TooManyRows and database errors are raised before validation and are not caught here."""
     planned, _skipped = plan(cfg)
     if not planned:
         return {}
@@ -249,8 +268,8 @@ def run(conn, cfg, shapes_ttl_text: str) -> dict[str, dict]:
         entry = {"rows": total, "group": name, "group_rows": rows[name]}
         try:
             found = focus_keys(cfg, members, validate(build_graph(cfg, members, *fetched.pop(name)), graph_of_shapes))
-        except ValidationError as e:
-            found, entry["validation_error"] = {}, str(e)
+        except Exception as e:  # noqa: BLE001 - one group's failure must not hide the other groups' answers
+            found, entry["validation_error"] = {}, str(e) if isinstance(e, ValidationError) else type(e).__name__
         for s in members:
             out[s.id] = dict(entry, shacl_keys=found.get(s.id), sql_keys=sql[s.id])
     return {s.id: out[s.id] for s in planned}

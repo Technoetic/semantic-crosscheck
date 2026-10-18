@@ -7,9 +7,12 @@
   AdditiveCatalogueTest  which additive tests the model yields: the node cube for sum/count measures and the closure
                          ends for qty/pairs; paths with a one_to_many (or unknown) step and non-additive aggregations
                          get no test, and the paths left out for their relationship are listed (not applicable).
-  NullGroupTest          the NULL group Cube returns is compared with an independent anti-join over the measure
-                         source (rows without a dimension row with a non-null value); a mismatch fails even when the
-                         groups add up, the SQL runs once per test, and the detail holds flags and counts only.
+  NullGroupTest          the NULL group Cube returns is compared with independent SQL over the measure source: when
+                         Cube roots the query at the measure's cube (the closure ends), an anti-join (rows without a
+                         dimension row with a non-null value); when it roots it at the dimension's cube (a node cube's
+                         one_to_one join, reversed), only the matched rows without a class, because Cube drops the
+                         others and the sum against the total catches them. A mismatch fails even when the groups add
+                         up, the SQL runs once per test, and the detail holds flags and counts only.
   StageNotesTest         verify lists the not applicable paths in not_proven when V3 runs.
 """
 
@@ -118,6 +121,9 @@ class AdditiveCatalogueTest(unittest.TestCase):
         node = tests[NODE_ADDITIVE[1]]
         self.assertEqual((node["config_ref"], node["agg"], node["path"]),
                          ("measures.on_hand", "sum", [["m_on_hand", "part", "one_to_one"]]))
+        self.assertEqual({tid: tests[tid]["root"] for tid in NODE_ADDITIVE + CLOSURE_ADDITIVE},
+                         {**dict.fromkeys(NODE_ADDITIVE, "dimension"), **dict.fromkeys(CLOSURE_ADDITIVE, "measure")},
+                         "the node cube declares the join to the measure cube; the closure declares its ends")
 
     def test_one_to_many_paths_get_no_test_and_are_listed(self):
         set_relationship(self.model, "part", "m_on_hand", "many_to_one")
@@ -144,7 +150,7 @@ class AdditiveCatalogueTest(unittest.TestCase):
     def test_join_declared_one_to_many_from_the_dimension_side_is_many_to_one_from_the_measure(self):
         set_relationship(self.model, "part", "m_on_hand", "one_to_many")
         t = next(t for t in shape_q.tests(self.cfg, self.model) if t["id"] == "additive:m_on_hand.value:part.part_class")
-        self.assertEqual(t["path"], [["m_on_hand", "part", "many_to_one"]])
+        self.assertEqual((t["path"], t["root"]), ([["m_on_hand", "part", "many_to_one"]], "dimension"))
 
     def test_non_additive_aggregations_are_excluded(self):
         self.cfg.measures["on_hand"].agg = "max"
@@ -200,6 +206,8 @@ class NullGroupTest(unittest.TestCase):
     def test_closure_null_group_sql_is_an_anti_join_on_the_configured_key(self):
         sql = shape_q.null_group_sql(self.cfg, self.tests[CLOSURE_ADDITIVE[0]])
         self.assertIn('FROM sxc_out.has_component_closure t', sql)
+        self.assertIn('FILTER (WHERE NOT EXISTS (SELECT 1 FROM "sxc_demo"."part" d WHERE d."part_id" = t."ancestor" '
+                      'AND d."part_class" IS NOT NULL))', sql, "Cube roots the query at the closure: orphans are NULL")
         self.assertIn('NOT EXISTS (SELECT 1 FROM "sxc_demo"."part" d WHERE d."part_id" = t."ancestor" '
                       'AND d."part_class" IS NOT NULL)', sql)
         self.assertIn('NOT EXISTS (SELECT 1 FROM "sxc_demo"."part" d WHERE d."part_id" = t."ancestor")', sql)
@@ -215,6 +223,25 @@ class NullGroupTest(unittest.TestCase):
         self.assertIn("upper(btrim(t.\"location_id\")) IN ('MAIN', 'SUB')", sql)
         self.assertIn('d."part_id" = t."part_id"', sql)
 
+    def test_node_rooted_null_group_sql_holds_only_matched_rows_without_a_class(self):
+        """Cube reaches a generated measure cube only from its node cube (the node's one_to_one join, reversed), so
+        it roots the query at the node cube and drops measure rows without a node row instead of grouping them:
+        the SQL NULL group is the matched rows whose class is NULL, and orphans are only counted."""
+        matched = 'SELECT 1 FROM "sxc_demo"."part" d WHERE d."part_id" = t."part_id"'
+        null_group = f'EXISTS ({matched}) AND NOT EXISTS ({matched} AND d."part_class" IS NOT NULL)'
+        for tid in NODE_ADDITIVE:
+            sql = shape_q.null_group_sql(self.cfg, self.tests[tid])
+            self.assertIn(f"FILTER (WHERE {null_group}), count(*) FILTER (WHERE {null_group}), ", sql, tid)
+            self.assertIn(f"count(*) FILTER (WHERE NOT EXISTS ({matched})) FROM", sql, tid)
+
+    def test_an_unknown_root_is_an_error_not_a_guess(self):
+        t = self.fresh(NODE_ADDITIVE[1])
+        t["root"] = "sideways"
+        with self.assertRaises(ValueError):
+            shape_q.null_group_sql(self.cfg, t)
+        st, detail = shape_q.run_test(FakeConn(rows=[[None, 0, 0]]), self.client(t, "5", [("raw", "5")]), self.cfg, {}, t)
+        self.assertEqual((st, detail), ("error", {"error": "ValueError"}))
+
     def test_groups_and_null_group_agree(self):
         t = self.tests[CLOSURE_ADDITIVE[0]]
         conn = FakeConn(rows=[[Decimal("2.000"), 3, 1]])
@@ -229,15 +256,35 @@ class NullGroupTest(unittest.TestCase):
         self.assertEqual(st, "fail")
         self.assertEqual((detail["equal"], detail["null_group_equal"]), (True, False))
 
-    def test_rows_without_a_dimension_row_that_cube_drops_fail(self):
+    def test_rows_without_a_dimension_row_that_cube_drops_fail_the_sum(self):
+        # node-rooted: the 4 orphan rows (worth 4) are in the measure's total but in no group; the SQL NULL group
+        # (matched rows without a class) is empty like Cube's
         t = self.tests[NODE_ADDITIVE[1]]
-        conn = FakeConn(rows=[[Decimal(SECRET_VALUE), 4, 4]])
+        st, detail = shape_q.run_test(FakeConn(rows=[[None, 0, 4]]), self.client(t, "10", [("raw", "6")]), self.cfg,
+                                      {}, t)
+        self.assertEqual((st, detail), ("fail", {"equal": False, "groups": 1, "null_class_groups": 0,
+                                                 "null_group_equal": True, "null_group_rows": 0, "orphan_rows": 4}))
+
+    def test_dropped_rows_that_add_up_to_zero_pass(self):
+        # the false FAIL of the anti-join form: Cube {A: 5}, total 5, one orphan row worth 0 and no NULL-class node
+        t = self.tests[NODE_ADDITIVE[1]]
+        st, detail = shape_q.run_test(FakeConn(rows=[[None, 0, 1]]), self.client(t, "5", [("A", "5")]), self.cfg, {}, t)
+        self.assertEqual((st, detail), ("pass", {"equal": True, "groups": 1, "null_class_groups": 0,
+                                                 "null_group_equal": True, "null_group_rows": 0, "orphan_rows": 1}))
+
+    def test_node_rooted_null_class_mismatches_still_fail(self):
+        t = self.tests[NODE_ADDITIVE[1]]
+        conn = FakeConn(rows=[[Decimal(SECRET_VALUE), 4, 0]])     # 4 matched rows without a class; Cube has no NULL group
         st, detail = shape_q.run_test(conn, self.client(t, "10", [("raw", "10")]), self.cfg, {}, t)
-        self.assertEqual(st, "fail")
-        self.assertEqual(detail, {"equal": True, "groups": 1, "null_class_groups": 0, "null_group_equal": False,
-                                  "null_group_rows": 4, "orphan_rows": 4})
+        self.assertEqual((st, detail), ("fail", {"equal": True, "groups": 1, "null_class_groups": 0,
+                                                 "null_group_equal": False, "null_group_rows": 4, "orphan_rows": 0}))
         self.assertNotIn(SECRET_VALUE, json.dumps(detail))
         self.assertNotIn("987654", json.dumps(detail))
+        t = self.fresh(NODE_ADDITIVE[1])
+        st, detail = shape_q.run_test(FakeConn(rows=[[None, 0, 2]]), self.client(t, "10", [("raw", "7"), (None, "3")]),
+                                      self.cfg, {}, t)
+        self.assertEqual((st, detail["equal"], detail["null_group_equal"]), ("fail", True, False),
+                         "a NULL group Cube returns that no matched row without a class explains")
 
     def test_fan_out_fails_the_sum(self):
         t = self.tests[CLOSURE_ADDITIVE[1]]

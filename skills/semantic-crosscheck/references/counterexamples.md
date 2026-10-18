@@ -106,12 +106,18 @@ rows are never compared. Expected values are computed with exact decimal arithme
 `number` form (`6.000` equals `6`, nothing is rounded); a float `qty` cannot be checked exactly and is an error.
 The line chosen for scaling or splitting is deterministic in the seed and case index.
 
-A relation is `not_run` for a case when it would compare nothing: no diamond (`no_diamond`), no line on a
-multi-path (`no_multi_path_edge`), no quantity other than 1 to split (`no_non_unit_quantity`), a transformed
-fixture outside the column types or the profile (`type_domain`, `integrity_profile`), more than 10,000 rows in a
-fixture or answer (`size_bound`), or no compared pair (`no_pairs`). `not_run_reasons` counts them. A relation
-passes only when it compared pairs in at least one case and every comparison agreed. Unrun relations make the
-result `not_run` unless another relation failed; nothing is proven for them.
+A relation is `not_run` for a case when it would compare nothing or could not be computed exactly. Every
+relation of a case is `not_run` when the fixture has no BOM line (`no_bom_lines`), a line with a NULL parent,
+child or `qty_per` (`null_bom_value`), a `qty_per` that is not a valid `numeric(18,6)` value
+(`invalid_bom_value`), or lines that form a cycle (`cycle`). A single relation is `not_run` with no diamond
+(`no_diamond`), no line on a multi-path (`no_multi_path_edge`), no quantity other than 1 to split
+(`no_non_unit_quantity`), a transformed fixture outside the column types or the profile (`type_domain`,
+`integrity_profile`), more than 10,000 rows in a fixture or answer (`size_bound`), an expected value that exact
+decimal arithmetic cannot represent (`inexact_arithmetic`), or no compared pair (`no_pairs`). `not_run_reasons`
+counts them. A relation passes only when it compared pairs in at least one case and every comparison agreed; one
+that ran in no case is `not_run` with `reason` `no_admissible_generated_examples` (no case was checked) or
+`vacuous_for_every_case`. Unrun relations make the result `not_run` unless another relation failed; nothing is
+proven for them.
 
 The search stops at the first case that violates any relation: the violated relations `fail` (exit 1, like a
 comparison mismatch) and `fixture.json` (format `sxc-synthetic-metamorphic`) holds the original generated rows,
@@ -119,7 +125,9 @@ the failed relation ids and every transform specification. Results hold pair cou
 hashes of the transform specifications and fixture. Replay needs the same SQL file, `--seed` and profile;
 the transforms are recomputed from the saved rows and a file whose recorded transforms differ is refused before
 connecting. A missing `ancestor`/`descendant`/`qty` column, a duplicate pair, NULLs, non-text ids or a
-non-numeric `qty` is the `counterexample:metamorphic:shape` error; query failures stay `counterexample:query`.
+non-numeric `qty` is the `counterexample:metamorphic:shape` error; database, driver and connection failures stay
+`counterexample:query`. Any other exception is a fault of the tool, not a statement about the SQL, and is
+recorded as `stage` error.
 
 What the relations do not cover: errors that every transform preserves, such as a reversed edge direction, the
 wrong quantity column or a mis-mapped filter; correctness of the business rule; and any SQL other than the given

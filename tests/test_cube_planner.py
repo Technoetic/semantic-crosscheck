@@ -77,12 +77,21 @@ class StageRecordTest(Case):
         self.assertEqual(res.to_dict()["checks"][-1]["detail"]["sql_planner"], "tesseract")
 
     def test_errors_and_failures_record_the_served_planner_too(self):
-        for meta in (CubeError("HTTP 500: boom"), ConnectionResetError(), [], {"cubes": []}):
+        for meta in (CubeError("HTTP 500: boom"), ConnectionResetError(), [], None, {"cubes": []}):
             with self.subTest(meta=type(meta).__name__):
                 check = self.meta_check(self.stage(meta=meta))
                 self.assertNotEqual(check.status, "pass")
                 self.assertEqual(check.detail["sql_planner"], "tesseract")
                 self.assertEqual(check.detail["cube_version"], config.CUBE_VERSION)
+
+    def test_a_json_null_meta_answer_is_an_unexpected_response(self):
+        """HTTP 200 with the body `null` still leaves a cube:meta check, so report sees the served runtime (or its
+        absence) instead of a stage that passes without one."""
+        res = self.stage(meta=None)
+        check = self.meta_check(res)
+        self.assertEqual((check.status, check.detail["reason"]), ("error", "unexpected_response"))
+        self.assertEqual(res.status, "error")
+        self.assertEqual(self.meta_check(self.stage(meta=None, runtime=None)).detail, {"reason": "unexpected_response"})
 
     def test_a_client_without_runtime_facts_records_none_instead_of_guessing(self):
         check = self.meta_check(self.stage(runtime=None))

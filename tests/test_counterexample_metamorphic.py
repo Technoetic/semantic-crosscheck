@@ -433,20 +433,71 @@ class MetamorphicRunTest(unittest.TestCase):
         self.assertEqual(plain.status, 'pass')
 
     def test_shape_errors_and_query_errors_are_errors_without_values(self):
+        from pg8000.exceptions import DatabaseError, InterfaceError
+
         def duplicate(_conn, fixture, _sql, _timeout, _profile):
             return COLUMNS, [['A', 'B', Decimal(1)], ['A', 'B', Decimal(2)]]
-        def broken(*_args):
-            raise RuntimeError('ROW-VALUE-MUST-NOT-LEAK')
-        for name, side_effect, check in (('shape', duplicate, mm.SHAPE_ID), ('query', broken, 'counterexample:query')):
+
+        def raising(error):
+            def broken(*_args):
+                raise error
+            return broken
+        database = DatabaseError({'S': 'ERROR', 'C': '22012', 'M': 'ROW-VALUE-MUST-NOT-LEAK'})
+        for name, side_effect, check, detail in (
+                ('shape', duplicate, mm.SHAPE_ID, {}),
+                ('database', raising(database), 'counterexample:query', {'exception': 'DatabaseError', 'sqlstate': '22012'}),
+                ('interface', raising(InterfaceError('ROW-VALUE-MUST-NOT-LEAK')), 'counterexample:query',
+                 {'exception': 'InterfaceError', 'sqlstate': ''}),
+                ('os', raising(ConnectionResetError('ROW-VALUE-MUST-NOT-LEAK')), 'counterexample:query',
+                 {'exception': 'ConnectionResetError', 'sqlstate': ''})):
             with self.subTest(name=name):
                 with patch.object(mm.db, 'connect', return_value=SimpleNamespace(close=lambda: None)), \
                      patch.object(mm, 'answer', side_effect=side_effect):
                     result = ce.run(None, self.args(), self.path / name)
                 self.assertEqual(result.status, 'error')
-                self.assertIn(check, {c.id for c in result.checks})
+                checks = self.checks(result)
+                self.assertIn(check, checks)
+                for key_, value in detail.items():
+                    self.assertEqual(checks[check].detail[key_], value, key_)
                 self.assertNotIn('ROW-VALUE', json.dumps(result.to_dict()))
                 self.assertFalse(any(c.status == 'pass' for c in result.checks))
                 self.assertFalse((self.path / name / 'counterexample/fixture.json').exists())
+
+    def test_internal_errors_are_not_reported_as_query_errors(self):
+        """A fault of this code (not the database, the driver or the connection) is no statement about the SQL: it
+        propagates, and sxc.main records it as stage:error."""
+        for error in (RuntimeError('ROW-VALUE-MUST-NOT-LEAK'), KeyError('mr1_unfold'), TypeError('x')):
+            with self.subTest(error=type(error).__name__), \
+                 patch.object(mm.db, 'connect', return_value=SimpleNamespace(close=lambda: None)), \
+                 patch.object(mm, 'check_case', side_effect=error):
+                with self.assertRaises(type(error)):
+                    ce.run(None, self.args(), self.path / type(error).__name__)
+        out = self.path / 'cli'
+        with patch.object(mm.db, 'connect', return_value=SimpleNamespace(close=lambda: None)), \
+             patch.object(mm, 'check_case', side_effect=RuntimeError('ROW-VALUE-MUST-NOT-LEAK')), \
+             contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()) as console:
+            code = sxc.main(['counterexample', '--metamorphic-sql', str(self.sql), '--out', str(out)])
+        self.assertEqual(code, 1)
+        saved = json.loads((out / 'counterexample' / 'result.json').read_text(encoding='utf-8'))
+        self.assertEqual([(c['id'], c['status'], c['detail'].get('exception')) for c in saved['checks']],
+                         [('stage', 'error', 'RuntimeError')])
+        self.assertNotIn('ROW-VALUE', json.dumps(saved) + console.getvalue())
+
+    def test_each_fixture_is_answered_in_one_repeatable_read_snapshot(self):
+        statements = []
+
+        class Prepared:
+            columns = [{'name': name} for name in COLUMNS]
+
+            def run(self, **_params):
+                return []
+
+            def close(self):
+                pass
+        conn = SimpleNamespace(run=lambda sql, **_k: statements.append(sql), prepare=lambda sql: Prepared())
+        self.assertEqual(mm.answer(conn, ce.generate(mm.SCENARIO, 7, 0), 'SELECT 1', 1000), (COLUMNS, []))
+        self.assertEqual(statements, ['BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY',
+                                      'SET LOCAL statement_timeout = 1000', 'ROLLBACK'])
 
     def test_sql_edit_during_the_run_never_passes(self):
         def answer(_conn, fixture, _sql, _timeout, _profile):
@@ -501,6 +552,15 @@ class MetamorphicCliTest(unittest.TestCase):
                 sxc.main(['counterexample', '--reference-sql', 'r.sql', '--candidate-sql', 'c.sql', '--out', tmp])
                 sxc.main(['counterexample', '--metamorphic-sql', 'closure.sql', '--scenario', 'nulls', '--out', tmp])
         self.assertEqual(seen, ['bom_diamond', 'nulls', 'nulls'])
+
+    def test_config_is_refused_with_a_message_for_both_modes(self):
+        with self.assertRaises(StageError) as caught:
+            sxc.config_path('counterexample', 'crosscheck.toml')
+        message = str(caught.exception)
+        self.assertEqual(caught.exception.exit_code, 2)
+        self.assertNotIn('the two SQL files', message, 'metamorphic mode takes one SQL file')
+        for option in ('--reference-sql', '--candidate-sql', '--metamorphic-sql'):
+            self.assertIn(option, message)
 
     def test_missing_comparison_files_exit_with_configuration_error(self):
         with tempfile.TemporaryDirectory() as tmp, contextlib.redirect_stdout(io.StringIO()), \

@@ -200,20 +200,21 @@ def run(cfg, args, out: Path) -> Result:
 
     log_path = cube_dir / "server.log"
     log_path.write_text("", encoding="utf-8")
-    meta = None
+    meta, answered = None, False
     with cube_run.serve(cfg, cube_dir, log_path) as client:
         # only what serve() recorded about the child it started; nothing is filled in when it is missing
         served = dict(getattr(client, "runtime", None) or {})
         try:
-            meta = client.meta()
+            meta, answered = client.meta(), True
         except CubeError as e:
             res.add("cube:meta", "error", "", http_status=http_status(e), **served)
         except (OSError, ValueError, http.client.HTTPException) as e:   # reset, timeout, truncated or non-JSON body
             res.add("cube:meta", "error", "", reason=type(e).__name__, **served)
+    # every served run leaves one cube:meta with the runtime facts: report reads them (cube_runtime_missing otherwise)
     if isinstance(meta, dict):
         status, detail = meta_check(public, meta)
         res.add("cube:meta", status, "", cubes=len(meta.get("cubes", []) or []), **detail, **served)
-    elif meta is not None:
+    elif answered:   # any other JSON body, `null` included
         res.add("cube:meta", "error", "", reason="unexpected_response", **served)
     res.next_safe_action = _next_action(res, cfg, cube_names, Path(out))
     return res

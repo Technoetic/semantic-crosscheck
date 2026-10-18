@@ -5,12 +5,16 @@
   additive  for every sum/count measure (the configuration's measures and the closure cube's `qty` and `pairs`) and
             every cube with the ontology class column that Cube joins to the measure's cube through many_to_one or
             one_to_one steps only (join_path, seen from the measure), the groups by that column, the NULL group
-            included, add up to the measure's total, and the NULL group equals an independent anti-join over the
-            measure source (null_group_sql: the source rows with no dimension row whose class is set). Measure
-            rows Cube drops (keys missing from the node table) or a join that fans out break the sum; rows Cube
-            puts in the wrong group break the NULL group. A path with a one_to_many (or unknown) step gets no
-            test, because a row legitimately counts in several groups; not_applicable lists it for not_proven,
-            and so it lists an additive path whose NULL group no configuration entry describes.
+            included, add up to the measure's total, and the NULL group equals independent SQL over the measure
+            source (null_group_sql). Which source rows form the NULL group depends on the cube Cube roots the
+            grouped query at (the test's root): from the measure's cube (a forward path, e.g. closure ->
+            <h>_ancestor) Cube LEFT JOINs the dimension, so the rows with no dimension row whose class is set (an
+            anti-join); from the dimension's cube (a backward path, e.g. a generated node cube's one_to_one join
+            to its measure cube) Cube drops the measure rows with no dimension row, so only the matched rows whose
+            class is NULL. Measure rows Cube drops (keys missing from the node table) or a join that fans out
+            break the sum; rows Cube puts in the wrong group break the NULL group. A path with a one_to_many (or
+            unknown) step gets no test, because a row legitimately counts in several groups; not_applicable lists
+            it for not_proven, and so it lists an additive path whose NULL group no configuration entry describes.
   pair      measures of cubes joined to the same parent, queried together, equal the same measures queried
             alone, per key: the closure `qty` with each closure-joined measure (grouped by the closure end the
             measure is joined on, `ancestor` in the demo) and every two measures joined to the same node cube
@@ -39,7 +43,8 @@ The additive tests are bounded by the configuration: one per additive measure an
 Cube can join it to (in a generated model: the node cube of each measure with a node, and the ancestor and
 descendant copies for `qty` and `pairs`), with as many groups as the column has values. The NULL group's SQL side
 (null_group_sql) is read once per test, like a pair test's key sample, and reused by every replay; its detail holds
-whether the two NULL groups are equal and the row counts of the anti-join (null_group_rows, orphan_rows).
+whether the two NULL groups are equal and the row counts of the SQL NULL group and of the source rows with no
+dimension row (null_group_rows, orphan_rows; under a backward path the orphans are counted but are no NULL group).
 """
 
 import math
@@ -213,8 +218,11 @@ def _additive_plan(cfg, cubes: dict) -> tuple[list[dict], list[str]]:
                 notes.append(f"v3:{tid}: not compared: no configuration entry describes the join path "
                              f"{_path_text(steps)}, so its NULL group has no independent SQL; no additivity check")
                 continue
+            # the cube Cube roots the grouped query at, as join_path chose the direction: the measure's cube when it
+            # reaches the dimension's cube itself, otherwise the dimension's cube (null_group_sql depends on it)
+            root = "measure" if _directed(cubes, mc, dc) else "dimension"
             out.append({"id": tid, "kind": "additive", "members": [measure, dim], "measure": measure,
-                        "dimension": dim, "agg": agg, "path": [list(s) for s in steps],
+                        "dimension": dim, "agg": agg, "path": [list(s) for s in steps], "root": root,
                         "null_source": {**null_source, "class_column": col}, "config_ref": ref})
     return out, notes
 
@@ -285,13 +293,30 @@ def closure_total_sql(cfg, h: str, column: str) -> str:
 
 def null_group_sql(cfg, test: dict) -> str:
     """The NULL group of an additive test by the configuration, independent of the Cube model: (the measure over the
-    source rows that have no dimension row with a non-null class value, the number of those rows, the number of
-    source rows with no dimension row at all). Under a many_to_one join these rows, and only these, fall into the
-    NULL group: rows with no dimension row (an anti-join, NOT EXISTS) and rows whose dimension row has no class."""
+    source rows Cube puts in the NULL group, the number of those rows, the number of source rows with no dimension
+    row at all). Which rows those are depends on the cube Cube roots the grouped query at (test["root"]):
+
+      measure    the measure's cube reaches the dimension's cube (a forward path, e.g. closure -> <h>_ancestor):
+                 Cube LEFT JOINs the dimension to every measure row, so the NULL group holds the rows with no
+                 dimension row with a non-null class: rows with no dimension row at all (an anti-join, NOT EXISTS)
+                 and rows whose dimension row has no class.
+      dimension  only the dimension's cube reaches the measure's (a backward path, e.g. a generated node cube's
+                 one_to_one join to its measure cube): Cube LEFT JOINs the measure rows to the dimension rows and
+                 drops the measure rows with no dimension row, so the NULL group holds only the matched rows whose
+                 class is NULL. The dropped rows are in the measure's total but in no group, so the sum catches
+                 them; they are still counted (the third column).
+
+    Any other root is a ValueError: no NULL group is guessed."""
     src = test["null_source"]
     dim, key, fk = ident.qualified(src["dim_table"]), ident.quote(src["dim_key"]), f"t.{ident.quote(src['fk'])}"
     matched = f"SELECT 1 FROM {dim} d WHERE d.{key} = {fk}"
-    null_group = f"NOT EXISTS ({matched} AND d.{ident.quote(src['class_column'])} IS NOT NULL)"
+    classified = f"EXISTS ({matched} AND d.{ident.quote(src['class_column'])} IS NOT NULL)"
+    if test.get("root") == "measure":
+        null_group = f"NOT {classified}"
+    elif test.get("root") == "dimension":
+        null_group = f"EXISTS ({matched}) AND NOT {classified}"
+    else:
+        raise ValueError("additive test without a known join root")
     if "measure" in src:
         m = cfg.measures[src["measure"]]
         table = ident.qualified(cfg.entity(m.entity, f"measures.{m.name}").table)

@@ -115,7 +115,8 @@ def config_path(stage: str, given: str | None) -> Path | None:
     and cube-install may run without."""
     if stage == "counterexample":
         if given is not None:
-            raise StageError("counterexample uses synthetic fixtures, not --config; pass the two SQL files", EXIT_CONFIG)
+            raise StageError("counterexample uses synthetic fixtures, not --config; pass the trusted SQL instead "
+                             "(--reference-sql and --candidate-sql, or --metamorphic-sql)", EXIT_CONFIG)
         return None
     if given is not None:
         p = Path(given)

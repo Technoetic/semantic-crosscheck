@@ -182,7 +182,7 @@ $$
 | Node.js + npm | `cube-install`, `cube`, `verify` | **Node.js 22 이상** |
 | Cube 네이티브 모듈 지원 플랫폼 | `cube`, `verify` | Windows x64 · macOS x64/arm64 · Linux x64/arm64 |
 
-Cube 1.8.3의 파일 크기와 SHA-256은 [native-sha256.json](skills/semantic-crosscheck/adapters/cube/native-sha256.json)에 고정되어 있습니다. Linux는 x64에서 **glibc 2.34** 이상, arm64에서 **glibc 2.30** 이상이 필요하며 musl은 지원하지 않습니다.
+Cube는 항상 Tesseract SQL 플래너(`CUBEJS_TESSERACT_SQL_PLANNER=true`)로 실행하고 `cube:meta`에 Cube 버전과 플래너를 기록합니다. 기록이 없거나 다르면 report가 이전 결과를 최신으로 인정하지 않으므로, 0.3.0에서 만든 cube·verify 결과는 다시 실행합니다. Cube 1.8.3의 파일 크기와 SHA-256은 [native-sha256.json](skills/semantic-crosscheck/adapters/cube/native-sha256.json)에 고정되어 있습니다. Linux는 x64에서 **glibc 2.34** 이상, arm64에서 **glibc 2.30** 이상이 필요하며 musl은 지원하지 않습니다.
 
 > [!NOTE]
 > **지원 목록과 실제 통합 시험 범위는 다릅니다.** CI는 Linux·Windows·macOS × Python 3.11/3.13에서 단위 테스트를 실행하고, Linux x64에서 PostgreSQL 17·Java 21·Node.js 22 통합과 데모를 실행합니다. Java 11 자체, macOS 및 Linux arm64의 Cube 전체 실행은 통합 시험하지 않았습니다.
@@ -450,6 +450,12 @@ NOT NULL·FK·CHECK를 지키는 데이터만 실행하고 축소합니다. FK�
 거부하며, 최소성은 제약을 지키는 단일 행 삭제 범위입니다. 재현할 때도 같은 프로필
 파일이 필요합니다. 실제 운영 DB의 모든 제약을 자동으로 읽거나 증명하는 기능은 아닙니다.
 
+`--metamorphic-sql examples/counterexamples/bom_diamond-reference.sql`은 정답 SQL 없이 BOM 폐포 SQL
+하나를 검사합니다. 다이아몬드 펼침·간선 수량 배수·분리 성분 추가·단위 중간 노드 삽입 네 가지
+변환에서 결과가 경로 곱 합의 관계를 지키는지 정확한 십진수로 비교합니다. 위반은 비교 실패(exit 1)와
+재현용 `fixture.json`, 적용할 변환이 없으면 `not_run`입니다. 변환에 불변인 오류(간선 방향, 잘못된
+수량 열)는 잡지 못하며 gold 비교(V1/V3/V5)를 대신하지 않습니다.
+
 `[source]`의 선택 항목 `data_revision_sql_file`을 지정하면 검증 시작·종료와 보고서에서
 실제 DB의 버전을 조회해 해시로 연결합니다. 데이터 소유자가 관련 데이터 변경과 같은
 트랜잭션에서 버전을 갱신하고 과거 값을 재사용하지 않아야 합니다. 버전·검증 엔진·조회
@@ -513,9 +519,9 @@ flowchart TD
 | build | `closure:<h>`, `closure_apply:<h>` | 순환 정책·최대 깊이 충족, 적용한 폐포가 재계산과 일치 |
 | reason | `shacl:<id>` | pySHACL의 위반 대상과 SQL 위반 키 일치 |
 | reason | `owl:consistency`, `v5:closure:<h>`, `v5:defined:<name>` | OWL 일관성, OWL의 폐포·정의 클래스가 SQL과 일치 |
-| cube | `cube:model`, `cube:meta`, `cube:gold_members:<gold>` | 모델 생성, 공개 멤버 목록 정확, gold 질의 멤버 존재·공개 |
+| cube | `cube:model`, `cube:meta`, `cube:gold_members:<gold>` | 모델 생성, 공개 멤버 목록 정확(Cube 버전·SQL 플래너 기록), gold 질의 멤버 존재·공개 |
 | verify | `v1:<gold>`, `v2:<gold>:<stratum>` | Cube 타입에 맞춘 기준 SQL·Cube 행 일치 |
-| verify | `v3:total:<member>`, `v3:additive:<member>:<member>`, `v3:pair:<member>+<member>` | 합계·그룹 합·지표 조합 일치 |
+| verify | `v3:total:<member>`, `v3:additive:<member>:<member>`, `v3:pair:<member>+<member>` | 합계·그룹 합(NULL 그룹과 독립 anti-join 포함)·지표 조합 일치 |
 | verify | `v4:<operator>:<target>` | gold suite의 실패 항목이 변형 모델을 검출 |
 | report | `stage:<name>` | 단계가 실행되었고 최신이며 통과 |
 | build·reason·cube·verify / report | `data_revision:stable`, `data_revision:current` | 구성된 데이터 버전이 안정적이며 현재 근거와 일치; 조회 오류는 실패로 닫음 |
@@ -593,9 +599,9 @@ Cube의 기본 오류 로그에는 오류 클래스·코드·대략적인 범주
 |---|---|
 | 빈 층 | 해당 종류의 데이터가 없어 V2 비교 대상 없음 |
 | 동등 변이 | 현재 데이터에서 모델을 바꿔도 결과가 같아 V4로 구분 불가 |
-| SQL에서만 비교한 규칙 | `sql_violation`, class+범위 제약, `shared_path`처럼 다른 RDF 값 유형을 요구하는 같은 열의 shapes. 새 shape를 추가하면 다른 shape의 SHACL 비교가 제외될 수 있음 |
+| SQL에서만 비교한 규칙 | `sql_violation`과 한 shape에 class와 범위가 함께 있는 제약(`class_and_bounds`). 같은 열에 서로 다른 RDF 값 유형이 필요한 shapes(class와 범위, 서로 다른 class)는 값 그룹별 데이터 그래프로 나눠 SHACL과 비교함 |
 | 비어 있는 정의 클래스 | OWL과 SQL 양쪽 모두 멤버가 없어 비교가 공허하게 성립 |
-| V3 지표 쌍의 표본 | 2,000키를 넘으면 재현 가능한 2,000키 표본으로 비교 |
+| V3 지표 쌍의 표본 | 2,000키를 넘으면 재현 가능한 2,000키 표본으로 비교. not_proven에 95% 탐지 한계(`d95_keys`)를 함께 적으며, 그보다 적은 키에만 있는 불일치는 놓칠 수 있음 |
 | 선택 구성 요소·단계 | 설치되지 않았거나 선택 단계가 실행되지 않음 |
 
 <details>

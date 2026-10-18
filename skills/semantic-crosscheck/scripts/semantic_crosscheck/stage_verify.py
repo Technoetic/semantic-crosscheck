@@ -11,8 +11,9 @@ One Cube process (cube_run.serve on <out>/cube, log in verify/server.log) serves
   v2:<gold>:<stratum>   every binding of the stratum matches exactly (rows_compared counts gold rows); an empty
                         stratum passes vacuously and is listed as not proven
   v3:<test>             the shape_q tests derived from the model; a pair test over more keys than
-                        shape_q.PAIR_KEY_CAP compares a deterministic sample and says so in not_proven (and so does
-                        V4, whose suite replays the same sample)
+                        shape_q.PAIR_KEY_CAP compares a deterministic sample and says so in not_proven, with the
+                        sample's detection bound (and so does V4, whose suite replays the same sample; a survivor of
+                        a suite with such a sampled item is marked sample_blind_possible)
 Gold and Cube values are compared in the form of the Cube member type of each mapped column (compare.member_kinds of
 the model): text exactly, numbers as exact decimals, dates and timestamps in UTC, booleans as booleans.
 
@@ -357,8 +358,7 @@ class _Verify:
         self.baseline[cid] = st
         self.res.add(cid, st, t.get("config_ref", ""), **detail)
         if "sampled_keys" in detail:
-            self.res.not_proven.append(f"{cid}: compared {detail['sampled_keys']} of {detail['total_keys']} keys (a "
-                                       "deterministic sample with verify.seed); the other keys were not compared")
+            self.res.not_proven.append(f"{cid}: {shape_q.sample_note(detail)}")
 
     def v4(self, conn):
         items = [(iid, fn) for iid, _cid, fn in self.items if self.baseline.get(iid) == "pass"]
@@ -369,8 +369,11 @@ class _Verify:
         if not items:
             self.res.add("v4:suite", "not_run", "verify", reason="no_passing_suite_item", suite_items=len(self.items))
             return
+        replayed = {iid for iid, _fn in items}
+        sampled = [f"v3:{t['id']}" for t in self.suite_tests
+                   if shape_q.sampled(t) and f"v3:{t['id']}" in replayed and len(t["sample_keys"]) < t["total_keys"]]
         checks, not_proven = mutate.run_mutants(self.cfg, self.out, conn, self.model, mutation_suite(items),
-                                                closure=self.closure)
+                                                closure=self.closure, sampled_items=sampled)
         for cid, st, ref, detail in checks:
             detail = dict(detail or {})
             if st == "fail" and self.excluded:

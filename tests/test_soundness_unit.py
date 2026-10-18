@@ -261,7 +261,7 @@ class ClosureGateTest(unittest.TestCase):
         self.assertEqual(v.excluded, {"excluded_by_gold"})
         v.items, v.baseline = [("v1:q03_stock", "v1:q03_stock", lambda client: "pass")], {"v1:q03_stock": "pass"}
 
-        def run_mutants(cfg_, out_, conn, model, suite, closure=None):
+        def run_mutants(cfg_, out_, conn, model, suite, closure=None, sampled_items=()):
             return [("v4:measure_filter_drop:firm_open", "fail", "measures.firm_open", {"witness": 2, "killed_by": ""}),
                     ("v4:measure_filter_drop:firm_open_dated", "pass", "measures.firm_open_dated",
                      {"witness": 2, "killed_by": "v1:q03_stock"})], []
@@ -409,7 +409,10 @@ class PairSampleTest(unittest.TestCase):
         with mock.patch.object(shape_q, "run_test", return_value=("pass", {"keys": 2000, "sampled_keys": 2000, "total_keys": 2500})):
             v.v3(None, None, self.test, None)
         self.assertEqual(v.res.not_proven, [f"v3:{self.test['id']}: compared 2000 of 2500 keys (a deterministic sample with "
-                                            "verify.seed); the other keys were not compared"])
+                                            "verify.seed); the other keys were not compared; a mismatch affecting at "
+                                            "least 2 keys (0.08%) is detected with 95% probability, assuming the "
+                                            "mismatching keys are independent of the fixed md5 sample order; fewer "
+                                            "mismatching keys may be missed"])
 
     def test_v4_says_when_its_pair_tests_were_sampled(self):
         tmp = tempfile.TemporaryDirectory()

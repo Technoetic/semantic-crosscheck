@@ -13,8 +13,11 @@ bottom-up recursion over the edges bounded by max_depth (so a cycle cannot make 
 is ordered with the "C" collation, so the same configuration samples the same ids on every database; md5_order()
 gives that order to other samples (the V3 pair tests on large node entities).
 
-All strata of a gold query are sampled by one statement in a READ ONLY transaction. An empty stratum comes
-back as (stratum, None): the caller reports it as not proven instead of failing it.
+All strata of a gold query are sampled by one statement in a READ ONLY transaction. One statement reads one
+snapshot, so the transaction keeps the default isolation (READ COMMITTED); the to_regclass probe before it only
+chooses between the closure table and the recursion, and is a catalog lookup that a REPEATABLE READ snapshot would
+not freeze either. An empty stratum comes back as (stratum, None): the caller reports it as not proven instead of
+failing it.
 """
 
 import math

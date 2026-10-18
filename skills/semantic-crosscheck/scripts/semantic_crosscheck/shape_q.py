@@ -21,15 +21,22 @@ A pair test groups by every key of its node entity or closure end. Cube joins th
 with a nested loop, so its cost grows with the square of the keys, and the client's row limit caps the answer.
 Above PAIR_KEY_CAP keys the test therefore compares a deterministic sample of PAIR_KEY_CAP keys (sweep.md5_order with
 verify.seed, read once from the node table or the closure table and reused by every replay), filtered in each of
-its queries, and its detail says how many keys were compared out of how many (sampled_keys, total_keys).
+its queries, and its detail says how many keys were compared out of how many (sampled_keys, total_keys). The key
+count and the sample are read in one REPEATABLE READ snapshot, so the sample is drawn from the keys that were counted.
+A sampled detail also carries the sample's detection bound (d95_keys, and d95_rate = d95_keys / total_keys): the
+smallest number of mismatching keys of which a sample of n out of N keys holds at least one with probability 95% or
+more, assuming the mismatching keys are independent of the fixed md5 order; fewer mismatching keys may all lie outside
+the sample.
 Details hold counts and flags only, never totals or keys.
 """
 
+import math
 from decimal import Decimal, InvalidOperation
 
 from . import canon, compare, cube_gen, db, ident, naming, sweep
 
 PAIR_KEY_CAP = 2000
+MISS = 20          # the detection bound allows a miss probability of at most 1/MISS (5%)
 
 
 def _m(cube: str, name: str) -> str:
@@ -144,16 +151,66 @@ def closure_total_sql(cfg, h: str, column: str) -> str:
 
 def pair_keys(conn, cfg, test: dict) -> tuple[int, list | None]:
     """(distinct keys a pair test groups by, a deterministic sample of PAIR_KEY_CAP of them or None when there are not
-    more than that), read from test["keys_from"] (table, column) in one READ ONLY transaction."""
+    more than that), read from test["keys_from"] (table, column) in one READ ONLY REPEATABLE READ transaction, so the
+    count and the sample see the same rows."""
     table, column = test["keys_from"]
     col, source = f"t.{ident.quote(column)}", ident.qualified(table)
-    with db.read_only(conn, cfg.source.statement_timeout_ms):
+    with db.read_only(conn, cfg.source.statement_timeout_ms, isolation="repeatable read"):
         total = int(db.scalar(conn, f"SELECT count(DISTINCT {col}) FROM {source} t") or 0)
         if total <= PAIR_KEY_CAP:
             return total, None
         rows = conn.run(f"SELECT s.k FROM (SELECT DISTINCT {col} AS k FROM {source} t WHERE {col} IS NOT NULL) s "
                         f"ORDER BY {sweep.md5_order('s.k')} LIMIT :n", seed=str(cfg.verify.seed), n=PAIR_KEY_CAP)
     return total, [r[0] for r in rows or []]
+
+
+def _count(v, name: str) -> int:
+    if type(v) is not int or v < 0:
+        raise ValueError(f"d95_keys: {name} must be a non-negative integer")
+    return v
+
+
+def d95_keys(sampled: int, total: int) -> int | None:
+    """The smallest D >= 1 such that a uniform sample of `sampled` out of `total` keys misses all of D mismatching keys
+    with probability C(total - D, sampled) / C(total, sampled) <= 5% (zero-acceptance hypergeometric sampling), or
+    None when the sample is not smaller than the population (every key is compared). Exact: the comparison is done on
+    integers (math.comb), with the symmetric form C(total - sampled, D) / C(total, D) while D < sampled, and the
+    probability decreases in D, so a bisection over 1 .. total - sampled + 1 (where it is 0) finds the bound."""
+    n, total = _count(sampled, "sampled"), _count(total, "total")
+    if n < 1:
+        raise ValueError("d95_keys: sampled must be at least 1")
+    if total <= n:
+        return None
+
+    def detected(d: int) -> bool:
+        if d < n:
+            return MISS * math.comb(total - n, d) <= math.comb(total, d)
+        return MISS * math.comb(total - d, n) <= math.comb(total, n)
+    lo, hi = 1, total - n + 1
+    while lo < hi:
+        mid = (lo + hi) // 2
+        if detected(mid):
+            hi = mid
+        else:
+            lo = mid + 1
+    return lo
+
+
+def sample_note(detail: dict) -> str:
+    """The not_proven text of a sampled pair test's detail: how many keys it compared and its detection bound."""
+    n, total = detail["sampled_keys"], detail["total_keys"]
+    note = f"compared {n} of {total} keys (a deterministic sample with verify.seed); the other keys were not compared"
+    d95 = detail.get("d95_keys")
+    if not d95:
+        try:
+            d95 = d95_keys(n, total)
+        except ValueError:
+            d95 = None
+    if not d95:
+        return note
+    return (f"{note}; a mismatch affecting at least {d95} keys ({100 * d95 / total:.3g}%) is detected with 95% "
+            "probability, assuming the mismatching keys are independent of the fixed md5 sample order; fewer "
+            "mismatching keys may be missed")
 
 
 def run_test(conn, client, cfg, model: dict, test: dict) -> tuple[str, dict]:
@@ -273,4 +330,7 @@ def _run_pair(conn, client, cfg, test: dict) -> tuple[str, dict]:
               "alone_only_keys": alone_only}
     if sample is not None:
         detail.update(sampled_keys=len(sample), total_keys=total)
+        d95 = d95_keys(len(sample), total) if sample else None
+        if d95:
+            detail.update(d95_keys=d95, d95_rate=d95 / total)
     return ("pass" if ok else "fail"), detail

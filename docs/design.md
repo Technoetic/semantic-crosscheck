@@ -117,11 +117,20 @@ exit 3, so one run lists everything to fix.
   CREATE on the schema), `privileges:temporary` (temporary tables for the closure) and `output_schema`.
 - **Transactions.** `doctor`, `reason`, the catalog reads of `cube` and every read of `verify` (gold SQL,
   sampling, witnesses, V3 SQL) run in `READ ONLY` transactions with `source.statement_timeout_ms`
-  (`db.read_only`). `build` reads the source tables inside its write transactions (it counts the shape views and
-  copies the edges into temporary tables there) and relies on the check role's privileges; it writes only to
-  the output schema and to temporary tables. Each build transaction first takes
-  `pg_advisory_xact_lock(hashtext('semantic-crosscheck build <output_schema>'))`, so two builds of one output
-  schema wait for each other. `demo` writes with the loader role under its own advisory lock, in one
+  (`db.read_only`). The SQL reads inside one check share one snapshot: where a check combines the results of
+  several statements, they run in one `REPEATABLE READ` transaction (the key count and the key sample of a V3
+  pair test, and the `information_schema` reads the `cube` stage builds the model from, through
+  `db.read_only(..., isolation="repeatable read")`; the row exports of `reason` and the counterexample
+  comparisons set the same level inside their transaction). A read of one statement (gold SQL, a witness, a
+  strata sample, a V3 total) keeps the default `READ COMMITTED`, under which that statement sees one snapshot.
+  Catalog lookups such as `to_regclass` are not frozen by either level. No transaction stays open while Cube
+  answers, and no snapshot is exported to another session: Cube's sessions, the stages, and the SQL reads
+  before and after a Cube query share no snapshot, so a run relies on stable data or on the
+  `source.data_revision_sql_file` contract (section 8). `build` reads the source tables inside its write
+  transactions (it counts the shape views and copies the edges into temporary tables there) and relies on the
+  check role's privileges; it writes only to the output schema and to temporary tables. Each build transaction
+  first takes `pg_advisory_xact_lock(hashtext('semantic-crosscheck build <output_schema>'))`, so two builds of
+  one output schema wait for each other. `demo` writes with the loader role under its own advisory lock, in one
   transaction with a 10-minute statement timeout.
 - **Cube sessions are read-only and bounded.** Cube connects with the check role (or `[cube].dsn_env`), with
   `PGOPTIONS='-c default_transaction_read_only=on -c statement_timeout=<cube.query_timeout_s * 1000>'` and
@@ -186,7 +195,7 @@ parameters are ignored.
 | `ident` | `check`, `quote`, `qualified('schema.table')`, `split` |
 | `canon` | `canon(v, kind=None)`: strict canonical form; `kind` is one of `KINDS = ('string', 'number', 'time', 'boolean')`, `None` compares untyped; `same(a, b, kind=None)`; `key(v)`: text exactly, other values untyped (RDF IRIs and key sets) |
 | `config` | `load(path) -> Config` (dataclasses; see the module); `cfg.hierarchy(name='')`, `cfg.entity(name, ref)`, `cfg.cube_dsn_env()` |
-| `db` | `connect(env_name, require_pg17=True)` (doctor passes `False`), `parse_dsn`, `redact`, `rows(conn, sql, **params) -> list[dict]`, `scalar`, `read_only(conn, ms)`, `write_tx(conn, ms)`, `server_version_num` |
+| `db` | `connect(env_name, require_pg17=True)` (doctor passes `False`), `parse_dsn`, `redact`, `rows(conn, sql, **params) -> list[dict]`, `scalar`, `read_only(conn, ms, isolation=None)` (`None` or `"repeatable read"`), `write_tx(conn, ms)`, `server_version_num` |
 | `procutil` | `which(name)`: absolute path of a program on `PATH`, never the current directory |
 | `naming` | every generated name: closure/cycles tables, shape views, cube and member names, RDF IRIs, OWL property names |
 | `closure` | `build(conn, cfg, h) -> (checks, sql_log)` inside the caller's transaction, which holds the output schema's build lock |
@@ -195,8 +204,8 @@ parameters are ignored.
 | `cube_client` | `CubeClient.load(query) -> list[dict]` (polls "Continue wait", explicit limit 50,000, never `renewQuery`, no proxies), `meta()` |
 | `compare` | `run_binding(conn, client, cfg, gold, params, cache=None, types=None)`, `compare_rows(gold, g_rows, c_rows, types=None)`, `member_kinds(model)`, `gold_kinds(gold, kinds)` |
 | `sweep` | `bindings(conn, cfg, gold)`, `strata_names(gold)`, `md5_order(column)` |
-| `shape_q` | `tests(cfg, model)`, `run_test(...)`, `pair_keys(conn, cfg, test)`, `sampled(test)`, `PAIR_KEY_CAP = 2000` |
-| `mutate` | `OPERATORS`, `CLOSURE_OPERATORS`, `OUTCOMES`, `selected(cfg)`, `run_mutants(cfg, out, conn, model, suite, closure=None)`, `verdict(status, item)`, `closure_status(cfg, out)` |
+| `shape_q` | `tests(cfg, model)`, `run_test(...)`, `pair_keys(conn, cfg, test)`, `sampled(test)`, `d95_keys(sampled, total)`, `sample_note(detail)`, `PAIR_KEY_CAP = 2000` |
+| `mutate` | `OPERATORS`, `CLOSURE_OPERATORS`, `OUTCOMES`, `selected(cfg)`, `run_mutants(cfg, out, conn, model, suite, closure=None, sampled_items=())`, `verdict(status, item)`, `closure_status(cfg, out)` |
 | `demo` | `build(dirty, seed, scale) -> {"parts","edges","orders","stock","malformed","expected"}`, `load(conn, data)`, `reference(expected, variant, seed, scale)`, `TABLES`, `TableMismatch` |
 
 ## 5. Generated objects (names from `naming.py`)
@@ -322,8 +331,15 @@ together (the closure `qty` with each closure-joined measure, and every two meas
 cube) equal the same measures queried one at a time, per key, which exposes join fan-out. Pair-test keys are
 typed like V1/V2 keys. A pair test whose key source (the node table key, or the closure end) has more than
 `shape_q.PAIR_KEY_CAP` = 2,000 distinct values compares a deterministic sample of 2,000 keys (ordered by
-`md5(key || seed) COLLATE "C", key`), read once and filtered with an `equals` filter in each of its queries; the
-detail gains `sampled_keys` and `total_keys`, and `not_proven` says `compared 2000 of N keys`. The cap is fixed.
+`md5(key || seed) COLLATE "C", key`), read once (the key count and the sample in one `REPEATABLE READ` snapshot)
+and filtered with an `equals` filter in each of its queries; the detail gains `sampled_keys` and `total_keys`, and
+`not_proven` says `compared 2000 of N keys`. The cap is fixed. The detail also gains the sample's detection bound
+`d95_keys`, the smallest D >= 1 with C(N - D, n) / C(N, n) <= 0.05 for n sampled out of N keys (zero-acceptance
+hypergeometric sampling, computed exactly on integers), and `d95_rate` = D / N; for n = 2,000 the bound is 6 at
+N = 5,000, 29 at N = 20,000, 149 at N = 100,000 and 1,496 at N = 1,000,000. The `not_proven` line keeps its prefix
+and adds that a mismatch affecting at least D keys (r%) is detected with 95% probability, assuming the mismatching
+keys are independent of the fixed md5 sample order, and that fewer mismatching keys may be missed. The bound is a
+statement about the sample, not a verdict: the check's status is unchanged.
 
 **V4 mutation tests.** Each operator patches a deep copy of the model; a fresh Cube process serves each mutant
 (from `verify/mutants/<operator>__<target>/`) and the suite runs against it. The suite replays V1 (the first
@@ -348,7 +364,10 @@ suite items are missing because a closure gated them, their gold query could not
 (`suite_incomplete`, detail `excluded`) instead of failed: the missing items might have killed it. A kill by part
 of the suite is still a pass. A closure operator whose closure cube is not in the model is listed in
 `not_proven` (not applicable). Every V4 detail holds `witness` and the run's `summary` counts (`killed`,
-`survived`, `equivalent`, `error`, `not_applicable`, `not_run`).
+`survived`, `equivalent`, `error`, `not_applicable`, `not_run`). The detail of a mutant that survived a suite
+replaying a sampled V3 pair test (fewer keys compared than exist) also holds `sample_blind_possible = true` and
+`sampled_items` (those V3 check ids): the mutant may change only keys outside the samples. The marker changes no
+status.
 
 | Operator | Applies to | Mutation | Witness (rows of the current data) |
 |---|---|---|---|

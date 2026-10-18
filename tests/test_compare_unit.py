@@ -563,7 +563,7 @@ class StageVerifyUnitTest(unittest.TestCase):
         v.baseline = {"v1:a": "pass", "v2:b:top[0]": "fail", "v2:b:top[1]": "pass", "v3:total:x": "pass"}
         seen = {}
 
-        def run_mutants(cfg, out, conn, model_arg, suite, closure=None):
+        def run_mutants(cfg, out, conn, model_arg, suite, closure=None, sampled_items=()):
             seen["model"], seen["closure"] = model_arg is model, closure
             seen["original"] = suite("original")
             seen["mutant"] = suite("mutant")

@@ -6,7 +6,7 @@ and how to report a vulnerability.
 
 ## Supported versions
 
-Security fixes are made for the latest release (currently 0.4.x). Older releases are not patched.
+Security fixes are made for the latest release (currently 0.5.x). Older releases are not patched.
 
 ## Reporting a vulnerability
 
@@ -70,8 +70,10 @@ current directory. Use `verify-full` (or `verify-ca`) whenever the connection le
 
 ## Out of scope and known limits
 
-- **The configuration and gold SQL are trusted code.** Anyone who can edit `crosscheck.toml` or a gold
-  SQL file can run SQL as the check role. Review them like code.
+- **The configuration and supplied SQL are trusted code.** Anyone who can edit `crosscheck.toml` or a
+  gold, reference, candidate or metamorphic SQL file can run SQL as the check role. Review them like
+  code. Synthetic fixture CTEs do not sandbox qualified external references; run `counterexample` in
+  a dedicated test database.
 - **Debug output holds row values.** `SXC_CUBE_DEBUG=1` writes the full Cube error text, which can quote
   values, to `server.log`, and `SXC_DEBUG=1` prints full tracebacks. Use them locally, never paste or
   commit their output.
@@ -89,7 +91,7 @@ current directory. Use `verify-full` (or `verify-ca`) whenever the connection le
 ## Maintainer checklist for a public release
 
 - Turn on private vulnerability reporting in the repository settings, so the link above works.
-- Tag the release (`git tag -a v0.4.0`) and push the tag: README's Codex command pins `--ref v0.4.0`, and the
+- Tag the release (`git tag -a v0.5.0`) and push the tag: README's Codex command pins `--ref v0.5.0`, and the
   release archive is made from the tag with `git archive` and published with its SHA256SUMS.
 - Enable the hooks in the publishing clone with `git config core.hooksPath .githooks`, and set
   `SXC_DENYLIST` to the private deny-list (or `none`).

@@ -77,6 +77,8 @@ def parser() -> argparse.ArgumentParser:
 
     s = sub.add_parser("reason", parents=[common], help="SHACL (pySHACL) and OWL (HermiT) cross-checks against SQL")
     s.add_argument("--only", type=_csv, default=["shacl", "owl"], help="shacl,owl (default: both)")
+    s.add_argument("--synthetic-witnesses", action="store_true", help="also exercise configured OWL definitions on small synthetic graphs; "
+                                                                         "does not remove real-data coverage limitations")
 
     sub.add_parser("cube", parents=[common], help="generate the Cube model, start Cube and check its metadata")
 
@@ -96,6 +98,11 @@ def parser() -> argparse.ArgumentParser:
                                                                 "or check one closure SQL against BOM metamorphic relations")
     s.add_argument("--reference-sql", default=None, help="reference SELECT file using the synthetic CTE tables (required without --metamorphic-sql)")
     s.add_argument("--candidate-sql", default=None, help="candidate SELECT file using the same synthetic CTE tables (required without --metamorphic-sql)")
+    from semantic_crosscheck import mutate
+    s.add_argument("--mutation-operator", choices=mutate.OPERATORS, default=None,
+                   help="generate deterministic fixtures targeting this mutation operator; supply original and mutant SELECT files")
+    s.add_argument("--gold-sql", default=None, metavar="FILE",
+                   help="with --mutation-operator: independently authored gold SELECT, checked against original and mutant on the same fixture")
     s.add_argument("--metamorphic-sql", default=None, metavar="FILE", help="instead of two files: one closure SELECT (ancestor, descendant, qty) "
                                                                          "checked against four BOM metamorphic relations; no gold needed")
     s.add_argument("--scenario", choices=["nulls", "duplicate_join", "bom_diamond", "date_boundary"], default=None,
@@ -205,7 +212,8 @@ def discard_report_files(out: Path | None) -> None:
 def main(argv=None) -> int:
     args = parser().parse_args(argv)
     stage = args.stage
-    if stage == "counterexample" and args.scenario is None:   # the default scenario depends on the mode
+    if stage == "counterexample" and args.scenario is None and args.mutation_operator is None:
+        # Operator-directed fixtures have their own generator and reject legacy scenarios.
         args.scenario = "bom_diamond" if args.metamorphic_sql is not None else "nulls"
     result_name = stage.replace("-", "_")
     cfg = None

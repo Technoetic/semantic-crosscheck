@@ -144,6 +144,21 @@ class MutationFixturePostgresTest(unittest.TestCase):
                     self.assertTrue(answer['original_mutant']['equal'] or not answer['original_gold']['equal'])
         finally:
             conn.close()
+
+    def test_replay_in_the_same_output_reads_the_input_before_replacing_it(self):
+        args = self.args(constraints=str(pgfixture.ROOT / 'examples/counterexamples/constraints.json'))
+        first = ce.run(None, args, self.out)
+        self.assertTrue(first.checks[0].detail['gold_observes'])
+        artifact = self.out / 'counterexample/fixture.json'
+        original_tables = json.loads(artifact.read_text(encoding='utf-8'))['tables']
+        args.replay = str(artifact)
+        try:
+            repeated = ce.run(None, args, self.out)
+        except ce.StageError:
+            self.fail('Replaying into the same output must not delete its replay input before reading it')
+        self.assertTrue(repeated.checks[0].detail['synthetic_distinguished'])
+        self.assertTrue(repeated.checks[0].detail['gold_observes'])
+        self.assertEqual(json.loads(artifact.read_text(encoding='utf-8'))['tables'], original_tables)
         args.replay = str(self.out / 'counterexample/fixture.json')
         Path(args.gold_sql).write_text('SELECT 5::numeric AS value', encoding='utf-8')
         with patch.object(ce.db, 'connect', side_effect=AssertionError('must not connect')):

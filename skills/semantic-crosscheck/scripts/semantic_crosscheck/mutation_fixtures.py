@@ -133,8 +133,8 @@ def run(cfg, args, out):
     directory = Path(out) / 'counterexample'
     directory.mkdir(parents=True, exist_ok=True)
     artifact_path = directory / 'fixture.json'
-    artifact_path.unlink(missing_ok=True)
     if operator not in SUPPORTED_OPERATORS:
+        artifact_path.unlink(missing_ok=True)
         result.add('counterexample:mutation:search', 'not_run', '', reason='unsupported_operator',
                    synthetic_only=True, synthetic_distinguished=False, gold_observes=False)
         result.next_safe_action = 'Choose a supported fixed-schema mutation fixture operator.'
@@ -166,6 +166,9 @@ def run(cfg, args, out):
             replayed = replay(replay_path.read_text(encoding='utf-8'), operator, seed, digests, profile)
         except (OSError, UnicodeError, ValueError):
             raise StageError('counterexample: replay file missing, too large or invalid', EXIT_CONFIG) from None
+    # --replay commonly names this same output. Bind and validate its bytes before
+    # removing stale output; otherwise the command deletes its own input.
+    artifact_path.unlink(missing_ok=True)
     result.not_proven.extend([
         'Synthetic SQL coverage only: these fixtures do not run Cube or change the real-data V4 verdict.',
         'Caller supplies the original/mutant SQL; correspondence to a compiled model and the named mutation is not verified.',

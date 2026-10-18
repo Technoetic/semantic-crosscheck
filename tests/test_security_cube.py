@@ -164,6 +164,30 @@ class ChildEnvTest(EnvCase):
         self.assertEqual(env["CUBEJS_DB_QUERY_TIMEOUT"], "45", "Cube's driver sets statement_timeout from it per session")
         self.assertEqual(self.env_for()["PGOPTIONS"].rsplit("=", 1)[1], str(demo_cfg().cube.query_timeout_s * 1000))
 
+    def test_sql_planner_is_fixed_to_tesseract_whatever_is_inherited(self):
+        """Cube 1.8.3 reads CUBEJS_TESSERACT_SQL_PLANNER (default true); the runner sets it explicitly, so neither its
+        implicit default nor an inherited `false` (the legacy planner) decides which planner serves a result."""
+        env = self.env_for()
+        self.assertEqual(env[cube_run.SQL_PLANNER_VAR], "true")
+        self.assertEqual(cube_run.SQL_PLANNER_VAR, "CUBEJS_TESSERACT_SQL_PLANNER")
+        self.assertEqual(cube_run.sql_planner(env), "tesseract")
+        for name in ("CUBEJS_TESSERACT_SQL_PLANNER", "cubejs_tesseract_sql_planner"):
+            with self.subTest(name=name):
+                os.environ[name] = "false"
+                env = self.env_for()
+                self.assertEqual([k for k in env if k.upper() == cube_run.SQL_PLANNER_VAR], [cube_run.SQL_PLANNER_VAR])
+                self.assertEqual(env[cube_run.SQL_PLANNER_VAR], "true", "an inherited legacy-planner switch reached Cube")
+                os.environ.pop(name)
+
+    def test_sql_planner_names(self):
+        self.assertEqual(cube_run.sql_planner({cube_run.SQL_PLANNER_VAR: "true"}), "tesseract")
+        self.assertEqual(cube_run.sql_planner({cube_run.SQL_PLANNER_VAR: "false"}), "legacy")
+        for env in ({}, {cube_run.SQL_PLANNER_VAR: "yes"}, {cube_run.SQL_PLANNER_VAR: ""}):
+            with self.subTest(env=env):
+                self.assertEqual(cube_run.sql_planner(env), "unknown", "only the values the runner sets are named")
+        self.assertEqual(cube_run.runtime_facts(config.CUBE_VERSION),
+                         {"cube_version": config.CUBE_VERSION, "sql_planner": "tesseract"})
+
     def test_connection_and_password(self):
         env = self.env_for(f"postgresql://xc_check:{SECRET.replace('2', '%32')}@db.example.org:6543/ware")
         self.assertEqual((env["CUBEJS_DB_HOST"], env["CUBEJS_DB_PORT"], env["CUBEJS_DB_NAME"], env["CUBEJS_DB_USER"],
@@ -291,6 +315,35 @@ class ServeMessagesTest(EnvCase):
         self.assertEqual(str(e), "Cube adapter exited during startup (code 1): SXC_ERROR startup failed: Error: no "
                                  "model <v>; see run/server.log")
         self.assertIn("other output", (self.tmp / "run" / "server.log").read_text(encoding="utf-8"))
+
+    def test_the_started_child_gets_tesseract_and_the_client_records_it(self):
+        """A stand-in node prints the planner variable it was started with, reports ready and waits for stdin to close;
+        an inherited CUBEJS_TESSERACT_SQL_PLANNER=false must not reach it, and the client records the planner the
+        child was given next to the Cube version."""
+        home = fake_install(self.tmp / "home")
+        bin_dir = self.tmp / "bin"
+        bin_dir.mkdir()
+        if sys.platform == "win32":
+            (bin_dir / "node.cmd").write_text("@echo off\r\necho SXC_T_PLANNER [%CUBEJS_TESSERACT_SQL_PLANNER%]\r\n"
+                                              "echo SXC_READY 1\r\nset /p SXC_T_WAIT=\r\nexit /b 0\r\n", encoding="utf-8")
+            os.environ["PATHEXT"] = ".COM;.EXE;.BAT;.CMD"
+            system = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32")
+        else:
+            script = bin_dir / "node"
+            script.write_text('#!/bin/sh\necho "SXC_T_PLANNER [$CUBEJS_TESSERACT_SQL_PLANNER]"\necho "SXC_READY 1"\n'
+                              "read SXC_T_WAIT\nexit 0\n", encoding="utf-8")
+            script.chmod(0o755)
+            system = "/usr/bin" + os.pathsep + "/bin"
+        os.environ.update({"SXC_CUBE_HOME": str(home), "SXC_PG_DSN": "postgresql://xc_check@127.0.0.1:5432/db",
+                           "PATH": str(bin_dir) + os.pathsep + system, "CUBEJS_TESSERACT_SQL_PLANNER": "false"})
+        run_dir = self.tmp / "run"
+        (run_dir / "model").mkdir(parents=True)
+        log = run_dir / "server.log"
+        cfg = demo_cfg()
+        with cube_run.serve(cfg, run_dir, log) as client:
+            self.assertEqual(client.runtime, {"cube_version": cfg.cube.version, "sql_planner": "tesseract"})
+        lines = log.read_text(encoding="utf-8").splitlines()
+        self.assertIn("SXC_T_PLANNER [true]", [line.strip() for line in lines])
 
 
 # ---- the cube stage's next action -------------------------------------------------------------------------

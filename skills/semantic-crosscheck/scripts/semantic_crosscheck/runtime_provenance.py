@@ -381,8 +381,12 @@ def _cube(cfg):
             digest.update(bytes.fromhex(_file_hash(path)))
     if not count:
         raise RuntimeEvidenceError('cube_install_unavailable')
+    # The pinned Cube version and the SQL planner the runner fixes in every Cube child (cube_run.PLANNER_ENV) are
+    # facts of the run, not of the installed bytes: they sit next to the package versions and enter the component
+    # digest, so evidence recorded under another planner no longer matches.
     return {'installation_sha256': _digest({'adapter': actual, 'modules': digest.hexdigest(), 'versions': versions}),
-            'package_versions': versions, 'native_sha256': native, 'file_count': count}
+            'package_versions': versions, 'native_sha256': native, 'file_count': count,
+            **cube_run.runtime_facts(cfg.cube.version)}
 
 
 def current_probe(cfg):

@@ -11,7 +11,13 @@ documents:
     class entity's class, so a dangling reference is a node without a type (an sh:class violation)
   - bound shapes: integers as xsd:integer, other numbers as xsd:decimal (non-finite ones as xsd:double, which has
     NaN and INF); other types keep rdflib's default datatype
+  - shapes with class and bounds: the row IRI on <target.path> as for a class shape, and the same value as a
+    bound literal on <target.path>/value (naming.rdf_value_predicate), which the shape's second property shape
+    bounds; both triples for every non-NULL value, whether or not the referenced row exists, as the view ORs the
+    reference with the bounds. Both property shapes map back to the shape (focus_keys), so its SHACL keys are the
+    union of their focus nodes
   - NULL gives no triple: never a violation, as the views test IS NOT NULL
+Only shapes with an sql_violation have no SHACL form and are not compared (plan()).
 One RDF predicate carries one kind of value. Shapes on the same target column can need different kinds (a class and
 a bound, or two class entities), and in one graph each value would violate the other shape's constraint. So the
 compared shapes are split into value groups (groups()): each shape goes, in configuration order, to the first group
@@ -59,14 +65,16 @@ MAIN_GROUP = "main"
 
 def value_kind(shape) -> str:
     """The kind of RDF value a shape with a SHACL form needs on its column: "class:<entity>" (row IRIs of that entity)
-    or "bound" (literals)."""
+    or "bound" (literals). A shape with class and bounds is "class:<entity>": its bounds read the value predicate,
+    which carries literals only."""
     return f"class:{shape.class_}" if shape.class_ else "bound"
 
 
 def plan(cfg) -> tuple[list, dict]:
-    """(shapes compared with SHACL, {shape id: reason} for the others) in configuration order. Reasons:
-    shapes.no_shacl_reason() ("sql_violation", "class_and_bounds"). Every shape with a SHACL form is compared;
-    groups() splits them so that shapes needing different kinds of value on one column are validated apart."""
+    """(shapes compared with SHACL, {shape id: reason} for the others) in configuration order. Reason:
+    shapes.no_shacl_reason() ("sql_violation"). Every shape with a SHACL form is compared, class and bounds
+    included; groups() splits them so that shapes needing different kinds of value on one column are validated
+    apart."""
     reasons = {s.id: shapes.no_shacl_reason(s) for s in cfg.shapes}
     skipped = {sid: reason for sid, reason in reasons.items() if reason}
     return [s for s in cfg.shapes if s.id not in skipped], skipped
@@ -117,6 +125,12 @@ def paths(planned, entity: str) -> list[tuple[str, object]]:
     return list(out.items())
 
 
+def value_paths(planned, entity: str) -> set[str]:
+    """Paths of an entity that also carry their value as a literal on naming.rdf_value_predicate: the paths of the
+    planned shapes with class and bounds."""
+    return {s.path for s in planned if s.target == entity and s.class_ and shapes.has_bounds(s)}
+
+
 def _targets(planned) -> list[str]:
     return list(dict.fromkeys(s.target for s in planned))
 
@@ -127,7 +141,8 @@ def _class_entities(planned) -> list[str]:
 
 def build_graph(cfg, planned, target_rows: dict, class_keys: dict):
     """The RDF data graph of one value group (planned: its shapes). target_rows: {entity: rows as [*key values,
-    *path values in paths() order]}; class_keys: {class entity: its key values}."""
+    *path values in paths() order]}; class_keys: {class entity: its key values}. A path of a shape with class and
+    bounds (value_paths) also gets the value as a literal on its value predicate, from the same column value."""
     import rdflib
     from rdflib import URIRef
     g = rdflib.Graph()
@@ -135,15 +150,20 @@ def build_graph(cfg, planned, target_rows: dict, class_keys: dict):
     for entity, rows in target_rows.items():
         n = len(cfg.entities[entity].key)
         cls = URIRef(naming.rdf_entity_class(cfg, entity))
-        preds = [(n + i, URIRef(naming.rdf_predicate(cfg, entity, path)), s) for i, (path, s) in enumerate(paths(planned, entity))]
+        both = value_paths(planned, entity)
+        preds = [(n + i, URIRef(naming.rdf_predicate(cfg, entity, path)), s,
+                  URIRef(naming.rdf_value_predicate(cfg, entity, path)) if path in both else None)
+                 for i, (path, s) in enumerate(paths(planned, entity))]
         for row in rows:
             node = URIRef(naming.rdf_node(cfg, entity, list(row[:n])))
             g.add((node, rdf_type, cls))
-            for i, pred, s in preds:
+            for i, pred, s, value_pred in preds:
                 if row[i] is None:
                     continue
                 value = URIRef(naming.rdf_node(cfg, s.class_, [row[i]])) if s.class_ else literal(row[i])
                 g.add((node, pred, value))
+                if value_pred is not None:
+                    g.add((node, value_pred, literal(row[i])))
     for entity, keys in class_keys.items():
         cls = URIRef(naming.rdf_entity_class(cfg, entity))
         for k in keys:
@@ -231,10 +251,12 @@ def validate(data_graph, shacl):
 
 def focus_keys(cfg, planned, results) -> dict[str, set]:
     """{shape id: key tuples (canon.key form) of the focus nodes} from sh:sourceShape (the property shape IRI) and
-    sh:focusNode. Results of shapes that are not planned (other groups' shapes, which also run on a group graph) are
-    ignored."""
+    sh:focusNode. A shape with class and bounds has two property shapes; both map to it, so its keys are the union of
+    their focus nodes, as its view ORs the two constraints. Results of shapes that are not planned (other groups'
+    shapes, which also run on a group graph) are ignored."""
     from rdflib import URIRef
     by_source = {naming.rdf_property_shape(cfg, s.id): s for s in planned}
+    by_source.update({naming.rdf_bound_shape(cfg, s.id): s for s in planned if s.class_ and shapes.has_bounds(s)})
     keys = {s.id: set() for s in planned}
     for r in results.subjects(URIRef(RDF_TYPE), URIRef(shapes.SH + "ValidationResult")):
         s = by_source.get(str(results.value(r, URIRef(shapes.SH + "sourceShape"))))

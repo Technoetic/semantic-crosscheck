@@ -8,12 +8,17 @@ semantics:
     the referenced row and only rows that exist in the class entity carry rdf:type, so a dangling reference is a
     value node without a type, which violates sh:class.
   - bounds: a non-NULL path value must satisfy every bound (min_exclusive >, min_inclusive >=, max_inclusive <=).
+  - class and bounds: one RDF value cannot be both a row IRI and a number (SHACL 4.3: a value node that cannot be
+    compared with a bound violates it), so the node shape gets two property shapes: sh:class on the column's
+    predicate (naming.rdf_property_shape) and the bounds on its value predicate (naming.rdf_bound_shape on
+    naming.rdf_value_predicate, the same column value as a literal). The view applies the bounds whether or not the
+    reference exists, and so does the export, which writes both triples for every non-NULL value.
   - NULL is never a violation: SQL tests IS NOT NULL, the RDF export writes no triple for NULL.
   - sql_violation: a trusted SQL predicate over alias t, copied from the configuration (reports label it).
 The constraints of one shape are alternatives: the view ORs them; pySHACL reports every failing constraint and
-the reason stage compares sets of focus nodes. A shape with an sql_violation has no SHACL form, and neither has a
-shape mixing class and bounds (its path value cannot be both a row IRI and a number in RDF); shapes_ttl() leaves
-those out and returns their ids so they can be reported as not proven instead of compared.
+the reason stage compares sets of focus nodes (the results of both property shapes of a shape count for it). A
+shape with an sql_violation has no SHACL form; shapes_ttl() leaves it out and returns its id so it can be reported
+as not proven instead of compared.
 
 shapes.ttl is written without rdflib (which only the reason stage needs), escaping IRIs and literals as the
 Turtle grammar requires. fk_review_sql() proposes NOT VALID foreign keys for shapes with fk_ddl = "review_only":
@@ -62,11 +67,7 @@ def kind(shape) -> str:
 
 def no_shacl_reason(shape) -> str:
     """Why a shape has no SHACL form equal to its view ('' when it has one)."""
-    if shape.sql_violation:
-        return "sql_violation"
-    if shape.class_ and has_bounds(shape):
-        return "class_and_bounds"
-    return ""
+    return "sql_violation" if shape.sql_violation else ""
 
 
 def numeral(value) -> str:
@@ -232,25 +233,28 @@ def turtle_literal(text: str) -> str:
 
 
 def _shape_ttl(cfg, shape) -> str:
-    node = turtle_iri(naming.rdf_node_shape(cfg, shape.id))
-    prop = turtle_iri(naming.rdf_property_shape(cfg, shape.id))
+    """One node shape with one property shape, or with two for a shape with class and bounds: sh:class on the
+    column's predicate, the bounds on its value predicate. A shape with only one of them is written as before."""
     severity = "sh:Warning" if shape.severity == "warning" else "sh:Violation"
+    cls = [f"sh:class {turtle_iri(naming.rdf_entity_class(cfg, shape.class_))}"] if shape.class_ else []
+    limits = [f"sh:{param} {turtle_literal(num)}^^xsd:decimal" for _op, param, num in bounds(cfg, shape)]
+    path = naming.rdf_predicate(cfg, shape.target, shape.path)
+    if cls and limits:
+        props = [(naming.rdf_property_shape(cfg, shape.id), path, cls),
+                 (naming.rdf_bound_shape(cfg, shape.id), naming.rdf_value_predicate(cfg, shape.target, shape.path), limits)]
+    else:
+        props = [(naming.rdf_property_shape(cfg, shape.id), path, cls + limits)]
     lines = [
-        node,
+        turtle_iri(naming.rdf_node_shape(cfg, shape.id)),
         "    a sh:NodeShape ;",
         f"    sh:targetClass {turtle_iri(naming.rdf_entity_class(cfg, shape.target))} ;",
-        f"    sh:property {prop} ;",
-        f"    sh:severity {severity} .",
-        "",
-        prop,
-        "    a sh:PropertyShape ;",
-        f"    sh:path {turtle_iri(naming.rdf_predicate(cfg, shape.target, shape.path))} ;",
     ]
-    if shape.class_:
-        lines.append(f"    sh:class {turtle_iri(naming.rdf_entity_class(cfg, shape.class_))} ;")
-    for _op, param, num in bounds(cfg, shape):
-        lines.append(f"    sh:{param} {turtle_literal(num)}^^xsd:decimal ;")
+    lines += [f"    sh:property {turtle_iri(iri)} ;" for iri, _path, _constraints in props]
     lines.append(f"    sh:severity {severity} .")
+    for iri, path_iri, constraints in props:
+        lines += ["", turtle_iri(iri), "    a sh:PropertyShape ;", f"    sh:path {turtle_iri(path_iri)} ;"]
+        lines += [f"    {c} ;" for c in constraints]
+        lines.append(f"    sh:severity {severity} .")
     return "\n".join(lines)
 
 

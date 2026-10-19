@@ -78,6 +78,12 @@ def rdf_predicate(cfg, entity: str, column: str) -> str:
     return f"{_iri(cfg)}{ident.check(entity)}.{ident.check(column)}"
 
 
+def rdf_value_predicate(cfg, entity: str, column: str) -> str:
+    """The column value as a literal, next to the row IRI on rdf_predicate, for a shape with class and bounds. No
+    other name can be equal: identifiers contain neither '.' nor '/'."""
+    return rdf_predicate(cfg, entity, column) + "/value"
+
+
 def rdf_node(cfg, entity: str, key_values: list) -> str:
     """IRI of one row: entity + percent-encoded JSON array of the key values in canon.key form (reversible).
 
@@ -106,6 +112,12 @@ def rdf_node_shape(cfg, shape_id: str) -> str:
 def rdf_property_shape(cfg, shape_id: str) -> str:
     """sh:sourceShape of results of a shape; maps a pySHACL result back to the shape id."""
     return f"{_iri(cfg)}shape/{ident.check(shape_id)}/p"
+
+
+def rdf_bound_shape(cfg, shape_id: str) -> str:
+    """Second property shape of a shape with class and bounds (the bounds on rdf_value_predicate); its results map
+    back to the shape id like rdf_property_shape's."""
+    return f"{_iri(cfg)}shape/{ident.check(shape_id)}/b"
 
 
 # ---- OWL ------------------------------------------------------------------------------------------

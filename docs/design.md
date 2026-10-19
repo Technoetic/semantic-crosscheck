@@ -33,7 +33,7 @@ python skills/semantic-crosscheck/scripts/sxc.py --version
 | `verify` | V1 strict compare, V2 strata sweep, V3 query shapes, V4 mutation tests | `--only v1,v2,v3,v4` (default all), `--gold ID` (repeatable) | `verify/result.json`, `verify/server.log`, `verify/mutants/<operator>__<target>/` (`model/*.yml`, `model.json`, `server.log`) |
 | `report` | summary of every stage | none | `report/result.json`, `report.md`, `report.json` |
 | `cube-install` | installs the pinned Cube adapter once per user | `--home DIR`, `--native-file PATH`, `--force` | `cube_install/result.json`, `cube_install/npm-ci.log`, `cube_install/smoke.log` |
-| `counterexample` | optional synthetic SQL mismatch search and reduction, or BOM metamorphic relations for one closure SQL | `--reference-sql`, `--candidate-sql`, `--metamorphic-sql`, `--scenario`, `--seed`, `--max-examples`, `--max-shrink-steps`, `--dsn-env`, `--statement-timeout-ms`, `--constraints`, `--replay` | `counterexample/result.json`, `counterexample/fixture.json` |
+| `counterexample` | optional synthetic SQL mismatch search and reduction, or BOM metamorphic relations (and, with `--scenario bom_exhaustive`, the exact closure oracle over a bounded-exhaustive enumeration) for one closure SQL | `--reference-sql`, `--candidate-sql`, `--metamorphic-sql`, `--scenario`, `--seed`, `--max-examples`, `--max-shrink-steps`, `--dsn-env`, `--statement-timeout-ms`, `--constraints`, `--replay` | `counterexample/result.json`, `counterexample/fixture.json` |
 
 Common options:
 
@@ -256,7 +256,8 @@ configuration ids; `<member>` is a Cube member (`cube.member`); `<stratum>` is a
 | counterexample | `counterexample:mutation:search` | never proves equivalence or a real-data V4 verdict | `fail` when supplied original/mutant SQL differ on an admissible operator-directed synthetic fixture; `not_run` when no difference is found within the bound |
 | counterexample | `counterexample:mutation:gold_agreement` | supplied original and independent gold SQL agree on the saved synthetic fixture | `fail` on disagreement; this does not establish correspondence to an actual Cube model |
 | counterexample | `counterexample:mutation:query`, `counterexample:mutation:recheck`, `counterexample:mutation:inputs` | no synthetic detection is established by an error | `error` on execution failure, unstable witness or changed inputs; unsupported SQL relation/column schema is `not_run` |
-| counterexample | `counterexample:metamorphic:<relation>` | `--metamorphic-sql` only (`<relation>`: `mr1_unfold`, `mr2_scale`, `mr3_disjoint`, `mr4_unit_node`): every admissible case with a non-vacuous transform agrees exactly with the relation's expected path-product answer | `fail` on a violated relation (replay fixture saved); `not_run` when vacuous in every case (`not_run_reasons`) |
+| counterexample | `counterexample:metamorphic:<relation>` | `--metamorphic-sql` only (`<relation>`: `mr1_unfold`, `mr2_scale`, `mr3_disjoint`, `mr4_unit_node`): every admissible case with a non-vacuous transform agrees exactly with the relation's expected path-product answer | `fail` on a violated relation (replay fixture saved); `not_run` when vacuous in every case (`not_run_reasons`); with `bom_exhaustive` also `not_run` after a resource bound (`resource_bound`), an early stop (`stopped_at_first_failure`) or in a replay (`replay_covers_one_case`) |
+| counterexample | `counterexample:metamorphic:oracle` | `--metamorphic-sql --scenario bom_exhaustive` only: every admissible case of the whole bounded enumeration (1,743 structures under 2 label placements) agrees exactly with the independent closure-oracle fold (qty only) | `fail` at the first disagreeing case (replay fixture saved); `not_run` when a case was not compared (`enumeration_incomplete`, e.g. `size_bound`), the run stopped at another check's failure, in a replay (`replay_covers_one_case`) or with no admissible case |
 | counterexample | `counterexample:metamorphic:shape` | error check only | `error` when the SQL answer is not closure-shaped (`reason`: missing or duplicate columns, duplicate pair, NULL, non-text id, non-exact qty) |
 | doctor | `python` | Python >= 3.11 | `fail` |
 | doctor | `pg8000` | pg8000 can be imported | `fail`, with the absolute pip command as the next action |
@@ -624,6 +625,31 @@ recorded ones differ. Results carry counts, the seed and transform hashes. These
 invariant under them (edge direction, a wrong quantity column, a filter mapping) and test only the given SQL:
 the generated closure is tied to gold through V1/V3/V5, and a passing relation upgrades no other check. The idea
 follows EDC (Detecting Logic Bugs in DBMSs via Equivalent Data Construction, PACMMOD 3(6), 2025); no code is used.
+
+The seeded `bom_diamond` fixtures share one diamond topology, so a closure that uses `UNION` (set semantics) instead
+of `UNION ALL` and collapses equal-product paths is seen only where the seeded quantities collide: with seed 7 the
+original diamond has two equal-product paths in 2 of the 64 default cases (19 and 39, caught by unfolding) and
+scaling creates one in 4 more. `--scenario bom_exhaustive` (with `--metamorphic-sql` only) replaces sampling by a
+bounded-exhaustive enumeration (`bom_exhaustive.py`): every connected acyclic BOM of 2 to 4 parts with 1 to 5
+`bom_line` rows, at most 2 rows per (parent, child) pair and `qty_per` in {1, 2}, one canonical representative per
+isomorphism class (1,743 structures: 5, 153 and 1,585 for 2, 3 and 4 parts), each under two label placements
+because ids are values in SQL: `topological` (parents get the smaller labels) and `reverse` (children do), 3,486
+cases in a fixed order (case i is structure i // 2 under placement i % 2). Each original answer is compared with
+`closure_oracle.expected_quantities`, the same exact Fraction fold that judges generated closures (duplicate lines
+summed), in check `counterexample:metamorphic:oracle` (absent pairs 0, reflexive rows ignored, `Decimal` answers
+converted exactly); the four relations also run on every case where they are not vacuous. The enumeration is not
+sampled: `--max-examples` must be omitted or cover every case, and the oracle passes only when every admissible
+case was compared. A resource bound in any case (`size_bound`, `inexact_arithmetic`), an early stop and a one-case
+replay are `not_run` for every check, never a partial pass; statement timeouts stay `counterexample:query` errors.
+Inadmissible cases under `--constraints` are counted (`invalid_domain_examples`) and named in `not_proven`. The
+first failing case stops the run and `fixture.json` also binds the case index, placement, structure index and the
+SHA-256 of the whole enumeration; replay requires exactly that case. With the reference SQL a full run took 28 s
+(26 s with the example profile) on a loopback PostgreSQL 17.5. The `UNION` closure fails deterministically at case 4
+(two parallel `A -> B` lines with `qty_per` 1), the `min` candidate at the same case and a filter
+`parent_id < child_id` passes every `topological` case but fails case 1 (`reverse`). Only the stated scope, both
+placements and the `qty` column are tested; synthetic fixtures do not establish correctness on real data. The method
+follows Marinov, Andoni, Daniliuc, Khurshid and Rinard, "An Evaluation of Exhaustive Testing for Data Structures"
+(MIT CSAIL technical report, 2003); no code is used.
 See [counterexample reference](../skills/semantic-crosscheck/references/counterexamples.md).
 
 Optional `source.data_revision_sql_file` supplies a trusted, read-only single-text-scalar probe.

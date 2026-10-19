@@ -105,10 +105,12 @@ def parser() -> argparse.ArgumentParser:
                    help="with --mutation-operator: independently authored gold SELECT, checked against original and mutant on the same fixture")
     s.add_argument("--metamorphic-sql", default=None, metavar="FILE", help="instead of two files: one closure SELECT (ancestor, descendant, qty) "
                                                                          "checked against four BOM metamorphic relations; no gold needed")
-    s.add_argument("--scenario", choices=["nulls", "duplicate_join", "bom_diamond", "date_boundary"], default=None,
-                   help="default: nulls, or bom_diamond (the only one supported) with --metamorphic-sql")
+    s.add_argument("--scenario", choices=["nulls", "duplicate_join", "bom_diamond", "date_boundary", "bom_exhaustive"], default=None,
+                   help="default: nulls, or bom_diamond with --metamorphic-sql, which supports only bom_diamond and "
+                        "bom_exhaustive (every connected acyclic BOM up to 4 parts and 5 lines, judged by the exact oracle)")
     s.add_argument("--seed", type=int, default=7, help="deterministic synthetic generator seed")
-    s.add_argument("--max-examples", type=int, default=64, help="bounded search examples (default: 64)")
+    s.add_argument("--max-examples", type=int, default=None, help="bounded search examples (default: 64); bom_exhaustive always "
+                                                                    "runs every case and refuses a smaller value")
     s.add_argument("--max-shrink-steps", type=int, default=256, help="bounded row-deletion attempts (default: 256)")
     s.add_argument("--dsn-env", default="SXC_PG_DSN", help="NAME of the environment variable holding the read-only test PostgreSQL DSN")
     s.add_argument("--statement-timeout-ms", type=int, default=10000, help="per-query time limit (default: 10000)")
@@ -215,6 +217,9 @@ def main(argv=None) -> int:
     if stage == "counterexample" and args.scenario is None and args.mutation_operator is None:
         # Operator-directed fixtures have their own generator and reject legacy scenarios.
         args.scenario = "bom_diamond" if args.metamorphic_sql is not None else "nulls"
+    if stage == "counterexample" and args.max_examples is None and not (
+            args.metamorphic_sql is not None and args.scenario == "bom_exhaustive"):
+        args.max_examples = 64   # the exhaustive scenario has no sample size: its case count is fixed
     result_name = stage.replace("-", "_")
     cfg = None
     out = Path(args.out) if args.out else None

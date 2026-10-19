@@ -471,7 +471,16 @@ configuration, a hand edit) gives an `error` check with `reason=model_mismatch`,
 
 **SHACL vs SQL.** `build` writes `shapes.ttl` from the configuration: a node shape per configuration shape
 targeting the entity class, with one property shape (`sh:class`, `sh:minExclusive`, `sh:minInclusive`,
-`sh:maxInclusive`) and the configured severity. `reason` exports the needed rows as RDF in memory (target rows
+`sh:maxInclusive`) and the configured severity. A shape that combines `class` with bounds gets two property shapes
+in its node shape, both with its severity, because one RDF value cannot be a row IRI and a number at once (SHACL
+2017-07-20, 4.3: a value node that cannot be compared with a bound violates it): `<iri>shape/<id>/p` with
+`sh:class` on the column's predicate `<iri><entity>.<column>`, and `<iri>shape/<id>/b` with the bounds on the value
+predicate `<iri><entity>.<column>/value` (`naming.rdf_value_predicate`; no other generated IRI can equal it, since
+identifiers contain neither `.` nor `/`). The export writes, for every non-NULL value of such a column, both the
+referenced row's IRI on the column's predicate and the same value as a bound literal on the value predicate,
+whether or not the referenced row exists, so the bounds apply as in the view, which ORs the dangling reference
+with each bound; NULL writes neither. The results of both property shapes count for the shape, so its SHACL keys
+are the union of their focus nodes. `reason` exports the needed rows as RDF in memory (target rows
 with the shape paths; referenced entities with their types) in one read-only `REPEATABLE READ` transaction,
 counting them first against `verify.shacl_max_rows`, runs pySHACL without inference and compares, per shape, the
 set of focus-node keys with the keys in `v_shape_<id>` (both in `canon.key` form).
@@ -480,7 +489,9 @@ One RDF predicate carries one kind of value, and shapes on the same target colum
 `class` shape and a bound shape, or `class` shapes naming different entities): in one graph each value would
 violate the other shape's constraint. The compared shapes are therefore split into value groups
 (`shacl_check.groups`): each shape goes, in configuration order, to the first group in which its column
-(target, path) carries no other kind of value (`bound` literals or `class:<entity>` row IRIs), and a shape whose
+(target, path) carries no other kind of value (`bound` literals or `class:<entity>` row IRIs; a shape with `class`
+and bounds needs `class:<entity>`, since its literals go to the value predicate, which carries nothing else, so it
+shares a group with `class` shapes naming the same entity and is split from bound shapes on its column), and a shape whose
 column carries another kind in every group so far opens a new group. The first group is `main`, the others are
 `extra:1`, `extra:2`, ... in the order they are opened. Every shape that needs no split stays in `main`, so a
 configuration without a column shared by two value kinds (the demo included) exports one graph with exactly the
@@ -498,16 +509,16 @@ groups are still compared. The row cap and
 database errors occur before validation and still decide every shape. Each `shacl:<id>` check names its
 `value_group` and `group_rows`; `rows_exported` is the sum over the groups.
 
-Two kinds of shape are not compared and are listed in `not_proven` instead ("checked only in SQL"):
+One kind of shape is not compared and is listed in `not_proven` instead ("checked only in SQL"):
 
 - `sql_violation`: any shape with an `sql_violation` predicate, also when it has `class` or bounds as well
-  (no SHACL form);
-- `class_and_bounds`: a shape that combines `class` with bounds (its value cannot be a row IRI and a number at
-  once in RDF; no SHACL form). Value groups do not split it: its one view ORs both constraints, so it would need
-  the value as an IRI and as a literal in the same graph.
+  (no SHACL form).
 
 Releases up to 0.3.0 left every shape on a column shared by two value kinds uncompared (`shared_path`); value
-groups replace that exclusion.
+groups replace that exclusion. Releases up to 0.5.0 also left a shape combining `class` with bounds uncompared
+(`class_and_bounds`); the second property shape on the value predicate replaces that exclusion. Its `shapes.ttl`
+text changed, so a build output written before cannot be reasoned on (exit 2: rerun `build`), and the engine
+fingerprint marks the earlier results stale in `report`.
 
 `shapes.ttl` must equal what the configuration generates now; otherwise `reason` stops with exit 2 (rerun
 `build`).

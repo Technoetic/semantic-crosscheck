@@ -135,11 +135,11 @@ Data rules. Each shape becomes a SQL view `v_shape_<id>` with the key columns of
 when it has a SHACL form, a node shape in `build/shapes.ttl`. A shape needs at least one of `class`, a
 bound, or `sql_violation`; when it has several, a row violating any of them violates the shape.
 
-`reason` compares a shape with SHACL only when it has a separate SHACL form. These shapes are reported as
-not proven, "checked only in SQL", instead of compared:
-
-- a shape with `sql_violation` (also when it has `class` or bounds as well);
-- a shape that combines `class` with bounds.
+`reason` compares a shape with SHACL only when it has a separate SHACL form. A shape with `sql_violation`
+(also when it has `class` or bounds as well) has none and is reported as not proven, "checked only in SQL",
+instead of compared. A shape that combines `class` with bounds is compared: `build/shapes.ttl` gives it
+two property shapes (`sh:class` on the column, the bounds on the same value written as a number), and a
+row that violates either one violates the shape, as in its view.
 
 Shapes on the same `target` and `path` that need different kinds of RDF value (a `class` shape and a
 bound shape, or `class` shapes naming different entities) are all compared: `reason` puts each shape in

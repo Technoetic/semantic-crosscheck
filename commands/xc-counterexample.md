@@ -47,10 +47,13 @@ the original rows and transform specifications saved for `--replay` (same SQL fi
 non-closure answer is the `counterexample:metamorphic:shape` error. Relations test only this SQL and cannot see
 errors invariant under them, such as a reversed edge direction or a wrong quantity column.
 With `--scenario bom_exhaustive`, `counterexample:metamorphic:oracle` also compares every case's answer exactly with
-the independent closure-oracle fold; it passes only when the whole enumeration was compared. A resource bound, a stop
-at the first failure or a one-case replay leaves every check `not_run`, never a partial pass. Replay needs the same
-SQL file, `--scenario bom_exhaustive`, `--seed` and profile. Only the stated scope, both label placements and `qty`
-are tested.
+the independent closure-oracle fold; it passes only when every admissible case of the enumeration was compared
+(with `--constraints`, inadmissible cases are counted in `invalid_domain_examples` and named in `not_proven`).
+No check passes partially: at the first failure and in a one-case replay the failed checks are `fail` and the
+others `not_run` (`stopped_at_first_failure`, `replay_covers_one_case`); a resource bound in an original answer
+makes every check `not_run`, one in a relation's own transformed answer only that relation. `--max-examples` must
+be omitted or at least 3,486. Replay needs the same SQL file, `--scenario bom_exhaustive`, `--seed` and profile.
+Only the stated scope, both label placements and `qty` are tested.
 
 ```text
 python "${CLAUDE_PLUGIN_ROOT}/skills/semantic-crosscheck/scripts/sxc.py" counterexample --metamorphic-sql closure.sql --seed 7

@@ -179,6 +179,8 @@ def _strong_components(nodes, children, budget):
 
 
 def _expected(edges, max_depth, on_cycle, budget, detail):
+    if on_cycle not in ("error", "report"):
+        raise _NotProven("unsupported_on_cycle")   # refused whatever the graph, not only when it has a cycle
     logical, nodes = {}, set()
     nulls = 0
     for parent, child, quantity in edges:
@@ -196,8 +198,6 @@ def _expected(edges, max_depth, on_cycle, budget, detail):
     if len(order) != len(nodes):
         if on_cycle == "error":
             raise _CycleError()
-        if on_cycle != "report":
-            raise _NotProven("unsupported_on_cycle")
         component = _strong_components(nodes, children, budget)
         inside, looped, sizes = [], set(), {}
         for parent, child in logical:

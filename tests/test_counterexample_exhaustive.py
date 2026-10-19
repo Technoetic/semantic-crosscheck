@@ -351,14 +351,19 @@ class ExhaustiveRunTest(unittest.TestCase):
 
     def test_default_bom_diamond_run_rarely_sees_union(self):
         """The K11 gap the exhaustive scenario closes: the seeded diamonds detect UNION in only a few of 64 cases."""
-        detected = 0
+        detected = {}
         for index in range(64):
             fixture = ce.generate('bom_diamond', 7, index)
             with patch.object(mm, 'answer', side_effect=lambda _c, f, *_a: closure(f, 'union')):
                 outcome = mm.check_case(None, fixture, 'SQL', 1000, None, 7, index)
-            detected += any(entry['status'] == 'fail' for entry in outcome.values())
-        self.assertGreaterEqual(detected, 1)
-        self.assertLessEqual(detected, 8)   # seed 7: 2 equal-product originals (unfolding), 4 more via scaling
+            failed = {name for name, entry in outcome.items() if entry['status'] == 'fail'}
+            if failed:
+                detected[index] = failed
+        # Pinned so the documented seed-7 figures cannot drift: the original diamond has two equal-product paths in
+        # cases 19 and 39 (unfolding sees them), and scaling creates one in 4 more cases.
+        self.assertEqual(sorted(detected), [2, 16, 19, 38, 39, 58])
+        self.assertTrue(all('mr1_unfold' in detected[i] for i in (19, 39)))
+        self.assertTrue(all(detected[i] == {'mr2_scale'} for i in (2, 16, 38, 58)))
 
     def test_incomplete_enumeration_is_not_run_never_a_partial_pass(self):
         target = bx.case(10)[0]

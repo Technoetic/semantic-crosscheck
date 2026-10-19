@@ -315,6 +315,9 @@ class _Verify:
             if status == "not_run":
                 self.res.not_proven.append(f"{cid}: independent raw-edge closure comparison not proven "
                                            f"({detail['reason']})")
+            elif detail.get("empty_graph") and detail.get("dropped_cycle_edges"):
+                self.res.not_proven.append(f"{cid}: every logical edge lay inside a cycle and was removed by "
+                                           "on_cycle = report; no reachable pair was exercised")
             elif detail.get("empty_graph"):
                 self.res.not_proven.append(f"{cid}: empty raw-edge graph; no reachable pair was exercised")
             if status == "pass" and detail.get("dropped_cycle_edges"):

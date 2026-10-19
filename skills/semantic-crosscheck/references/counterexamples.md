@@ -5,7 +5,7 @@ It uses PostgreSQL read-only transactions and bound values in CTE tables, withou
 source tables. Use a dedicated test database; arbitrary SQL can explicitly reference other objects.
 
 The built-in scenarios target NULL aggregation, duplicate join keys, two paths through a BOM diamond,
-and date-window boundaries. The fixture schema and runnable reference/candidate pairs are in
+and date-window boundaries (with `--metamorphic-sql`, also every small acyclic BOM: `bom_exhaustive`, below). The fixture schema and runnable reference/candidate pairs are in
 `examples/counterexamples/`. Both query outputs must have matching column names and equal exact
 row multisets to agree; row ordering is irrelevant and duplicate multiplicity matters.
 
@@ -203,10 +203,13 @@ where they are not vacuous, which extends the check to the transformed, larger f
 
 The run is bounded-exhaustive, not sampled. `--max-examples` must be omitted (or at least 3,486); a smaller value is a
 configuration error rather than a silent sample. The oracle passes only when every admissible case was compared.
-A resource bound in any case (`size_bound`, `inexact_arithmetic`), a stop at the first failure and a replay of one
-case are `not_run` for every check (`enumeration_incomplete`, `resource_bound`, `stopped_at_first_failure`,
-`replay_covers_one_case`), never a partial pass; a statement timeout remains a `counterexample:query` error. With
-`--constraints`, inadmissible cases are counted in `invalid_domain_examples` and named in `not_proven`. Results
+No check passes partially. A resource bound (`size_bound`, `inexact_arithmetic`) in an original answer makes every
+check `not_run` (the oracle `enumeration_incomplete`, the relations `resource_bound`); one in a relation's own
+transformed answer makes only that relation `not_run` (`resource_bound`). At the first failure the failed checks
+are `fail` and the others `not_run` (`stopped_at_first_failure`); in a replay of one case the checks that fail
+again are `fail` and the others `not_run` (`replay_covers_one_case`). A statement timeout remains a
+`counterexample:query` error. With `--constraints`, inadmissible cases are counted in `invalid_domain_examples`
+and named in `not_proven`. Results
 report `cases_total`, `structures`, `placements`, `cases_run`, `not_run_reasons`, the scope and the SHA-256 of the
 whole enumeration (`enumeration_sha256`).
 

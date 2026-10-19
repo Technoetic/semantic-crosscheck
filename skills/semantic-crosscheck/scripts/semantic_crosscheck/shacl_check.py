@@ -22,7 +22,8 @@ One RDF predicate carries one kind of value. Shapes on the same target column ca
 a bound, or two class entities), and in one graph each value would violate the other shape's constraint. So the
 compared shapes are split into value groups (groups()): each shape goes, in configuration order, to the first group
 in which its column carries no other kind of value. "main" holds every shape that needs no split, so a configuration
-without such a column exports one graph exactly as 0.3.0 did; a shape whose column already carries another kind in
+without such a column exports one graph, as 0.3.0 did (plus the value-predicate triples of shapes that combine class
+with bounds); a shape whose column already carries another kind in
 every group opens the next one ("extra:1", "extra:2", ...). Every group gets its own data graph holding only what its
 shapes need (their targets and paths; the keys of the class entities they reference), pySHACL validates each group
 graph with the same shapes graph, and the focus nodes of a group are read only for that group's shapes. Within a
@@ -85,7 +86,7 @@ def groups(planned) -> list[tuple[str, list]]:
     column (target, path) carries no other kind of value (value_kind); a shape whose column carries another kind in
     every group so far opens a new group. Every column of a group therefore carries one kind of value. Labels: "main"
     for the first group, "extra:<n>" (n = 1, 2, ...) for the others in the order they are opened. Without a column
-    that needs two kinds of value, every shape stays in "main": one graph, the export of 0.3.0."""
+    that needs two kinds of value, every shape stays in "main": one graph, as in 0.3.0 (plus value-predicate triples)."""
     out = []   # [(label, {(target, path): value kind}, shapes)]
     for s in planned:
         column, kind = (s.target, s.path), value_kind(s)

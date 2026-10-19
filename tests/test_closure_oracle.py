@@ -4,15 +4,18 @@ import dataclasses
 import importlib
 import json
 import random
+import tempfile
 import unittest
 from collections import deque
 from decimal import Decimal, localcontext
 from fractions import Fraction
+from pathlib import Path
 from unittest import mock
 
 import pgfixture  # puts the plugin scripts on sys.path
 from semantic_crosscheck import stage_verify
 from semantic_crosscheck.result import Result
+from test_compare_unit import demo_cfg, demo_model
 
 
 class ClosureOracleTest(unittest.TestCase):
@@ -99,9 +102,12 @@ class ClosureOracleTest(unittest.TestCase):
                 self.assertNotIn("cycle_handling", detail)
 
     def test_unknown_cycle_policy_is_not_proven(self):
-        # Break caught: treating an unrecognised policy as report or error instead of refusing to judge it.
-        status, detail = self.compare([("a", "b", 2), ("b", "a", 3)], [], on_cycle="ignore")
-        self.assertEqual((status, detail["reason"]), ("not_run", "unsupported_on_cycle"))
+        # Break caught: treating an unrecognised policy as report or error instead of refusing to judge it, or
+        # refusing it only when the graph happens to have a cycle.
+        for edges in ([("a", "b", 2), ("b", "a", 3)], [("a", "b", 2)]):
+            with self.subTest(edges=edges):
+                status, detail = self.compare(edges, [("a", "b", 1, 1, 1, 2)], on_cycle="ignore")
+                self.assertEqual((status, detail["reason"]), ("not_run", "unsupported_on_cycle"))
 
     def test_depth_limit_is_not_accepted_as_a_truncated_closure(self):
         # Break caught: stopping the oracle at max_depth and calling the resulting subset complete.
@@ -358,6 +364,41 @@ class ReportModePropertyTest(unittest.TestCase):
                 self.assertEqual(expected, want)
         self.assertGreaterEqual(cyclic, 60, "the seeds must exercise cycles")
         self.assertGreaterEqual(depth_failures, 5, "the seeds must exercise the depth limit after removal")
+
+
+class OracleNotProvenTest(unittest.TestCase):
+    """verify's not_proven lines for the oracle checks, without PostgreSQL (closure_oracle.run is replaced)."""
+
+    def not_proven(self, status, **detail):
+        cfg = demo_cfg()
+        tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
+        self.addCleanup(tmp.cleanup)
+        v = stage_verify._Verify(cfg, Path(tmp.name), demo_model(cfg), ["v3"])
+        v.closure = dict.fromkeys(cfg.hierarchies, "pass")
+        with mock.patch.object(stage_verify.closure_oracle, "run", return_value=(status, detail)):
+            v.closure_oracles(None)
+        self.assertTrue(cfg.hierarchies)
+        return {name: [line for line in v.res.not_proven if line.startswith(f"v3:closure_oracle:{name}: ")]
+                for name in cfg.hierarchies}, v.res.not_proven
+
+    def test_lines_say_why_no_pair_was_exercised_and_which_edges_were_left_out(self):
+        # Break caught: calling an all-cycle graph an empty raw-edge graph, or losing the removed-edge disclosure.
+        removed = "on_cycle = report removed 2 logical edge(s) inside cycles"
+        cases = [("pass", 2, False, [removed]),
+                 ("pass", 2, True, ["every logical edge lay inside a cycle", removed]),
+                 ("pass", 0, True, ["empty raw-edge graph"]),
+                 ("pass", 0, False, []),
+                 ("fail", 2, False, [])]
+        for status, dropped, empty, wanted in cases:
+            with self.subTest(status=status, dropped=dropped, empty=empty):
+                per_name, every = self.not_proven(status, dropped_cycle_edges=dropped, empty_graph=empty)
+                self.assertEqual(len(every), len(wanted) * len(per_name))
+                for lines in per_name.values():
+                    self.assertEqual(len(lines), len(wanted))
+                    for line, fragment in zip(lines, wanted):
+                        self.assertIn(fragment, line)
+                if dropped:
+                    self.assertFalse(any("empty raw-edge graph" in line for line in every))
 
 
 class OracleNextActionTest(unittest.TestCase):

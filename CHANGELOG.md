@@ -12,10 +12,13 @@ All notable changes to this project are recorded here. The format follows
   every connected acyclic BOM with 2-4 parts, 1-5 `bom_line` rows, at most 2 rows per (parent, child) pair and
   `qty_per` in {1, 2} (1,743 isomorphism classes x 2 label placements = 3,486 cases). The new check
   `counterexample:metamorphic:oracle` compares every case's answer exactly with the independent closure-oracle
-  fold (`closure_oracle.expected_quantities`). It passes only when the whole enumeration was compared; resource
-  bounds, early stops and one-case replays are `not_run`. `--max-examples` must be omitted or cover every case.
-  The scenario is rejected outside `--metamorphic-sql`. A `UNION` closure now fails deterministically, while the
-  seeded `bom_diamond` cases see it in only some of the 64 default cases (method after Marinov et al., 2003).
+  fold (`closure_oracle.expected_quantities`). It passes only when every admissible case of the enumeration was
+  compared (with `--constraints`, inadmissible cases are counted and named in `not_proven`). No check passes
+  partially: at the first failure and in a one-case replay the failed checks are `fail` and the others `not_run`;
+  a resource bound in an original answer makes every check `not_run`, one in a relation's own transformed answer
+  only that relation. `--max-examples` must be omitted or cover every case. The scenario is rejected outside
+  `--metamorphic-sql`. A `UNION` closure now fails deterministically (case 4), while with seed 7 the seeded
+  `bom_diamond` run sees it in only 6 of its 64 default cases (method after Marinov et al., 2003).
 
 ### Changed
 
@@ -23,14 +26,19 @@ All notable changes to this project are recorded here. The format follows
   `not_run`: an iterative Tarjan search (charged to the operation budget) removes every logical edge inside a
   strongly connected component, self-loops included, then folds the rest exactly. `dropped_cycle_edges` and
   `cycle_nodes` are recorded for information only, a pass that removed edges is listed in `not_proven`, and a
-  cycle left after removal is an `error` (`scc_removal_left_cycle`). The `cycle_not_supported` reason is gone; an
-  unrecognised `on_cycle` value is `not_run` (`unsupported_on_cycle`).
+  cycle left after removal is an `error` (`scc_removal_left_cycle`). The `cycle_not_supported` reason is gone. The
+  configuration still accepts only `error` and `report`; called directly, the oracle answers any other `on_cycle`
+  value with `not_run` (`unsupported_on_cycle`), whatever the graph.
 - reason now compares shapes that combine `class` with bounds against their SQL view through SHACL. The node shape
   has two property shapes: `sh:class` on the column predicate and the bounds on a new value predicate
   `<entity>.<column>/value`, which carries the same column value as a literal. A row flagged by either property
   shape counts for the shape. Only `sql_violation` shapes remain checked only in SQL. `build/shapes.ttl` changes
   for configurations with such shapes, and the engine fingerprint changes: rerun `build`, then `reason`; earlier
-  results are reported stale.
+  results are reported stale. These shapes are now exported, so their target and class-entity rows count against
+  `verify.shacl_max_rows`, and next to a bound-only shape on the same column (or a class shape naming another
+  entity) such a shape opens an extra value group that exports its target rows again. An unchanged configuration
+  can therefore exceed the limit, which leaves every `shacl:<id>` check `not_run` (`resource_limit`): check the
+  reported row count after upgrading, or raise `verify.shacl_max_rows`.
 
 ## [0.5.0] - 2026-10-19
 

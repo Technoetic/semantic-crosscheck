@@ -600,7 +600,8 @@ Only the separate synthetic replay
 artifact contains generated row values; results and reports contain statistics, IDs and hashes.
 
 `--metamorphic-sql FILE` replaces the two-file comparison with a gold-independent check of one trusted
-closure SELECT (columns `ancestor`, `descendant`, `qty`) over seeded `bom_diamond` fixtures, with or without
+closure SELECT (columns `ancestor`, `descendant`, `qty`) over seeded `bom_diamond` fixtures (or the bounded
+`bom_exhaustive` enumeration described below), with or without
 `--constraints`. Q(a, d) is the path-product quantity: the sum over all paths of the product of `qty_per`. Each
 admissible case runs the SQL on the original fixture and on four transformed fixtures, each in its own read-only
 REPEATABLE READ transaction with bound values: `mr1_unfold` (shared sub-assemblies copied into a forest; summed
@@ -639,8 +640,10 @@ cases in a fixed order (case i is structure i // 2 under placement i % 2). Each 
 summed), in check `counterexample:metamorphic:oracle` (absent pairs 0, reflexive rows ignored, `Decimal` answers
 converted exactly); the four relations also run on every case where they are not vacuous. The enumeration is not
 sampled: `--max-examples` must be omitted or cover every case, and the oracle passes only when every admissible
-case was compared. A resource bound in any case (`size_bound`, `inexact_arithmetic`), an early stop and a one-case
-replay are `not_run` for every check, never a partial pass; statement timeouts stay `counterexample:query` errors.
+case was compared. No check passes partially: a resource bound (`size_bound`, `inexact_arithmetic`) in an original
+answer makes every check `not_run`, one in a relation's own transformed answer only that relation; at the first
+failure and in a one-case replay the failed checks `fail` and the others are `not_run`; statement timeouts stay
+`counterexample:query` errors.
 Inadmissible cases under `--constraints` are counted (`invalid_domain_examples`) and named in `not_proven`. The
 first failing case stops the run and `fixture.json` also binds the case index, placement, structure index and the
 SHA-256 of the whole enumeration; replay requires exactly that case. With the reference SQL a full run took 28 s

@@ -4,6 +4,7 @@ The builder aggregates frontiers by depth in PostgreSQL. This oracle instead fol
 topological order, using Fraction rather than Decimal's context-sensitive arithmetic. Duplicate source lines form
 one summed logical edge; NULL quantities still contribute paths but only non-NULL products contribute to SUM.
 No generated SQL, temporary builder table or recomputation helper participates in the expected result.
+expected_quantities() exposes the quantities of the same fold to the counterexample stage (bom_exhaustive oracle).
 
 Resource limits and unsupported inputs produce not_run, never a partial PASS. Cycles fail error mode; report mode's
 SCC-edge removal is not implemented here and is explicitly not proven. Results contain counts and fixed reasons
@@ -164,6 +165,33 @@ def _expected(edges, max_depth, on_cycle, budget, detail):
                 merge(descendant, minimum + 1, maximum + 1, paths, budget.multiply(quantity, total))
         summaries[parent] = descendants
     return {(a, d): metrics for a, descendants in summaries.items() for d, metrics in descendants.items()}
+
+
+class OracleUnavailable(ValueError):
+    """The fold cannot give an exact expected answer; `reason` is a fixed word, never a key or a value."""
+
+    def __init__(self, reason):
+        super().__init__(f"closure oracle unavailable: {reason}")
+        self.reason = reason
+
+
+def expected_quantities(edges, *, limits=None):
+    """{(ancestor, descendant): Fraction} of raw (parent, child, quantity) lines, from the same fold compare_rows uses.
+
+    Duplicate lines are one summed logical edge; reflexive pairs are absent (an acyclic graph has none). A pair whose
+    paths all carry a NULL quantity maps to None, as SQL SUM would. Raises OracleUnavailable with reason `cycle`,
+    `budget_exceeded`, `unsupported_quantity` or `unsupported_key`; nothing partial is returned.
+    """
+    budget = _Budget(limits or Limits())
+    try:
+        budget.check("max_raw_rows", len(edges))
+        # A path in a DAG uses each logical edge at most once, so this depth bound never truncates.
+        expected = _expected(edges, len(edges), "error", budget, {})
+    except _NotProven as e:
+        raise OracleUnavailable(e.detail["reason"]) from None
+    except _CycleError:
+        raise OracleUnavailable("cycle") from None
+    return {pair: metrics[3] for pair, metrics in expected.items()}
 
 
 def compare_rows(edges, rows, *, max_depth=32, on_cycle="error", limits=None):

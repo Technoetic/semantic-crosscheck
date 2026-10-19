@@ -261,6 +261,8 @@ def run(cfg, args, out):
         return metamorphic.run(cfg, args, out)
     if args.reference_sql is None or args.candidate_sql is None:
         raise StageError('counterexample: pass --reference-sql and --candidate-sql, or one --metamorphic-sql file', EXIT_CONFIG)
+    if getattr(args, 'scenario', None) == 'bom_exhaustive':
+        raise StageError('counterexample: --scenario bom_exhaustive is supported only with --metamorphic-sql', EXIT_CONFIG)
     seed = _int(args.seed, -(2**63), 2**63 - 1, 'seed')
     maximum = _int(args.max_examples, 1, 1000, 'max_examples')
     budget = _int(args.max_shrink_steps, 0, 10000, 'max_shrink_steps')

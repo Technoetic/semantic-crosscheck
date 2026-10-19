@@ -18,16 +18,22 @@ is 0. Each fixture runs in its own read-only REPEATABLE READ transaction through
 with every value bound. Results hold counts, ids and hashes; only fixture.json holds generated rows.
 The idea of transforming data so that the expected result is known follows EDC (Detecting Logic Bugs in DBMSs
 via Equivalent Data Construction, PACMMOD 3(6), 2025); no code is borrowed.
+
+Scenario bom_exhaustive replaces the seeded diamonds by every case of bom_exhaustive (all connected acyclic BOMs in a
+small scope, two label placements each) and adds the oracle check: each original answer is compared exactly with the
+independent Fraction fold of closure_oracle. It passes only when the whole enumeration was compared; a resource bound,
+an early stop or a one-case replay is not_run, never a partial pass.
 """
 from collections import Counter, namedtuple
 from decimal import Decimal, Inexact, InvalidOperation, localcontext
+from fractions import Fraction
 import hashlib
 import json
 import os
 from pathlib import Path
 import re
 
-from . import canon, constraints, counterexample as ce, db
+from . import bom_exhaustive as bx, canon, closure_oracle, constraints, counterexample as ce, db
 from .result import EXIT_CONFIG, Result, StageError
 
 RELATIONS = ('mr1_unfold', 'mr2_scale', 'mr3_disjoint', 'mr4_unit_node')
@@ -35,9 +41,13 @@ CHECK_IDS = {'mr1_unfold': 'counterexample:metamorphic:mr1_unfold',
              'mr2_scale': 'counterexample:metamorphic:mr2_scale',
              'mr3_disjoint': 'counterexample:metamorphic:mr3_disjoint',
              'mr4_unit_node': 'counterexample:metamorphic:mr4_unit_node'}
+ORACLE = 'oracle'
+ORACLE_ID = 'counterexample:metamorphic:oracle'
 SHAPE_ID = 'counterexample:metamorphic:shape'
 FORMAT = 'sxc-synthetic-metamorphic'
 SCENARIO = 'bom_diamond'
+SCENARIOS = (SCENARIO, bx.SCENARIO)
+RESOURCE_REASONS = frozenset({'size_bound', 'inexact_arithmetic'})   # a bound was hit: never part of an exhaustive pass
 K = 2
 COLUMNS = ('ancestor', 'descendant', 'qty')
 QTY_TYPE = dict(ce.SCHEMA['bom_line'])['qty_per']
@@ -379,10 +389,29 @@ def specs(plans):
     return {name: (plan.spec if isinstance(plan, Plan) else None) for name, plan in plans.items()}
 
 
+# ---- the exact oracle ----------------------------------------------------------------------------------------
+
+def oracle_compare(fixture, actual):
+    """(pairs compared, mismatched pairs) of a closure map against the exact independent fold of the fixture's lines.
+
+    Expected quantities come from closure_oracle.expected_quantities (Fraction, duplicate lines summed) over the values
+    PostgreSQL stores; answers convert exactly from Decimal. Absent pairs are 0 and reflexive pairs are not compared.
+    Raises NotApplicable when the fold has no exact answer (no lines, NULL or invalid values, a cycle, a budget).
+    """
+    rows, _order = _bom(fixture)
+    try:
+        expected = closure_oracle.expected_quantities([(parent, child, quantity) for _index, parent, child, quantity in rows])
+    except closure_oracle.OracleUnavailable as unavailable:
+        raise NotApplicable(unavailable.reason) from None
+    keys = {key for key in set(expected) | set(actual) if key[0] != key[1]}
+    return len(keys), sum(1 for key in keys if expected.get(key, 0) != Fraction(actual.get(key, Decimal(0))))
+
+
 # ---- one case ------------------------------------------------------------------------------------------------
 
-def check_case(conn, fixture, sql, timeout_ms, profile, seed, case_index, limit=ce.ROW_LIMIT):
-    """{relation: {status, reason, pairs_compared, mismatched_pairs, transform_sha256}} for one fixture.
+def check_case(conn, fixture, sql, timeout_ms, profile, seed, case_index, limit=ce.ROW_LIMIT, oracle=False):
+    """{relation: {status, reason, pairs_compared, mismatched_pairs, transform_sha256}} for one fixture; with
+    oracle=True also {'oracle': {status, reason, pairs_compared, mismatched_pairs}} for the original answer.
 
     Raises ShapeError for a non-closure answer and lets query errors propagate (both are errors, not verdicts).
     """
@@ -390,7 +419,9 @@ def check_case(conn, fixture, sql, timeout_ms, profile, seed, case_index, limit=
     outcome = {name: {'status': 'not_run', 'reason': plan, 'pairs_compared': 0, 'mismatched_pairs': 0,
                       'transform_sha256': None} for name, plan in plans.items() if not isinstance(plan, Plan)}
     runnable = [name for name in RELATIONS if isinstance(plans[name], Plan)]
-    if not runnable:
+    if oracle:
+        outcome[ORACLE] = {'status': 'not_run', 'reason': None, 'pairs_compared': 0, 'mismatched_pairs': 0}
+    if not runnable and not oracle:
         return outcome
     try:
         original = closure_map(*answer(conn, fixture, sql, timeout_ms, profile))
@@ -398,7 +429,21 @@ def check_case(conn, fixture, sql, timeout_ms, profile, seed, case_index, limit=
         for name in runnable:
             outcome[name] = {'status': 'not_run', 'reason': 'size_bound', 'pairs_compared': 0, 'mismatched_pairs': 0,
                              'transform_sha256': plans[name].sha256}
+        if oracle:
+            outcome[ORACLE]['reason'] = 'size_bound'
         return outcome
+    if oracle:
+        entry = outcome[ORACLE]
+        try:
+            compared, mismatched = oracle_compare(fixture, original)
+        except NotApplicable as vacuous:
+            entry['reason'] = vacuous.reason
+        else:
+            entry.update(pairs_compared=compared, mismatched_pairs=mismatched)
+            if compared == 0:
+                entry['reason'] = 'no_pairs'
+            else:
+                entry['status'] = 'fail' if mismatched else 'pass'
     for name in runnable:
         plan = plans[name]
         entry = {'status': 'not_run', 'reason': None, 'pairs_compared': 0, 'mismatched_pairs': 0,
@@ -437,39 +482,57 @@ def check_case(conn, fixture, sql, timeout_ms, profile, seed, case_index, limit=
 
 # ---- stage ---------------------------------------------------------------------------------------------------
 
-def _replay(raw, seed, digest, profile):
+PAYLOAD_KEYS = frozenset({'format', 'schema_version', 'synthetic', 'generator_version', 'scenario', 'seed', 'case_index',
+                          'sql_sha256', 'constraints', 'tables', 'failed', 'transforms', 'scope'})
+EXHAUSTIVE_KEYS = PAYLOAD_KEYS | {'placement', 'structure_index', 'enumeration_sha256'}
+
+
+def _replay(raw, scenario, seed, digest, profile):
     try:
         payload = constraints.decode_json(raw)
         if (payload['format'] != FORMAT or type(payload['schema_version']) is not int or payload['schema_version'] != ce.VERSION
                 or type(payload['generator_version']) is not int or payload['generator_version'] != ce.VERSION
-                or payload['synthetic'] is not True or payload['scenario'] != SCENARIO
+                or payload['synthetic'] is not True or payload['scenario'] != scenario
                 or type(payload['seed']) is not int or payload['seed'] != seed
                 or payload['sql_sha256'] != {'metamorphic': digest}):
             raise ValueError('Replay contract')
         binding = payload['constraints']
         if not isinstance(binding, dict) or binding != constraints.binding(profile) or type(binding.get('version')) is not int:
             raise ValueError('Replay constraint profile/mode')
-        index = ce._int(payload['case_index'], 0, 999, 'case_index')
         tables = payload['tables']
         constraints.validate_fixture(tables, ce.SCHEMA, profile)
-        original = ce.generate(SCENARIO, seed, index)
-        for table in ce.SCHEMA:
-            available = Counter(json.dumps(row, sort_keys=True) for row in original[table])
-            requested = Counter(json.dumps(row, sort_keys=True) for row in tables[table])
-            if requested - available:
-                raise ValueError('Replay contains non-generated rows')
+        if scenario == bx.SCENARIO:
+            # An exhaustive case is fully determined by its index: the rows must be exactly that case.
+            index = payload['case_index']
+            if set(payload) != EXHAUSTIVE_KEYS or type(index) is not int or not 0 <= index < bx.cases_total():
+                raise ValueError('Replay case')
+            original, info = bx.case(index)
+            if (tables != original or payload['placement'] != info['placement']
+                    or type(payload['structure_index']) is not int or payload['structure_index'] != info['structure_index']
+                    or payload['enumeration_sha256'] != bx.enumeration_sha256()):
+                raise ValueError('Replay is not this enumeration case')
+            names = (ORACLE,) + RELATIONS
+        else:
+            index = ce._int(payload['case_index'], 0, 999, 'case_index')
+            original = ce.generate(SCENARIO, seed, index)
+            for table in ce.SCHEMA:
+                available = Counter(json.dumps(row, sort_keys=True) for row in original[table])
+                requested = Counter(json.dumps(row, sort_keys=True) for row in tables[table])
+                if requested - available:
+                    raise ValueError('Replay contains non-generated rows')
+            names = RELATIONS
         # The transforms are recomputed, never taken from the file: the recorded ones must be exactly these.
         recomputed = json.loads(json.dumps(specs(transforms(tables, seed, index))))
         failed = payload['failed']
         if (payload['transforms'] != recomputed or not isinstance(failed, list) or not failed
-                or not set(failed) <= set(RELATIONS) or any(recomputed[name] is None for name in failed)):
+                or not set(failed) <= set(names) or any(recomputed[name] is None for name in failed if name != ORACLE)):
             raise ValueError('Replay transforms')
         return payload
     except (ValueError, TypeError, KeyError, OverflowError, RecursionError, StageError):
         raise StageError('counterexample: replay is not a matching generated metamorphic fixture', EXIT_CONFIG) from None
 
 
-def _not_proven(result, profile):
+def _not_proven(result, profile, exhaustive):
     result.not_proven.append('Trusted SQL may explicitly reference real tables; CTE fixtures are not a SQL sandbox or proof of source-independent execution.')
     if profile is None:
         result.not_proven.append('Synthetic fixture scope is unconstrained: no declared PK, UNIQUE, NOT NULL, foreign key or CHECK domain is enforced.')
@@ -481,8 +544,16 @@ def _not_proven(result, profile):
                              'no gold query or business rule is checked.')
     result.not_proven.append('Only the given SQL file is tested; the generated closure SQL is tied to gold only through V1/V3/V5 on real data, '
                              'and passing relations do not upgrade any other check.')
-    result.not_proven.append('Bounded generated bom_diamond fixtures share one diamond topology with seeded quantities; '
-                             'reflexive (x, x) answer rows are not compared.')
+    if exhaustive:
+        result.not_proven.append('The bom_exhaustive oracle is exhaustive only within its stated scope: connected acyclic BOMs of 2 to 4 parts '
+                                 'with 1 to 5 bom_line rows, at most 2 rows per (parent, child) pair and qty_per in {1, 2}, one per '
+                                 'isomorphism class, under the two label placements (topological, reverse); larger topologies, other '
+                                 'quantities and other label orders are not tested.')
+        result.not_proven.append('The oracle compares qty only (the metamorphic SQL contract has ancestor, descendant and qty); reflexive (x, x) '
+                                 'answer rows are not compared, and synthetic fixtures do not establish correctness on real data.')
+    else:
+        result.not_proven.append('Bounded generated bom_diamond fixtures share one diamond topology with seeded quantities; '
+                                 'reflexive (x, x) answer rows are not compared.')
 
 
 def query_errors():
@@ -496,16 +567,58 @@ def query_errors():
     return (OSError, PgError)
 
 
+def _cases(scenario, seed, maximum, replay):
+    """(index, fixture, info) in run order: the replayed case, every bom_exhaustive case, or `maximum` seeded cases."""
+    if replay is not None:
+        index = replay['case_index']
+        yield index, replay['tables'], (bx.case(index)[1] if scenario == bx.SCENARIO else None)
+    elif scenario == bx.SCENARIO:
+        for index in range(bx.cases_total()):
+            yield (index, *bx.case(index))
+    else:
+        for index in range(maximum):
+            yield index, ce.generate(SCENARIO, seed, index), None
+
+
+def _exhaustive_reason(name, tally, checked, complete, replay, found):
+    """Why a non-failed bom_exhaustive check is not a pass (None: it passes). Bounded, not sampled: a pass covers
+    every admissible case of the whole enumeration, without a resource bound hit (in its own transforms or in any
+    original answer), an early stop or a narrowed replay."""
+    counts = tally[name]
+    if replay is not None:
+        return 'replay_covers_one_case'
+    if found is not None:
+        return 'stopped_at_first_failure'
+    if checked == 0:
+        return 'no_admissible_generated_examples'
+    if name == ORACLE and not (complete and counts['cases_run'] == checked):
+        return 'enumeration_incomplete'
+    if RESOURCE_REASONS & (set(counts['reasons']) | set(tally[ORACLE]['reasons'])):
+        return 'resource_bound'
+    return None if counts['cases_run'] else 'vacuous_for_every_case'
+
+
 def run(cfg, args, out):
-    """Metamorphic mode of the counterexample stage: one trusted closure SQL, four relations per generated case."""
+    """Metamorphic mode of the counterexample stage: one trusted closure SQL, four relations per generated case, and
+    with --scenario bom_exhaustive the exact oracle over every case of the bounded enumeration."""
     seed = ce._int(args.seed, -(2**63), 2**63 - 1, 'seed')
-    maximum = ce._int(args.max_examples, 1, 1000, 'max_examples')
+    scenario = getattr(args, 'scenario', None) or SCENARIO
+    if scenario not in SCENARIOS:
+        raise StageError('counterexample: --metamorphic-sql supports only --scenario bom_diamond or bom_exhaustive', EXIT_CONFIG)
+    exhaustive = scenario == bx.SCENARIO
+    maximum = getattr(args, 'max_examples', None)
+    if exhaustive:
+        total = bx.cases_total()
+        # A smaller --max-examples would silently turn the enumeration into a sample.
+        if maximum is not None and (isinstance(maximum, bool) or not isinstance(maximum, int) or maximum < total):
+            raise StageError(f'counterexample: --scenario bom_exhaustive always runs all {total} cases; omit --max-examples '
+                             f'or pass at least {total}', EXIT_CONFIG)
+    else:
+        maximum = ce._int(maximum, 1, 1000, 'max_examples')
     timeout = ce._int(getattr(args, 'statement_timeout_ms', 10000), 1000, 120000, 'statement_timeout_ms')
     if getattr(args, 'reference_sql', None) is not None or getattr(args, 'candidate_sql', None) is not None:
         raise StageError('counterexample: --metamorphic-sql checks one SQL file; do not combine it with '
                          '--reference-sql or --candidate-sql', EXIT_CONFIG)
-    if (getattr(args, 'scenario', None) or SCENARIO) != SCENARIO:
-        raise StageError('counterexample: --metamorphic-sql supports only --scenario bom_diamond', EXIT_CONFIG)
     if not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', args.dsn_env):
         raise StageError('counterexample: invalid DSN environment variable name', EXIT_CONFIG)
     profile_path = getattr(args, 'constraints', None)
@@ -517,7 +630,7 @@ def run(cfg, args, out):
             replay_path = Path(args.replay)
             if replay_path.stat().st_size > 1024 * 1024:
                 raise ValueError('Replay file size')
-            replay = _replay(replay_path.read_text(encoding='utf-8'), seed, sql_sha, profile)
+            replay = _replay(replay_path.read_text(encoding='utf-8'), scenario, seed, sql_sha, profile)
         except (OSError, UnicodeError, ValueError):
             raise StageError('counterexample: replay file missing, too large or invalid', EXIT_CONFIG) from None
     directory = Path(out) / 'counterexample'
@@ -525,14 +638,14 @@ def run(cfg, args, out):
     artifact_path = directory / 'fixture.json'
     artifact_path.unlink(missing_ok=True)
     result = Result('counterexample')
-    _not_proven(result, profile)
-    tally = {name: {'cases_run': 0, 'reasons': Counter(), 'pairs': 0, 'mismatched': 0, 'hashes': []} for name in RELATIONS}
+    _not_proven(result, profile, exhaustive)
+    names = ((ORACLE,) if exhaustive else ()) + RELATIONS
+    tally = {name: {'cases_run': 0, 'reasons': Counter(), 'pairs': 0, 'mismatched': 0, 'hashes': []} for name in names}
     checked = attempted = invalid_domain = 0
     found = None
     conn = None
     try:
-        for index in ([replay['case_index']] if replay else range(maximum)):
-            fixture = replay['tables'] if replay else ce.generate(SCENARIO, seed, index)
+        for index, fixture, info in _cases(scenario, seed, maximum, replay):
             attempted += 1
             try:
                 constraints.validate_fixture(fixture, ce.SCHEMA, profile)
@@ -542,13 +655,13 @@ def run(cfg, args, out):
             if conn is None:
                 conn = db.connect(args.dsn_env)
             try:
-                outcome = check_case(conn, fixture, sql, timeout, profile, seed, index)
+                outcome = check_case(conn, fixture, sql, timeout, profile, seed, index, oracle=exhaustive)
             except ShapeError as shape:
                 result.add(SHAPE_ID, 'error', '', reason=shape.reason, case_index=index, examples=checked)
                 result.next_safe_action = 'Return one row per (ancestor, descendant) with text ids and an exact numeric qty; no fixture was saved.'
                 return result
             checked += 1
-            for name in RELATIONS:
+            for name in names:
                 entry, counts = outcome[name], tally[name]
                 if entry['status'] == 'not_run':
                     counts['reasons'][entry['reason']] += 1
@@ -556,10 +669,11 @@ def run(cfg, args, out):
                 counts['cases_run'] += 1
                 counts['pairs'] += entry['pairs_compared']
                 counts['mismatched'] += entry['mismatched_pairs']
-                counts['hashes'].append(entry['transform_sha256'])
-            failed = [name for name in RELATIONS if outcome[name]['status'] == 'fail']
+                if name != ORACLE:
+                    counts['hashes'].append(entry['transform_sha256'])
+            failed = [name for name in names if outcome[name]['status'] == 'fail']
             if failed:
-                found = (index, fixture, outcome, failed)
+                found = (index, fixture, outcome, failed, info)
                 break
     except StageError:
         raise
@@ -584,42 +698,72 @@ def run(cfg, args, out):
         return result
     common = dict(seed=seed, k=K, examples=checked, attempted_examples=attempted, invalid_domain_examples=invalid_domain,
                   constraints_mode=constraints.binding(profile)['mode'], constraint_profile_sha256=profile.sha256 if profile else None)
+    complete = False
+    if exhaustive:
+        common.update(scenario=scenario, cases_total=bx.cases_total(), structures=len(bx.structures()),
+                      placements=list(bx.PLACEMENTS), enumeration_sha256=bx.enumeration_sha256(), scope=bx.scope())
+        complete = replay is None and found is None and attempted == bx.cases_total() and checked + invalid_domain == attempted
+        if invalid_domain:
+            result.not_proven.append(f'{invalid_domain} enumerated cases were outside the integrity profile and were not run; '
+                                     'the exhaustive claim covers only the admissible cases.')
     fixture_sha = None
     if found is not None:
-        index, fixture, outcome, failed = found
+        index, fixture, outcome, failed, info = found
         payload = {'format': FORMAT, 'schema_version': ce.VERSION, 'synthetic': True, 'generator_version': ce.VERSION,
-                   'scenario': SCENARIO, 'seed': seed, 'case_index': index, 'sql_sha256': {'metamorphic': sql_sha},
+                   'scenario': scenario, 'seed': seed, 'case_index': index, 'sql_sha256': {'metamorphic': sql_sha},
                    'constraints': constraints.binding(profile), 'tables': fixture, 'failed': failed,
                    'transforms': specs(transforms(fixture, seed, index)),
                    'scope': 'Original generated rows and the deterministic transform specification of a violated BOM '
                             'metamorphic relation for this trusted SQL; no gold comparison or general correctness claim.'}
+        if exhaustive:
+            payload.update(placement=info['placement'], structure_index=info['structure_index'],
+                           enumeration_sha256=bx.enumeration_sha256(),
+                           scope='One case of the bounded bom_exhaustive enumeration where this trusted SQL disagrees with the '
+                                 'exact path-product oracle or a BOM metamorphic relation; no gold comparison or general '
+                                 'correctness claim.')
         serialized = json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=2).encode('utf-8')
         temporary = directory / 'fixture.json.part'
         temporary.write_bytes(serialized)
         os.replace(temporary, artifact_path)
         fixture_sha = hashlib.sha256(serialized).hexdigest()
-    for name in RELATIONS:
+    for name in names:
         counts = tally[name]
-        detail = dict(relation=name, cases_run=counts['cases_run'], cases_not_run=sum(counts['reasons'].values()),
+        detail = dict(cases_run=counts['cases_run'], cases_not_run=sum(counts['reasons'].values()),
                       not_run_reasons=dict(sorted(counts['reasons'].items())), pairs_compared=counts['pairs'],
                       mismatched_pairs=counts['mismatched'], **common)
+        if name != ORACLE:
+            detail = dict(relation=name, **detail)
+        check_id = ORACLE_ID if name == ORACLE else CHECK_IDS[name]
         if found is not None and name in found[3]:
-            index, _fixture, outcome, _failed = found
+            index, _fixture, outcome, _failed, info = found
             detail.update(case_index=index, case_pairs_compared=outcome[name]['pairs_compared'],
-                          case_mismatched_pairs=outcome[name]['mismatched_pairs'],
-                          transform_sha256=outcome[name]['transform_sha256'], fixture_sha256=fixture_sha)
-            result.add(CHECK_IDS[name], 'fail', '', **detail)
-        elif counts['cases_run']:
+                          case_mismatched_pairs=outcome[name]['mismatched_pairs'], fixture_sha256=fixture_sha)
+            if name != ORACLE:
+                detail['transform_sha256'] = outcome[name]['transform_sha256']
+            if exhaustive:
+                detail.update(placement=info['placement'], structure_index=info['structure_index'])
+            result.add(check_id, 'fail', '', **detail)
+            continue
+        if counts['hashes']:
             detail['transform_sha256'] = hashlib.sha256(''.join(counts['hashes']).encode()).hexdigest()
-            result.add(CHECK_IDS[name], 'pass', '', **detail)
+        if exhaustive:
+            reason = _exhaustive_reason(name, tally, checked, complete, replay, found)
+        elif counts['cases_run']:
+            reason = None
         else:
-            detail['reason'] = 'no_admissible_generated_examples' if checked == 0 else 'vacuous_for_every_case'
-            result.add(CHECK_IDS[name], 'not_run', '', **detail)
+            reason = 'no_admissible_generated_examples' if checked == 0 else 'vacuous_for_every_case'
+        if reason is None:
+            result.add(check_id, 'pass', '', **detail)
+        else:
+            detail['reason'] = reason
+            result.add(check_id, 'not_run', '', **detail)
     if found is not None:
-        result.next_safe_action = ('Replay fixture.json with the same --metamorphic-sql file, --seed and profile, then review how '
-                                   'the SQL combines paths (sum over all paths of the product of qty_per).')
+        result.next_safe_action = ('Replay fixture.json with the same --metamorphic-sql file, --scenario, --seed and profile, then '
+                                   'review how the SQL combines paths (sum over all paths of the product of qty_per).')
     elif result.status == 'pass':
         result.next_safe_action = 'Keep V1/V3/V5 gold comparisons as correctness evidence; the relations only bound this SQL file.'
+    elif exhaustive:
+        result.next_safe_action = 'Unrun checks proved nothing: review their reason and not_run_reasons.'
     else:
         result.next_safe_action = 'Vacuous relations were not run: review not_run_reasons; nothing was proven for them.'
     return result

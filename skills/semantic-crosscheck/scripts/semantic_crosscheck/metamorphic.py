@@ -22,9 +22,9 @@ via Equivalent Data Construction, PACMMOD 3(6), 2025); no code is borrowed.
 Scenario bom_exhaustive replaces the seeded diamonds by every case of bom_exhaustive (all connected acyclic BOMs in a
 small scope, two label placements each) and adds the oracle check: each original answer is compared exactly with the
 independent Fraction fold of closure_oracle. It passes only when every admissible case of the enumeration was
-compared. No check passes partially: a resource bound in an original answer makes every check not_run, one in a
-relation's own transformed answer only that relation; at the first failure and in a one-case replay the failed
-checks fail and the others are not_run.
+compared. No check passes partially: a resource bound in an original answer makes every check not_run; one hit only
+in a relation's own transform, transformed answer or comparison makes only that relation not_run; at the first
+failure and in a one-case replay the failed checks fail and the others are not_run.
 """
 from collections import Counter, namedtuple
 from decimal import Decimal, Inexact, InvalidOperation, localcontext

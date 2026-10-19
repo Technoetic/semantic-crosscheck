@@ -204,8 +204,8 @@ where they are not vacuous, which extends the check to the transformed, larger f
 The run is bounded-exhaustive, not sampled. `--max-examples` must be omitted (or at least 3,486); a smaller value is a
 configuration error rather than a silent sample. The oracle passes only when every admissible case was compared.
 No check passes partially. A resource bound (`size_bound`, `inexact_arithmetic`) in an original answer makes every
-check `not_run` (the oracle `enumeration_incomplete`, the relations `resource_bound`); one in a relation's own
-transformed answer makes only that relation `not_run` (`resource_bound`). At the first failure the failed checks
+check `not_run` (the oracle `enumeration_incomplete`, the relations `resource_bound`); one hit only in a relation's
+own transform, transformed answer or comparison makes only that relation `not_run` (`resource_bound`). At the first failure the failed checks
 are `fail` and the others `not_run` (`stopped_at_first_failure`); in a replay of one case the checks that fail
 again are `fail` and the others `not_run` (`replay_covers_one_case`). A statement timeout remains a
 `counterexample:query` error. With `--constraints`, inadmissible cases are counted in `invalid_domain_examples`

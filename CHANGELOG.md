@@ -15,8 +15,9 @@ All notable changes to this project are recorded here. The format follows
   fold (`closure_oracle.expected_quantities`). It passes only when every admissible case of the enumeration was
   compared (with `--constraints`, inadmissible cases are counted and named in `not_proven`). No check passes
   partially: at the first failure and in a one-case replay the failed checks are `fail` and the others `not_run`;
-  a resource bound in an original answer makes every check `not_run`, one in a relation's own transformed answer
-  only that relation. `--max-examples` must be omitted or cover every case. The scenario is rejected outside
+  a resource bound in an original answer makes every check `not_run`; one hit only in a relation's own transform,
+  transformed answer or comparison makes only that relation `not_run`. `--max-examples` must be omitted or cover
+  every case. The scenario is rejected outside
   `--metamorphic-sql`. A `UNION` closure now fails deterministically (case 4), while with seed 7 the seeded
   `bom_diamond` run sees it in only 6 of its 64 default cases (method after Marinov et al., 2003).
 

@@ -50,8 +50,9 @@ A shape that combines `class` with bounds is compared: its node shape has two pr
 on the column and the bounds on the same value written as a number on `<entity>.<column>/value`, and its
 SHACL keys are the rows either one flags (releases up to 0.5.0 listed it as `class_and_bounds`, checked
 only in SQL; after upgrading, rerun [/xc-build](xc-build.md) before reason). Its target and class-entity rows
-now count against `verify.shacl_max_rows`, and next to a bound-only shape on its column it opens an extra value
-group, so an unchanged configuration can exceed the limit: check the row count after upgrading or raise it.
+now count against `verify.shacl_max_rows`, and next to a bound-only shape on its column (or a class shape naming
+another entity) an extra value group is opened, so an unchanged configuration can exceed the limit: check the row
+count after upgrading or raise it.
 
 Shapes on the same target column that need different kinds of RDF value (a `class` shape and a bound
 shape, or `class` shapes naming different entities; a shape with `class` and bounds counts as a `class` shape

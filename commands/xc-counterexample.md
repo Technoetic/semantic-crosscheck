@@ -51,8 +51,9 @@ the independent closure-oracle fold; it passes only when every admissible case o
 (with `--constraints`, inadmissible cases are counted in `invalid_domain_examples` and named in `not_proven`).
 No check passes partially: at the first failure and in a one-case replay the failed checks are `fail` and the
 others `not_run` (`stopped_at_first_failure`, `replay_covers_one_case`); a resource bound in an original answer
-makes every check `not_run`, one in a relation's own transformed answer only that relation. `--max-examples` must
-be omitted or at least 3,486. Replay needs the same SQL file, `--scenario bom_exhaustive`, `--seed` and profile.
+makes every check `not_run`; one hit only in a relation's own transform, transformed answer or comparison makes
+only that relation `not_run`. `--max-examples` must be omitted or at least 3,486. Replay needs the same SQL file,
+`--scenario bom_exhaustive`, `--seed` and profile.
 Only the stated scope, both label placements and `qty` are tested.
 
 ```text

@@ -641,9 +641,9 @@ summed), in check `counterexample:metamorphic:oracle` (absent pairs 0, reflexive
 converted exactly); the four relations also run on every case where they are not vacuous. The enumeration is not
 sampled: `--max-examples` must be omitted or cover every case, and the oracle passes only when every admissible
 case was compared. No check passes partially: a resource bound (`size_bound`, `inexact_arithmetic`) in an original
-answer makes every check `not_run`, one in a relation's own transformed answer only that relation; at the first
-failure and in a one-case replay the failed checks `fail` and the others are `not_run`; statement timeouts stay
-`counterexample:query` errors.
+answer makes every check `not_run`; one hit only in a relation's own transform, transformed answer or comparison
+makes only that relation `not_run`; at the first failure and in a one-case replay the failed checks `fail` and the
+others are `not_run`; statement timeouts stay `counterexample:query` errors.
 Inadmissible cases under `--constraints` are counted (`invalid_domain_examples`) and named in `not_proven`. The
 first failing case stops the run and `fixture.json` also binds the case index, placement, structure index and the
 SHA-256 of the whole enumeration; replay requires exactly that case. With the reference SQL a full run took 28 s

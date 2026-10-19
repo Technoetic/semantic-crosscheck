@@ -107,7 +107,7 @@ class ClosureOracleTest(unittest.TestCase):
         for edges in ([("a", "b", 2), ("b", "a", 3)], [("a", "b", 2)]):
             with self.subTest(edges=edges):
                 status, detail = self.compare(edges, [("a", "b", 1, 1, 1, 2)], on_cycle="ignore")
-                self.assertEqual((status, detail["reason"]), ("not_run", "unsupported_on_cycle"))
+                self.assertEqual((status, detail.get("reason")), ("not_run", "unsupported_on_cycle"))
 
     def test_depth_limit_is_not_accepted_as_a_truncated_closure(self):
         # Break caught: stopping the oracle at max_depth and calling the resulting subset complete.
@@ -384,14 +384,16 @@ class OracleNotProvenTest(unittest.TestCase):
     def test_lines_say_why_no_pair_was_exercised_and_which_edges_were_left_out(self):
         # Break caught: calling an all-cycle graph an empty raw-edge graph, or losing the removed-edge disclosure.
         removed = "on_cycle = report removed 2 logical edge(s) inside cycles"
-        cases = [("pass", 2, False, [removed]),
-                 ("pass", 2, True, ["every logical edge lay inside a cycle", removed]),
-                 ("pass", 0, True, ["empty raw-edge graph"]),
-                 ("pass", 0, False, []),
-                 ("fail", 2, False, [])]
-        for status, dropped, empty, wanted in cases:
+        cases = [("pass", 2, False, {}, [removed]),
+                 ("pass", 2, True, {}, ["every logical edge lay inside a cycle", removed]),
+                 ("pass", 0, True, {}, ["empty raw-edge graph"]),
+                 ("pass", 0, False, {}, []),
+                 ("fail", 2, False, {}, []),
+                 ("fail", 2, True, {}, ["every logical edge lay inside a cycle"]),
+                 ("not_run", 2, False, {"reason": "budget_exceeded"}, ["not proven (budget_exceeded)"])]
+        for status, dropped, empty, extra, wanted in cases:
             with self.subTest(status=status, dropped=dropped, empty=empty):
-                per_name, every = self.not_proven(status, dropped_cycle_edges=dropped, empty_graph=empty)
+                per_name, every = self.not_proven(status, dropped_cycle_edges=dropped, empty_graph=empty, **extra)
                 self.assertEqual(len(every), len(wanted) * len(per_name))
                 for lines in per_name.values():
                     self.assertEqual(len(lines), len(wanted))

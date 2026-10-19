@@ -1,6 +1,6 @@
 {
   "name": "semantic-crosscheck",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Cross-layer verification for an ontology plus semantic layer on PostgreSQL 17, for Codex and Claude Code.",
   "author": {
     "name": "전문준"
@@ -9,7 +9,7 @@
   "interface": {
     "displayName": "Semantic Crosscheck",
     "shortDescription": "Prove that a PostgreSQL closure, SHACL rules, OWL reasoning and a Cube model agree.",
-    "longDescription": "Release v0.5.0: cross-checks PostgreSQL 17 closures, SQL and SHACL rules, OWL/HermiT and Cube against gold SQL. Adds bounded exact independent closure arithmetic from raw edges, nine operator-directed synthetic SQL fixture families with optional independent gold and replay, and opt-in configured OWL definition witnesses checked against independent expected memberships. Synthetic agreement does not prove real-data V4 coverage or business correctness; source empty-class not_proven remains. Existing version 1 configurations and dependency pins remain supported. Rerun the pipeline after upgrading; no shared MVCC snapshot across Cube or stages or runtime attestation is claimed.",
+    "longDescription": "Release v0.6.0: cross-checks PostgreSQL 17 closures, SQL and SHACL rules, OWL/HermiT and Cube against gold SQL. Verifies report-mode cycle closures independently after strongly connected component edge removal, compares shapes that combine class with bounds through SHACL with a separate value predicate, and adds a bounded-exhaustive BOM scenario judged exactly by the independent closure oracle. Errors, bounded agreement, missing or changed evidence cannot establish a PASS. Existing version 1 configurations and dependency pins remain supported. Rerun build, then reason, after upgrading; no shared MVCC snapshot across Cube or stages or runtime attestation is claimed.",
     "developerName": "Technoetic",
     "category": "Coding",
     "capabilities": [

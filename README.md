@@ -7,7 +7,7 @@
 **설정 하나에서 네 계층을 만들고, 서로의 결과를 교차 검증합니다.**<br/>
 계층마다 그럴듯한 설명을 넘어, **검사 ID · 건수 · 종료 코드로 일치 여부를 확인합니다.**
 
-[![Release](https://img.shields.io/badge/Release-v0.5.0-0D9488?style=for-the-badge)](docs/releases/v0.5.0.md)
+[![Release](https://img.shields.io/badge/Release-v0.6.0-0D9488?style=for-the-badge)](docs/releases/v0.6.0.md)
 [![CI](https://img.shields.io/github/actions/workflow/status/Technoetic/semantic-crosscheck/tests.yml?branch=main&style=for-the-badge&label=CI&logo=github)](https://github.com/Technoetic/semantic-crosscheck/actions/workflows/tests.yml)
 [![MIT](https://img.shields.io/badge/License-MIT-8B5CF6?style=for-the-badge)](LICENSE)
 [![Claude Code](https://img.shields.io/badge/Claude_Code-Plugin-191919?style=for-the-badge&logo=anthropic&logoColor=white)](#claude-code)
@@ -212,7 +212,7 @@ Cube는 항상 Tesseract SQL 플래너(`CUBEJS_TESSERACT_SQL_PLANNER=true`)로 �
 릴리스 태그를 고정해 등록합니다.
 
 ```text
-codex plugin marketplace add Technoetic/semantic-crosscheck --ref v0.5.0
+codex plugin marketplace add Technoetic/semantic-crosscheck --ref v0.6.0
 codex plugin add semantic-crosscheck@semantic-crosscheck-local
 ```
 
@@ -229,7 +229,7 @@ Windows PowerShell에서 실행 정책 때문에 `codex.ps1`이 거부되면 두
    python -m pip install -r "<plugin root>/requirements/reason.txt"
    ```
 
-   `<plugin root>` 예: `~/.claude/plugins/cache/semantic-crosscheck/semantic-crosscheck/0.5.0` 또는 `~/.codex/plugins/cache/semantic-crosscheck-local/semantic-crosscheck/0.5.0`. 패키지가 없으면 `/xc-doctor`가 실제 경로에 맞는 설치 명령을 안내합니다.
+   `<plugin root>` 예: `~/.claude/plugins/cache/semantic-crosscheck/semantic-crosscheck/0.6.0` 또는 `~/.codex/plugins/cache/semantic-crosscheck-local/semantic-crosscheck/0.6.0`. 패키지가 없으면 `/xc-doctor`가 실제 경로에 맞는 설치 명령을 안내합니다.
 2. psql을 사용하는 superuser가 `docs/setup-roles.sql`로 **loader·check 역할**을 만듭니다.
 3. Java를 `PATH`에 추가하거나 `SXC_JAVA`를 지정합니다.
 4. Node.js와 npm을 준비하고 `/xc-install` 또는 `sxc.py cube-install`로 **Cube 어댑터**를 한 번 설치합니다.
@@ -456,7 +456,7 @@ NOT NULL·FK·CHECK를 지키는 데이터만 실행하고 축소합니다. FK�
 재현용 `fixture.json`, 적용할 변환이 없으면 `not_run`입니다. 변환에 불변인 오류(간선 방향, 잘못된
 수량 열)는 잡지 못하며 gold 비교(V1/V3/V5)를 대신하지 않습니다.
 
-0.5.0 이후 추가(미출시): `--scenario bom_exhaustive`를 함께 주면 부품 2~4개·BOM 줄 1~5개·쌍마다 최대 2줄·
+v0.6.0부터 `--scenario bom_exhaustive`를 함께 주면 부품 2~4개·BOM 줄 1~5개·쌍마다 최대 2줄·
 `qty_per` 1 또는 2인 연결된 비순환 BOM 1,743종(동형 대표)을 두 가지 부품 이름 배치로 모두 실행하고(3,486건),
 각 결과를 독립 폐포 검산의 정확한 수량과 비교합니다(`counterexample:metamorphic:oracle`). 허용되는 사례를
 모두 비교해야만 통과하며(`--constraints`로 제외된 사례는 `not_proven`에 밝힘), 첫 실패에서 멈추거나 한 사례만
@@ -469,7 +469,7 @@ v0.5.0에는 독립 검산과 합성 예제 검사를 추가했습니다.
   별도의 Python 계산으로 소요 수량·논리 경로 수·최단/최장 깊이를 대조합니다. 같은 두 부품의
   여러 BOM 줄은 수량을 합친 하나의 연결로 계산합니다. 순환 보고 모드·미지원 자료형·계산 상한은
   `not_run`이며 일부만 읽고 통과하지 않습니다. 오류 모드의 순환과 설정한 최대 깊이 초과는
-  실패입니다. 논리 경로 수는 중복 BOM 줄 수를 세지 않습니다. 0.5.0 이후(미출시)에는 순환 보고
+  실패입니다. 논리 경로 수는 중복 BOM 줄 수를 세지 않습니다. v0.6.0부터는 순환 보고
   모드(`on_cycle = "report"`)도 검산기가 순환 안의 연결을 독립적으로(Tarjan 강연결요소) 지운 뒤
   비교하고, 통과하면 지운 연결 수를 `not_proven`에 밝힙니다.
 - **변이 검출용 합성 데이터:** `--mutation-operator`로 잘못 바꾼 SQL의 차이를 드러낼 데이터를
@@ -663,16 +663,16 @@ Cube의 기본 오류 로그에는 오류 클래스·코드·대략적인 범주
 <a id="development"></a>
 ## 🧪 검증 근거와 개발
 
-| v0.5.0의 확인 근거 | 범위 |
+| v0.6.0의 확인 근거 | 범위 |
 |---|---|
-| [릴리스 검증 JSON](https://github.com/Technoetic/semantic-crosscheck/releases/download/v0.5.0/verification.json) | 공개 시 실제 소스 커밋, 원시 CI 로그의 테스트·제외, 독립 검증, archive SHA-256 기록 |
+| [릴리스 검증 JSON](https://github.com/Technoetic/semantic-crosscheck/releases/download/v0.6.0/verification.json) | 공개 시 실제 소스 커밋, 원시 CI 로그의 테스트·제외, 독립 검증, archive SHA-256 기록 |
 | [GitHub Actions](https://github.com/Technoetic/semantic-crosscheck/actions/workflows/tests.yml) | 6개 OS/Python 단위 작업 + PostgreSQL·HermiT·Cube 통합 + 보안 검사 = 8개 작업 |
 | 엄격한 통합 runner | 미실행 검사·빈 suite·실패·오류가 있으면 CI 실패 |
 | 실제 runtime 선택 모드 | 완전 실행 환경의 성공·설정 변경·근거 누락 시 PASS 차단을 실행하는 통합 CI |
-| 릴리스 전 로컬 소스 검증 | Windows·PostgreSQL 17.5·Java 21·Cube 1.8.3에서 809개·제외 0·실패/오류 0 · 소스 커밋 `bf3c9a3`의 감사이며 최종 공개 커밋의 CI와 구분 |
-| 릴리스 배포 파일 | [소스 ZIP](https://github.com/Technoetic/semantic-crosscheck/releases/download/v0.5.0/semantic-crosscheck-0.5.0.zip) · [SHA256SUMS](https://github.com/Technoetic/semantic-crosscheck/releases/download/v0.5.0/SHA256SUMS) |
+| 릴리스 전 로컬 소스 검증 | Windows·PostgreSQL 17.5·Java 21·Cube 1.8.3에서 868개·제외 0·실패/오류 0 · 소스 커밋 `a018767`의 감사이며 최종 공개 커밋의 CI와 구분 |
+| 릴리스 배포 파일 | [소스 ZIP](https://github.com/Technoetic/semantic-crosscheck/releases/download/v0.6.0/semantic-crosscheck-0.6.0.zip) · [SHA256SUMS](https://github.com/Technoetic/semantic-crosscheck/releases/download/v0.6.0/SHA256SUMS) |
 
-최종 공개 커밋·CI 작업 URL·실제 집계는 릴리스와 함께 제공하는 **v0.5.0 검증 JSON**에서 확인합니다. 원시 CI 로그에서 읽은 집계만 공개 커밋의 근거로 사용하며, 이전 로컬 검증과 전체 엔진 통합 CI를 구분합니다.
+최종 공개 커밋·CI 작업 URL·실제 집계는 릴리스와 함께 제공하는 **v0.6.0 검증 JSON**에서 확인합니다. 원시 CI 로그에서 읽은 집계만 공개 커밋의 근거로 사용하며, 이전 로컬 검증과 전체 엔진 통합 CI를 구분합니다.
 
 ```bash
 python -m unittest discover -s tests -v
@@ -727,13 +727,13 @@ CI는 전체 이력을 가진 clone의 작업 트리·이력을 일반 패턴과
 
 **MIT** · [LICENSE](LICENSE). 런타임 의존성을 저장소에 포함하지 않으며 의존성 라이선스는 [THIRD_PARTY.md](THIRD_PARTY.md)에 정리했습니다.
 
-[설계 문서](docs/design.md) · [설정 레퍼런스](skills/semantic-crosscheck/references/config.md) · [문제와 함정](skills/semantic-crosscheck/references/pitfalls.md) · [변경 이력](CHANGELOG.md) · [v0.5.0 릴리스 노트](docs/releases/v0.5.0.md)
+[설계 문서](docs/design.md) · [설정 레퍼런스](skills/semantic-crosscheck/references/config.md) · [문제와 함정](skills/semantic-crosscheck/references/pitfalls.md) · [변경 이력](CHANGELOG.md) · [v0.6.0 릴리스 노트](docs/releases/v0.6.0.md)
 
 <div align="center">
 
 **한 계층의 설명을 믿기 전에, 다른 계층의 답과 대조합니다.**
 
-[빠른 시작으로 이동 ↑](#quick-start-with-the-demo) · [GitHub 릴리스](https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.5.0)
+[빠른 시작으로 이동 ↑](#quick-start-with-the-demo) · [GitHub 릴리스](https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.6.0)
 
 </div>
 
@@ -741,4 +741,4 @@ CI는 전체 이력을 가진 clone의 작업 트리·이력을 일반 패턴과
 
 설정 하나로 PostgreSQL의 계층·규칙, SHACL, OWL·HermiT, Cube 모델을 만들고 서로와 gold SQL을 비교합니다. `not_run`은 통과가 아니며, 전체 판정은 `report`와 `not_proven`을 함께 읽습니다. 원본 조회와 생성 스키마 기록을 분리하고, 데모 적재는 별도의 loader 역할을 사용합니다.
 
-요구 환경은 **Python 3.11 이상 · PostgreSQL 17 이상 · Java 11 이상 · Node.js 22 이상**입니다. Linux Cube에는 **glibc 2.34** 이상(x64), 2.30 이상(arm64)이 필요합니다. Codex 설치 태그는 **v0.5.0**, 라이선스는 MIT입니다.
+요구 환경은 **Python 3.11 이상 · PostgreSQL 17 이상 · Java 11 이상 · Node.js 22 이상**입니다. Linux Cube에는 **glibc 2.34** 이상(x64), 2.30 이상(arm64)이 필요합니다. Codex 설치 태그는 **v0.6.0**, 라이선스는 MIT입니다.

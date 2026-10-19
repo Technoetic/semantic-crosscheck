@@ -4,7 +4,9 @@ All notable changes to this project are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.6.0] - 2026-10-20
+
+Release notes: [docs/releases/v0.6.0.md](docs/releases/v0.6.0.md).
 
 ### Added
 
@@ -17,9 +19,9 @@ All notable changes to this project are recorded here. The format follows
   partially: at the first failure and in a one-case replay the failed checks are `fail` and the others `not_run`;
   a resource bound in an original answer makes every check `not_run`; one hit only in a relation's own transform,
   transformed answer or comparison makes only that relation `not_run`. `--max-examples` must be omitted or cover
-  every case. The scenario is rejected outside
-  `--metamorphic-sql`. A `UNION` closure now fails deterministically (case 4), while with seed 7 the seeded
-  `bom_diamond` run sees it in only 6 of its 64 default cases (method after Marinov et al., 2003).
+  every case. The scenario is rejected outside `--metamorphic-sql`. A `UNION` closure now fails deterministically
+  (case 4), while with seed 7 the seeded `bom_diamond` run sees it in only 6 of its 64 default cases (method after
+  Marinov et al., 2003).
 
 ### Changed
 
@@ -240,6 +242,7 @@ First release. Release notes: [docs/releases/v0.1.0.md](docs/releases/v0.1.0.md)
   followed by the clean and dirty demo end to end through the command line; whitespace check and a leak
   scan of the working tree and the whole history.
 
+[0.6.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.6.0
 [0.5.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.5.0
 [0.4.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.4.0
 [0.3.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.3.0

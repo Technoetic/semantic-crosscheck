@@ -5,10 +5,13 @@ topological order, using Fraction rather than Decimal's context-sensitive arithm
 one summed logical edge; NULL quantities still contribute paths but only non-NULL products contribute to SUM.
 No generated SQL, temporary builder table or recomputation helper participates in the expected result.
 
-Resource limits and unsupported inputs produce not_run, never a partial PASS. Cycles fail error mode; report mode's
-SCC-edge removal is not implemented here and is explicitly not proven. Results contain counts and fixed reasons
-only, never endpoint keys or quantities. run() reads raw edges and the generated closure in one short READ ONLY,
-REPEATABLE READ transaction, without waiting for Cube.
+Resource limits and unsupported inputs produce not_run, never a partial PASS. Cycles fail error mode. Report mode
+removes every logical edge whose parent and child lie in the same strongly connected component (self-loops
+included), the builder's rule, found here independently by an iterative Tarjan search (Tarjan, "Depth-First Search
+and Linear Graph Algorithms", SIAM J. Comput. 1(2), 1972) charged to the operation budget, and then folds what is
+left. The removal counts are informational only: the verdict is the exact closure comparison, never agreement with
+build's statistics. Results contain counts and fixed reasons only, never endpoint keys or quantities. run() reads
+raw edges and the generated closure in one short READ ONLY, REPEATABLE READ transaction, without waiting for Cube.
 """
 
 from collections import deque
@@ -43,6 +46,13 @@ class _DepthLimit(Exception):
 
 class _CycleError(Exception):
     pass
+
+
+class _InternalError(Exception):
+    """An invariant of the oracle itself broke; reported as error, never folded into a verdict."""
+
+    def __init__(self, reason):
+        self.reason = reason
 
 
 class _Budget:
@@ -105,20 +115,8 @@ def _key(value):
     return value
 
 
-def _expected(edges, max_depth, on_cycle, budget, detail):
-    logical, nodes = {}, set()
-    nulls = 0
-    for parent, child, quantity in edges:
-        budget.step()
-        if parent is None or child is None:
-            nulls += 1
-            continue
-        pair = (_key(parent), _key(child))
-        nodes.update(pair)
-        budget.check("max_nodes", len(nodes))
-        logical[pair] = budget.add(logical.get(pair), budget.number(quantity))
-    detail.update(logical_edges=len(logical), null_endpoint_lines=nulls,
-                  null_quantity_edges=sum(q is None for q in logical.values()), nodes=len(nodes))
+def _topological(nodes, logical, budget):
+    """(children, Kahn's order); the order is shorter than nodes when a cycle (a self-loop included) remains."""
     children, indegree = {}, dict.fromkeys(nodes, 0)
     for (parent, child), quantity in logical.items():
         budget.step()
@@ -133,10 +131,91 @@ def _expected(edges, max_depth, on_cycle, budget, detail):
             indegree[child] -= 1
             if not indegree[child]:
                 ready.append(child)
+    return children, order
+
+
+def _strong_components(nodes, children, budget):
+    """Tarjan's strongly connected components with an explicit stack (no recursion): {node: component id}.
+
+    Every node visit, edge inspection and stack pop is one budgeted step, so the search is O(V + E) and bounded.
+    """
+    index, low, component, stack, on_stack = {}, {}, {}, [], set()
+
+    def visit(node):
+        budget.step()
+        index[node] = low[node] = len(index)
+        stack.append(node)
+        on_stack.add(node)
+        return node, iter(children.get(node, ()))
+
+    for root in nodes:
+        if root in index:
+            continue
+        work = [visit(root)]
+        while work:
+            node, pending = work[-1]
+            for child, _quantity in pending:
+                budget.step()
+                if child not in index:
+                    work.append(visit(child))
+                    break
+                if child in on_stack:
+                    low[node] = min(low[node], index[child])
+            else:
+                work.pop()
+                if work:
+                    parent = work[-1][0]
+                    low[parent] = min(low[parent], low[node])
+                if low[node] == index[node]:
+                    while True:
+                        budget.step()
+                        member = stack.pop()
+                        on_stack.discard(member)
+                        component[member] = index[node]
+                        if member == node:
+                            break
+    return component
+
+
+def _expected(edges, max_depth, on_cycle, budget, detail):
+    logical, nodes = {}, set()
+    nulls = 0
+    for parent, child, quantity in edges:
+        budget.step()
+        if parent is None or child is None:
+            nulls += 1
+            continue
+        pair = (_key(parent), _key(child))
+        nodes.update(pair)
+        budget.check("max_nodes", len(nodes))
+        logical[pair] = budget.add(logical.get(pair), budget.number(quantity))
+    detail.update(logical_edges=len(logical), null_endpoint_lines=nulls,
+                  null_quantity_edges=sum(q is None for q in logical.values()), nodes=len(nodes))
+    children, order = _topological(nodes, logical, budget)
     if len(order) != len(nodes):
         if on_cycle == "error":
             raise _CycleError()
-        raise _NotProven("cycle_not_supported", on_cycle=on_cycle)
+        if on_cycle != "report":
+            raise _NotProven("unsupported_on_cycle")
+        component = _strong_components(nodes, children, budget)
+        inside, looped, sizes = [], set(), {}
+        for parent, child in logical:
+            budget.step()
+            if component[parent] == component[child]:
+                inside.append((parent, child))
+                if parent == child:
+                    looped.add(parent)
+        for node in nodes:
+            budget.step()
+            sizes[component[node]] = sizes.get(component[node], 0) + 1
+        for pair in inside:
+            del logical[pair]
+        # The builder's cycle_nodes: nodes that reach themselves (a component of two or more nodes, or a self-loop).
+        detail.update(cycle_handling="scc_edge_removal", dropped_cycle_edges=len(inside),
+                      cycle_nodes=sum(sizes[component[n]] > 1 or n in looped for n in nodes))
+        children, order = _topological(nodes, logical, budget)
+        if len(order) != len(nodes):
+            raise _InternalError("scc_removal_left_cycle")
 
     summaries, pairs = {}, 0
     for parent in reversed(order):
@@ -199,6 +278,8 @@ def compare_rows(edges, rows, *, max_depth=32, on_cycle="error", limits=None):
         return "fail", {**detail, "reason": "depth_limit", "max_depth": max_depth, "operations": budget.operations}
     except _CycleError:
         return "fail", {**detail, "reason": "cycle", "operations": budget.operations}
+    except _InternalError as e:
+        return "error", {**detail, "reason": e.reason, "operations": budget.operations}
 
 
 def _supported_keys(conn, edge, h):

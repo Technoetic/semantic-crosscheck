@@ -7,8 +7,10 @@ verify.mutation_operators entry that names no operator is a configuration error 
 
 Before Cube starts, v3:closure_oracle:<h> independently compares the generated closure to exact Python raw-edge
 calculations of qty, path_count, min_depth and max_depth. Both inputs share one READ ONLY REPEATABLE READ snapshot.
-Resource bounds, unsupported types and cyclic report-mode graphs are not_run and not_proven; error-policy cycles
-fail. An empty graph passes with a coverage disclosure. The oracle is not replayed against V4's Cube mutants.
+Resource bounds and unsupported types are not_run and not_proven; error-policy cycles fail. For on_cycle = report
+the oracle removes the edges inside strongly connected components itself (iterative Tarjan) and a pass lists the
+removed edge count in not_proven. An empty graph passes with a coverage disclosure. The oracle is not replayed
+against V4's Cube mutants.
 
 One Cube process (cube_run.serve on <out>/cube, log in verify/server.log) serves the other V1-V3 checks:
   v1:<gold>             the first binding of the gold query matches exactly; a gold query without any binding
@@ -315,6 +317,10 @@ class _Verify:
                                            f"({detail['reason']})")
             elif detail.get("empty_graph"):
                 self.res.not_proven.append(f"{cid}: empty raw-edge graph; no reachable pair was exercised")
+            if status == "pass" and detail.get("dropped_cycle_edges"):
+                self.res.not_proven.append(f"{cid}: on_cycle = report removed {detail['dropped_cycle_edges']} logical "
+                                           "edge(s) inside cycles before comparing; paths through them are left out "
+                                           "of the closure by policy")
 
     def scope(self):
         """One not_run check per part --only left out and per gold query --gold left out."""
@@ -422,6 +428,10 @@ def _error_action(c: Check) -> str:
         culprit = f"suite item {d['item']}" if d.get("item") else f"the suite ({d.get('exception', 'error')})"
         return (f"{c.id} was not judged: {culprit} could not run against the mutant; make sure PostgreSQL and Cube stay "
                 "reachable for the whole run (connection limits, timeouts, privileges), then rerun verify")
+    if reason == "scc_removal_left_cycle":
+        return (f"{c.id}: the independent oracle still found a cycle after removing the edges inside strongly "
+                "connected components (an internal defect of the oracle, not of the data); report it with the check "
+                "detail and do not treat the closure as verified")
     if reason == "write":
         return f"{c.id}: the mutant model could not be written under verify/mutants; check the --out directory, then rerun verify"
     if reason in ("startup", "cube"):
@@ -450,9 +460,6 @@ def _not_run_action(c: Check) -> str:
     if c.id.startswith("v3:closure_oracle:") and why == "budget_exceeded":
         return (f"{c.id} exceeded the independent oracle limit {c.detail['limit']}: use a smaller hierarchy or review "
                 "closure_oracle.Limits before raising the bound; no partial closure was certified")
-    if c.id.startswith("v3:closure_oracle:") and why == "cycle_not_supported":
-        return (f"{c.id}: on_cycle=report cycles are unsupported by the independent raw-edge oracle; "
-                "use an acyclic hierarchy or implement independent cycle handling before claiming this proof")
     if why == "suite_incomplete":
         return (f"{c.id} survived a suite with items left out ({', '.join(c.detail.get('excluded', []))}): make every "
                 "gold query and closure run (full verify, passing builds), then rerun verify")

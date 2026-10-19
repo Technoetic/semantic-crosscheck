@@ -48,7 +48,7 @@ non-closure answer is the `counterexample:metamorphic:shape` error. Relations te
 errors invariant under them, such as a reversed edge direction or a wrong quantity column.
 With `--scenario bom_exhaustive`, `counterexample:metamorphic:oracle` also compares every case's answer exactly with
 the independent closure-oracle fold; it passes only when every admissible case of the enumeration was compared
-(with `--constraints`, inadmissible cases are counted in `invalid_domain_examples` and named in `not_proven`).
+(with `--constraints`, inadmissible cases are counted in `invalid_domain_examples` and noted in `not_proven`).
 No check passes partially: at the first failure and in a one-case replay the failed checks are `fail` and the
 others `not_run` (`stopped_at_first_failure`, `replay_covers_one_case`); a resource bound in an original answer
 makes every check `not_run`; one hit only in a relation's own transform, transformed answer or comparison makes

@@ -15,7 +15,7 @@ Release notes: [docs/releases/v0.6.0.md](docs/releases/v0.6.0.md).
   `qty_per` in {1, 2} (1,743 isomorphism classes x 2 label placements = 3,486 cases). The new check
   `counterexample:metamorphic:oracle` compares every case's answer exactly with the independent closure-oracle
   fold (`closure_oracle.expected_quantities`). It passes only when every admissible case of the enumeration was
-  compared (with `--constraints`, inadmissible cases are counted and named in `not_proven`). No check passes
+  compared (with `--constraints`, inadmissible cases are counted and noted in `not_proven`). No check passes
   partially: at the first failure and in a one-case replay the failed checks are `fail` and the others `not_run`;
   a resource bound in an original answer makes every check `not_run`; one hit only in a relation's own transform,
   transformed answer or comparison makes only that relation `not_run`. `--max-examples` must be omitted or cover

@@ -209,7 +209,7 @@ own transform, transformed answer or comparison makes only that relation `not_ru
 are `fail` and the others `not_run` (`stopped_at_first_failure`); in a replay of one case the checks that fail
 again are `fail` and the others `not_run` (`replay_covers_one_case`). A statement timeout remains a
 `counterexample:query` error. With `--constraints`, inadmissible cases are counted in `invalid_domain_examples`
-and named in `not_proven`. Results
+and noted in `not_proven`. Results
 report `cases_total`, `structures`, `placements`, `cases_run`, `not_run_reasons`, the scope and the SHA-256 of the
 whole enumeration (`enumeration_sha256`).
 

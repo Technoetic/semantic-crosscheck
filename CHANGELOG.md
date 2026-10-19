@@ -4,6 +4,45 @@ All notable changes to this project are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-10-20
+
+Release notes: [docs/releases/v0.6.0.md](docs/releases/v0.6.0.md).
+
+### Added
+
+- counterexample: `--metamorphic-sql` gains `--scenario bom_exhaustive`, a bounded-exhaustive enumeration of
+  every connected acyclic BOM with 2-4 parts, 1-5 `bom_line` rows, at most 2 rows per (parent, child) pair and
+  `qty_per` in {1, 2} (1,743 isomorphism classes x 2 label placements = 3,486 cases). The new check
+  `counterexample:metamorphic:oracle` compares every case's answer exactly with the independent closure-oracle
+  fold (`closure_oracle.expected_quantities`). It passes only when every admissible case of the enumeration was
+  compared (with `--constraints`, inadmissible cases are counted and noted in `not_proven`). No check passes
+  partially: at the first failure and in a one-case replay the failed checks are `fail` and the others `not_run`;
+  a resource bound in an original answer makes every check `not_run`; one hit only in a relation's own transform,
+  transformed answer or comparison makes only that relation `not_run`. `--max-examples` must be omitted or cover
+  every case. The scenario is rejected outside `--metamorphic-sql`. A `UNION` closure now fails deterministically
+  (case 4), while with seed 7 the seeded `bom_diamond` run sees it in only 6 of its 64 default cases (method after
+  Marinov et al., 2003).
+
+### Changed
+
+- The V3 independent closure oracle now verifies `on_cycle = "report"` hierarchies instead of reporting them
+  `not_run`: an iterative Tarjan search (charged to the operation budget) removes every logical edge inside a
+  strongly connected component, self-loops included, then folds the rest exactly. `dropped_cycle_edges` and
+  `cycle_nodes` are recorded for information only, a pass that removed edges is listed in `not_proven`, and a
+  cycle left after removal is an `error` (`scc_removal_left_cycle`). The `cycle_not_supported` reason is gone. The
+  configuration still accepts only `error` and `report`; called directly, the oracle answers any other `on_cycle`
+  value with `not_run` (`unsupported_on_cycle`), whatever the graph.
+- reason now compares shapes that combine `class` with bounds against their SQL view through SHACL. The node shape
+  has two property shapes: `sh:class` on the column predicate and the bounds on a new value predicate
+  `<entity>.<column>/value`, which carries the same column value as a literal. A row flagged by either property
+  shape counts for the shape. Only `sql_violation` shapes remain checked only in SQL. `build/shapes.ttl` changes
+  for configurations with such shapes, and the engine fingerprint changes: rerun the whole pipeline (`build` first, then
+  `reason`, `cube` and `verify`); earlier results are reported stale. These shapes are now exported, so their target and class-entity rows count against
+  `verify.shacl_max_rows`, and next to a bound-only shape on the same column (or a class shape naming another
+  entity) such a shape opens an extra value group that exports its target rows again. An unchanged configuration
+  can therefore exceed the limit, which leaves every `shacl:<id>` check `not_run` (`resource_limit`): check the
+  reported row count after upgrading, or raise `verify.shacl_max_rows`.
+
 ## [0.5.0] - 2026-10-19
 
 Release notes: [docs/releases/v0.5.0.md](docs/releases/v0.5.0.md).
@@ -203,6 +242,7 @@ First release. Release notes: [docs/releases/v0.1.0.md](docs/releases/v0.1.0.md)
   followed by the clean and dirty demo end to end through the command line; whitespace check and a leak
   scan of the working tree and the whole history.
 
+[0.6.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.6.0
 [0.5.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.5.0
 [0.4.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.4.0
 [0.3.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.3.0

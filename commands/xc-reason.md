@@ -40,15 +40,23 @@ python "${CLAUDE_PLUGIN_ROOT}/skills/semantic-crosscheck/scripts/sxc.py" reason 
 
 Exit code 0 with `shacl:<id>`, `owl:consistency`, `v5:closure:<h>` and `v5:defined:<name>` passing.
 A passing `shacl:<id>` means SHACL and SQL agree on which rows violate the shape, not that there are
-no violations (that is `shape:<id>` in `build`). Two kinds of shape are not compared with SHACL and are
+no violations (that is `shape:<id>` in `build`). One kind of shape is not compared with SHACL and is
 listed as not proven, "checked only in SQL":
 
 - `sql_violation`: a shape with an `sql_violation` predicate, also combined with `class` or bounds (no
-  SHACL form);
-- `class_and_bounds`: a shape that combines `class` with bounds (no SHACL form).
+  SHACL form).
+
+A shape that combines `class` with bounds is compared: its node shape has two property shapes, `sh:class`
+on the column and the bounds on the same value written as a number on `<entity>.<column>/value`, and its
+SHACL keys are the rows either one flags (releases up to 0.5.0 listed it as `class_and_bounds`, checked
+only in SQL; after upgrading, rerun [/xc-build](xc-build.md) before reason). Its target and class-entity rows
+now count against `verify.shacl_max_rows`, and next to a bound-only shape on its column (or a class shape naming
+another entity) an extra value group is opened, so an unchanged configuration can exceed the limit: check the row
+count after upgrading or raise it.
 
 Shapes on the same target column that need different kinds of RDF value (a `class` shape and a bound
-shape, or `class` shapes naming different entities) are all compared: each shape goes to the first value
+shape, or `class` shapes naming different entities; a shape with `class` and bounds counts as a `class` shape
+here) are all compared: each shape goes to the first value
 group in which its column carries no other kind of value (`main`; a colliding shape opens `extra:1`, `extra:2`,
 ...), each group is validated on its own data graph, and each `shacl:<id>` names its `value_group`.
 Without a colliding shape there is one group, `main`. `verify.shacl_max_rows` bounds the rows of all

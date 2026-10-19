@@ -43,13 +43,16 @@ def with_shapes(cfg, *extra):
 def export_graph(cfg, rows: dict):
     """RDF of entity rows as the reason stage exports them: every row typed with its entity class and, for each
     shape with a SHACL form on its entity, the path value as the referenced row's IRI (class) or a decimal
-    literal (bounds); NULL gives no triple. rows: {entity: [row dict]}."""
+    literal (bounds), and for a shape with class and bounds also the decimal on the value predicate; NULL gives
+    no triple. rows: {entity: [row dict]}."""
     from rdflib import Literal, URIRef
     g = rdflib.Graph()
     rdf_type = URIRef(RDF_TYPE)
     for entity, entity_rows in rows.items():
         ent = cfg.entities[entity]
         paths = {s.path: s for s in cfg.shapes if s.target == entity and s.path and not shapes.no_shacl_reason(s)}
+        both = {s.path for s in cfg.shapes if s.target == entity and s.class_ and shapes.has_bounds(s)
+                and not shapes.no_shacl_reason(s)}
         cls = URIRef(naming.rdf_entity_class(cfg, entity))
         for row in entity_rows:
             node = URIRef(naming.rdf_node(cfg, entity, [row[k] for k in ent.key]))
@@ -60,6 +63,8 @@ def export_graph(cfg, rows: dict):
                     continue
                 obj = URIRef(naming.rdf_node(cfg, s.class_, [value])) if s.class_ else Literal(Decimal(value))
                 g.add((node, URIRef(naming.rdf_predicate(cfg, entity, path)), obj))
+                if path in both:   # class and bounds: the bounds read the same value as a number on <P>/value
+                    g.add((node, URIRef(naming.rdf_value_predicate(cfg, entity, path)), Literal(Decimal(value))))
     return g
 
 
@@ -69,6 +74,7 @@ def focus_keys(cfg, data_graph, ttl: str) -> tuple[dict, dict]:
     shapes_graph = rdflib.Graph().parse(data=ttl, format="turtle")
     _conforms, results, _text = pyshacl.validate(data_graph, shacl_graph=shapes_graph, inference="none")
     by_prop = {naming.rdf_property_shape(cfg, s.id): s for s in cfg.shapes}
+    by_prop.update({naming.rdf_bound_shape(cfg, s.id): s for s in cfg.shapes})
     keys, severities = {}, {}
     for r in results.subjects(URIRef(RDF_TYPE), URIRef(SH + "ValidationResult")):
         s = by_prop[str(results.value(r, URIRef(SH + "sourceShape")))]
@@ -155,9 +161,47 @@ class ShapesTtlTest(unittest.TestCase):
         self.assertEqual(self.skipped, ["open_le_total"])
         self.assertIn("# open_le_total: no SHACL form (sql_violation)", self.ttl)
         extra = [Shape(id="class_and_bound", target="bom_line", path="line_no", class_="part", min_inclusive=Decimal(1)),
-                 Shape(id="bound_and_sql", target="stock", path="qty", min_inclusive=Decimal(0), sql_violation="false")]
-        _ttl, skipped = shapes.shapes_ttl(with_shapes(self.cfg, *extra))
-        self.assertEqual(skipped, ["open_le_total", "class_and_bound", "bound_and_sql"])
+                 Shape(id="bound_and_sql", target="stock", path="qty", min_inclusive=Decimal(0), sql_violation="false"),
+                 Shape(id="all_three", target="bom_line", path="child_id", class_="part", max_inclusive=Decimal(9),
+                       sql_violation="false")]
+        ttl, skipped = shapes.shapes_ttl(with_shapes(self.cfg, *extra))
+        self.assertEqual(skipped, ["open_le_total", "bound_and_sql", "all_three"], "class with bounds has a SHACL form")
+        self.assertEqual([shapes.no_shacl_reason(s) for s in extra], ["", "sql_violation", "sql_violation"])
+        self.assertIn("# all_three: no SHACL form (sql_violation)", ttl)
+        self.assertNotIn("class_and_bounds", ttl)
+
+    @unittest.skipUnless(rdflib, "rdflib is not installed")
+    def test_class_and_bounds_become_two_property_shapes(self):
+        """One node shape, two property shapes: sh:class on the column's predicate, the bounds on its value
+        predicate, each with its own IRI (pySHACL's sh:sourceShape) and the shape's severity."""
+        from rdflib import Literal, URIRef
+        s = Shape(id="line_ref", target="bom_line", path="line_no", class_="part", min_exclusive=Decimal(0),
+                  max_inclusive=Decimal("9.5"), severity="warning")
+        cfg = with_shapes(self.cfg, s)
+        ttl, skipped = shapes.shapes_ttl(cfg)
+        self.assertEqual(skipped, ["open_le_total"])
+        g = rdflib.Graph().parse(data=ttl, format="turtle")
+        sh = lambda name: URIRef(SH + name)  # noqa: E731
+        node = URIRef(naming.rdf_node_shape(cfg, "line_ref"))
+        prop, bound = URIRef(naming.rdf_property_shape(cfg, "line_ref")), URIRef(naming.rdf_bound_shape(cfg, "line_ref"))
+        self.assertNotEqual(prop, bound)
+        self.assertEqual(set(g.objects(node, sh("property"))), {prop, bound})
+        self.assertEqual(g.value(node, sh("targetClass")), URIRef(naming.rdf_entity_class(cfg, "bom_line")))
+        self.assertEqual(g.value(node, sh("severity")), sh("Warning"))
+        pred = URIRef(naming.rdf_predicate(cfg, "bom_line", "line_no"))
+        value = URIRef(naming.rdf_value_predicate(cfg, "bom_line", "line_no"))
+        self.assertNotEqual(pred, value)
+        decimal = lambda text: Literal(text, datatype=URIRef(XSD_DECIMAL))  # noqa: E731
+        self.assertEqual(set(g.predicate_objects(prop)), {
+            (URIRef(RDF_TYPE), sh("PropertyShape")), (sh("path"), pred),
+            (sh("class"), URIRef(naming.rdf_entity_class(cfg, "part"))), (sh("severity"), sh("Warning"))})
+        self.assertEqual(set(g.predicate_objects(bound)), {
+            (URIRef(RDF_TYPE), sh("PropertyShape")), (sh("path"), value), (sh("minExclusive"), decimal("0")),
+            (sh("maxInclusive"), decimal("9.5")), (sh("severity"), sh("Warning"))})
+        # a shape with only one of the two keeps its one property shape, as before
+        for sid in ("child_exists", "qty_positive", "stock_nonnegative"):
+            self.assertEqual(len(set(g.objects(URIRef(naming.rdf_node_shape(cfg, sid)), sh("property")))), 1, sid)
+            self.assertNotIn(f"<{naming.rdf_bound_shape(cfg, sid)}>", ttl)
 
     def test_text_names_every_shape_iri(self):
         for sid in ("child_exists", "qty_positive", "stock_nonnegative"):
@@ -198,6 +242,35 @@ class ShapesTtlTest(unittest.TestCase):
         g = rdflib.Graph().parse(data=ttl, format="turtle")
         self.assertIn((URIRef(naming.rdf_node_shape(cfg, "qty_positive")), URIRef(SH + "targetClass"),
                        URIRef(naming.rdf_entity_class(cfg, "bom_line"))), g)
+
+
+class RdfNamingTest(unittest.TestCase):
+    """The value predicate and the bound property shape never share an IRI with any other generated name: the
+    identifiers they are made of never contain "." or "/", which separate the parts."""
+
+    IDS = ("a", "b", "p", "shape", "value", "a_b", "shape_p", "p_value", "x1", "_")
+
+    def test_generated_iris_never_collide(self):
+        cfg = demo_config()
+        seen = {}
+        names = [("entity_class", (e,), naming.rdf_entity_class(cfg, e)) for e in self.IDS]
+        names += [("node_shape", (i,), naming.rdf_node_shape(cfg, i)) for i in self.IDS]
+        names += [("property_shape", (i,), naming.rdf_property_shape(cfg, i)) for i in self.IDS]
+        names += [("bound_shape", (i,), naming.rdf_bound_shape(cfg, i)) for i in self.IDS]
+        names += [("predicate", (e, c), naming.rdf_predicate(cfg, e, c)) for e in self.IDS for c in self.IDS]
+        names += [("value_predicate", (e, c), naming.rdf_value_predicate(cfg, e, c)) for e in self.IDS for c in self.IDS]
+        names += [("node", (e, k), naming.rdf_node(cfg, e, [k])) for e in self.IDS for k in self.IDS + ("p/b", "x.value")]
+        for kind, args, iri in names:
+            with self.subTest(kind=kind, args=args):
+                self.assertNotIn(iri, seen, f"{kind}{args} collides with {seen.get(iri)}")
+                seen[iri] = (kind, args)
+        self.assertEqual(naming.rdf_bound_shape(cfg, "s"), naming.rdf_node_shape(cfg, "s") + "/b")
+        self.assertEqual(naming.rdf_value_predicate(cfg, "e", "c"), naming.rdf_predicate(cfg, "e", "c") + "/value")
+        for bad in ("a.b", "a/b", "A"):
+            with self.assertRaises(ValueError):
+                naming.rdf_value_predicate(cfg, "e", bad)
+            with self.assertRaises(ValueError):
+                naming.rdf_bound_shape(cfg, bad)
 
 
 class TurtleEscapingTest(unittest.TestCase):
@@ -277,6 +350,34 @@ class ShaclEqualsSqlTest(unittest.TestCase):
         })
         self.assertEqual(severities["stock_nonnegative"], {SH + "Warning"})
         self.assertEqual(severities["child_exists"], {SH + "Violation"})
+
+    def test_class_and_bounds_violate_like_the_ored_view(self):
+        """A shape with class and bounds: its view ORs the dangling reference and the bound, whether or not the
+        reference exists. Five lines cover dangling and out of range, dangling and in range, existing and out of
+        range, existing and in range, and NULL; the expected keys follow from the rows, not from the code."""
+        s = Shape(id="line_ref", target="bom_line", path="child_id", class_="part", max_inclusive=Decimal(5))
+        cfg = with_shapes(demo_config(), s)
+        parts = [{"part_id": p} for p in (7, 1)]
+        lines = [{"parent_id": "L1", "child_id": 9, "line_no": 1, "qty_per": "1"},      # dangling, > 5
+                 {"parent_id": "L2", "child_id": 4, "line_no": 1, "qty_per": "1"},      # dangling, in range
+                 {"parent_id": "L3", "child_id": 7, "line_no": 1, "qty_per": "1"},      # existing, > 5
+                 {"parent_id": "L4", "child_id": 1, "line_no": 1, "qty_per": "1"},      # existing, in range
+                 {"parent_id": "L5", "child_id": None, "line_no": 1, "qty_per": "1"}]   # NULL: no violation
+        ttl = shapes.shapes_ttl(cfg)[0]
+        graph = export_graph(cfg, {"part": parts, "bom_line": lines})
+        keys, severities = focus_keys(cfg, graph, ttl)
+        self.assertEqual(keys["line_ref"], {key("L1", 9, 1), key("L2", 4, 1), key("L3", 7, 1)})
+        self.assertEqual(keys["child_exists"], {key("L1", 9, 1), key("L2", 4, 1)}, "the class-only shape is unchanged")
+        self.assertEqual(severities["line_ref"], {SH + "Violation"})
+        # the value triples carry the bound: without them the bound sees no value and only the class part remains
+        value = rdflib.URIRef(naming.rdf_value_predicate(cfg, "bom_line", "child_id"))
+        self.assertEqual(len(list(graph.triples((None, value, None)))), 4)
+        without = rdflib.Graph()
+        for triple in graph:
+            if triple[1] != value:
+                without.add(triple)
+        keys, _ = focus_keys(cfg, without, ttl)
+        self.assertEqual(keys["line_ref"], {key("L1", 9, 1), key("L2", 4, 1)})
 
 
 if __name__ == "__main__":

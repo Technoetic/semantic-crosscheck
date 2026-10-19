@@ -5,7 +5,7 @@ It uses PostgreSQL read-only transactions and bound values in CTE tables, withou
 source tables. Use a dedicated test database; arbitrary SQL can explicitly reference other objects.
 
 The built-in scenarios target NULL aggregation, duplicate join keys, two paths through a BOM diamond,
-and date-window boundaries. The fixture schema and runnable reference/candidate pairs are in
+and date-window boundaries (with `--metamorphic-sql`, also every small acyclic BOM: `bom_exhaustive`, below). The fixture schema and runnable reference/candidate pairs are in
 `examples/counterexamples/`. Both query outputs must have matching column names and equal exact
 row multisets to agree; row ordering is irrelevant and duplicate multiplicity matters.
 
@@ -121,8 +121,8 @@ pair with the columns `ancestor`, `descendant` and `qty` (more columns are ignor
 python skills/semantic-crosscheck/scripts/sxc.py counterexample --metamorphic-sql examples/counterexamples/bom_diamond-reference.sql --seed 7 --out .sxc
 ```
 
-The mode uses only the `bom_diamond` generator (also with `--constraints`) and cannot be combined with
-`--reference-sql`/`--candidate-sql`. For every admissible case the SQL runs on the original fixture and on four
+The mode uses the `bom_diamond` generator by default, or the bounded-exhaustive `bom_exhaustive` enumeration
+described below (both also with `--constraints`), and cannot be combined with `--reference-sql`/`--candidate-sql`. For every admissible case the SQL runs on the original fixture and on four
 transformed fixtures, each in its own read-only REPEATABLE READ transaction with bound values:
 
 | Check | Transform | Expected answer |
@@ -167,6 +167,11 @@ check. With the shipped examples, the `sum` reference passes all four relations,
 unfolding (and scaling whenever the scaled line lies off the minimal path), and a `UNION` instead of `UNION ALL`
 fails unfolding when two paths have the same product and depth.
 
+The seeded `bom_diamond` fixtures all share one diamond topology, so that `UNION` error is seen only where seeded
+quantities collide: with the default seed 7 the original diamond has two equal-product paths in only 2 of the 64
+default cases (unfolding fails there), and scaling creates an equal product in 4 more; seeds 0 to 29 detect it in
+between 1 and 8 of their 64 cases.
+
 The principle (transform the data so that the expected result is known) follows EDC, "Detecting Logic Bugs in
 DBMSs via Equivalent Data Construction", PACMMOD 3(6), 2025; no EDC code is used.
 
@@ -175,3 +180,52 @@ This capability adopts generated-test-input and shrinking ideas described by
 in [SQLancer](https://github.com/sqlancer/sqlancer). Neither project is bundled or copied, and no new
 runtime dependency is added. A comparison detects disagreement between the supplied trusted queries;
 it does not prove either query expresses the intended business rule or detect every DBMS defect.
+
+## Bounded-exhaustive BOM fixtures (`--scenario bom_exhaustive`)
+
+```text
+python skills/semantic-crosscheck/scripts/sxc.py counterexample --metamorphic-sql examples/counterexamples/bom_diamond-reference.sql --scenario bom_exhaustive --out .sxc
+```
+
+Instead of seeded samples, `bom_exhaustive` enumerates, without randomness, every connected acyclic BOM of 2 to 4
+parts with 1 to 5 `bom_line` rows, at most 2 rows per (parent, child) pair and `qty_per` in {1, 2}, keeping one
+canonical representative per isomorphism class: 1,743 structures (5 with 2 parts, 153 with 3, 1,585 with 4). Part
+ids are values in SQL, so each structure runs under two label placements: `topological` (parents get the smaller
+labels `A`..`D`) and `reverse` (children get the smaller labels); a filter such as `parent_id < child_id` would pass
+the first and fails the second. That gives 3,486 cases in a fixed order: case i is structure i // 2 under placement
+i % 2. Parts carry the usual `synthetic` columns, and a `noise` part with one `stock` row is added as in the seeded
+fixtures; every case satisfies `examples/counterexamples/constraints.json`.
+
+Every case's original answer is compared exactly with the independent closure-oracle fold (the Fraction fold that
+also judges generated closures; duplicate lines are summed) in `counterexample:metamorphic:oracle`: an absent pair is
+0, reflexive rows are ignored and `Decimal` answers are converted exactly. The four relations also run on every case
+where they are not vacuous, which extends the check to the transformed, larger fixtures.
+
+The run is bounded-exhaustive, not sampled. `--max-examples` must be omitted (or at least 3,486); a smaller value is a
+configuration error rather than a silent sample. The oracle passes only when every admissible case was compared.
+No check passes partially. A resource bound (`size_bound`, `inexact_arithmetic`) in an original answer makes every
+check `not_run` (the oracle `enumeration_incomplete`, the relations `resource_bound`); one hit only in a relation's
+own transform, transformed answer or comparison makes only that relation `not_run` (`resource_bound`). At the first failure the failed checks
+are `fail` and the others `not_run` (`stopped_at_first_failure`); in a replay of one case the checks that fail
+again are `fail` and the others `not_run` (`replay_covers_one_case`). A statement timeout remains a
+`counterexample:query` error. With `--constraints`, inadmissible cases are counted in `invalid_domain_examples`
+and noted in `not_proven`. Results
+report `cases_total`, `structures`, `placements`, `cases_run`, `not_run_reasons`, the scope and the SHA-256 of the
+whole enumeration (`enumeration_sha256`).
+
+The first failing case stops the run: the failed checks (`oracle` and/or relations) `fail` and `fixture.json` holds
+that case with its `case_index`, `placement`, `structure_index` and `enumeration_sha256`, besides the SQL and profile
+hashes. Replay with the same SQL file, `--scenario bom_exhaustive`, `--seed` (it selects the scaled and split lines)
+and profile; a file that is not exactly that enumeration case is refused before connecting.
+
+With the shipped files a full run of the reference takes about half a minute on a local PostgreSQL 17 and passes
+every check. The `UNION` closure fails deterministically at case 4 (two parallel `A -> B` lines, `qty_per` 1, equal
+product), and so does the `min` candidate; the textbook four-part diamond with equal products fails the oracle as
+well. A `parent_id < child_id` filter passes every `topological` case and fails case 1 (`reverse`).
+
+Not proven: only the stated scope (at most 4 parts, 5 lines, 2 lines per pair, `qty_per` in {1, 2}, the two label
+placements) is tested; larger topologies, other quantities and other label orders are not. The oracle compares `qty`
+only (the metamorphic SQL contract has `ancestor`, `descendant` and `qty`). Synthetic fixtures do not establish
+correctness on real data. The method follows Marinov, Andoni, Daniliuc, Khurshid and Rinard, "An Evaluation of
+Exhaustive Testing for Data Structures" (MIT CSAIL technical report, 2003): every valid input within a small scope,
+one per isomorphism class; no code is used.

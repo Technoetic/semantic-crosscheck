@@ -64,8 +64,10 @@ When V3 is selected, an independent database-only closure oracle also compares r
 the stored closure, in one read-only REPEATABLE READ snapshot. It checks exact quantities, logical
 path counts and minimum/maximum depth without reusing the generated SQL. Parallel BOM lines are
 summed into one logical edge, as in build. This oracle does not query Cube and is not a V4 suite item.
-Unsupported equality semantics, report-mode cycles and exceeded resource bounds are explicitly not run;
-an empty graph is disclosed as having no nonempty coverage.
+With `on_cycle = "report"` it removes the edges inside each strongly connected component itself (an
+iterative Tarjan search) before comparing, and a pass lists the removed edge count under NOT PROVEN.
+Unsupported equality semantics and exceeded resource bounds are explicitly not run; an empty graph is
+disclosed as having no nonempty coverage.
 
 Exit code 0: every check passed (`v1:<gold>`, `v2:<gold>:<stratum>`, `v3:total:<member>`,
 `v3:additive:<member>:<member>`, `v3:pair:<member>+<member>`, `v4:<operator>:<target>`) and none was left

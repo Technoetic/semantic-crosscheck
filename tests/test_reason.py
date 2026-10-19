@@ -152,14 +152,16 @@ class PlanTest(unittest.TestCase):
                           Shape(id="class_and_bound", target="stock", path="qty", class_="part", min_inclusive=Decimal(0)))
         planned, skipped = shacl_check.plan(cfg)
         self.assertEqual([s.id for s in planned], ["child_exists", "qty_positive", "stock_nonnegative", "child_small",
-                                                   "qty_capped", "child_is_stock"])
-        self.assertEqual(skipped, {"open_le_total": "sql_violation", "class_and_bound": "class_and_bounds"})
+                                                   "qty_capped", "child_is_stock", "class_and_bound"])
+        self.assertEqual(skipped, {"open_le_total": "sql_violation"})
         grouped = shacl_check.groups(planned)
         # child_small needs literals on child_id, which "main" already carries as part IRIs; child_is_stock needs
-        # stock IRIs there, which neither "main" nor "extra:1" (literals) allows; qty_capped fits "main"
+        # stock IRIs there, which neither "main" nor "extra:1" (literals) allows; qty_capped fits "main";
+        # class_and_bound needs part IRIs on stock.qty (its bounds read their own value predicate), which "main"
+        # carries as literals, so it joins "extra:1", where stock.qty carries nothing yet
         self.assertEqual([(name, [s.id for s in members]) for name, members in grouped], [
             ("main", ["child_exists", "qty_positive", "stock_nonnegative", "qty_capped"]),
-            ("extra:1", ["child_small"]),
+            ("extra:1", ["child_small", "class_and_bound"]),
             ("extra:2", ["child_is_stock"]),
         ])
         for name, members in grouped:   # each group carries one kind of value per column: the single-kind export
@@ -171,6 +173,25 @@ class PlanTest(unittest.TestCase):
         self.assertEqual([p for p, _s in shacl_check.paths(grouped[1][1], "bom_line")], ["child_id"])
         self.assertEqual([shacl_check.value_kind(s) for _n, members in grouped for s in members if s.path == "child_id"],
                          ["class:part", "bound", "class:stock"])
+
+    def test_class_and_bounds_is_compared_and_sql_violation_is_not(self):
+        """A shape with class and bounds has a SHACL form (two property shapes) and needs row IRIs on its column;
+        any shape with sql_violation stays SQL-only, also when it has class and bounds as well."""
+        cfg = with_shapes(demo_config(),
+                          Shape(id="child_capped", target="bom_line", path="child_id", class_="part", max_inclusive=Decimal(9)),
+                          Shape(id="all_three", target="bom_line", path="child_id", class_="part",
+                                min_inclusive=Decimal(0), sql_violation="false"))
+        planned, skipped = shacl_check.plan(cfg)
+        self.assertEqual([s.id for s in planned], ["child_exists", "qty_positive", "stock_nonnegative", "child_capped"])
+        self.assertEqual(skipped, {"open_le_total": "sql_violation", "all_three": "sql_violation"})
+        self.assertNotIn("class_and_bounds", skipped.values())
+        self.assertEqual(shacl_check.value_kind(planned[-1]), "class:part")
+        self.assertEqual([(n, [s.id for s in m]) for n, m in shacl_check.groups(planned)],
+                         [("main", ["child_exists", "qty_positive", "stock_nonnegative", "child_capped"])],
+                         "the same row IRIs on child_id as child_exists: no new group")
+        self.assertEqual([p for p, _s in shacl_check.paths(planned, "bom_line")], ["child_id", "qty_per"])
+        self.assertEqual(shacl_check.value_paths(planned, "bom_line"), {"child_id"})
+        self.assertEqual(shacl_check.value_paths(planned, "stock"), set())
 
     def test_a_configuration_without_collisions_has_one_group(self):
         """Without a column that needs two kinds of value every shape stays in "main": one graph, as in 0.3.0."""
@@ -299,6 +320,123 @@ class ShaclOnRowsTest(unittest.TestCase):
             found.update({sid: got[sid] for sid in ("line_positive", "line_known") if sid in got})
         self.assertEqual(found, {"line_positive": {key("P2", "P3", 0)},
                                  "line_known": {key("P2", "P3", 0), key("P2", "P1", 7)}})
+
+
+@unittest.skipUnless(HAVE_SHACL, "rdflib and pyshacl are not installed")
+class ClassAndBoundsOnRowsTest(unittest.TestCase):
+    """A shape with class and bounds (cb_ref) on cb_item.code next to a class-only shape (cb_known, same value group)
+    and a bound-only shape (cb_small, its own group). The rows cover dangling and out of range (1), dangling and in
+    range (2), existing and out of range (3), existing and in range (4) and NULL (5); the expected keys follow from
+    the rows: cb_ref's view ORs the dangling reference with the bound, whether or not the reference exists."""
+
+    ITEMS = [[1, 99], [2, 4], [3, 10], [4, 1], [5, None]]
+    CODES = [1, 10]
+    EXPECTED = {"cb_ref": {key(1), key(2), key(3)}, "cb_known": {key(1), key(2)}, "cb_small": {key(1)}}
+
+    @classmethod
+    def config(cls):
+        cfg = with_shapes(demo_config(),
+                          Shape(id="cb_ref", target="cb_item", path="code", class_="cb_code", max_inclusive=Decimal(5)),
+                          Shape(id="cb_known", target="cb_item", path="code", class_="cb_code"),
+                          Shape(id="cb_small", target="cb_item", path="code", max_inclusive=Decimal(50)))
+        cfg.entities["cb_code"] = config.Entity("cb_code", "sxc_demo.cb_code", ["code"])
+        cfg.entities["cb_item"] = config.Entity("cb_item", "sxc_demo.cb_item", ["item_id"])
+        return cfg
+
+    def setUp(self):
+        self.cfg = self.config()
+        self.planned, _ = shacl_check.plan(self.cfg)
+        self.grouped = dict(shacl_check.groups(self.planned))
+        self.ttl = shapes.shapes_ttl(self.cfg)[0]
+        self.pred = rdflib.URIRef(naming.rdf_predicate(self.cfg, "cb_item", "code"))
+        self.value = rdflib.URIRef(naming.rdf_value_predicate(self.cfg, "cb_item", "code"))
+
+    def graph(self, group: str):
+        members = self.grouped[group]
+        keys = {"cb_code": self.CODES} if any(s.class_ == "cb_code" for s in members) else {}
+        return shacl_check.build_graph(self.cfg, members, {"cb_item": self.ITEMS}, keys)
+
+    def node(self, item):
+        return rdflib.URIRef(naming.rdf_node(self.cfg, "cb_item", [item]))
+
+    def test_groups(self):
+        self.assertEqual({n: [s.id for s in m if s.target == "cb_item"] for n, m in self.grouped.items()},
+                         {"main": ["cb_ref", "cb_known"], "extra:1": ["cb_small"]})
+
+    def test_the_value_predicate_carries_every_non_null_value_whether_or_not_the_reference_exists(self):
+        g = self.graph("main")
+        for item, code in self.ITEMS:
+            refs, values = set(g.objects(self.node(item), self.pred)), set(g.objects(self.node(item), self.value))
+            if code is None:
+                self.assertEqual((refs, values), (set(), set()), "NULL writes neither triple")
+                continue
+            self.assertEqual(refs, {rdflib.URIRef(naming.rdf_node(self.cfg, "cb_code", [code]))}, item)
+            self.assertEqual(values, {shacl_check.literal(code)}, item)
+            self.assertEqual((rdflib.URIRef(naming.rdf_node(self.cfg, "cb_code", [code])), rdflib.URIRef(shacl_check.RDF_TYPE),
+                              rdflib.URIRef(naming.rdf_entity_class(self.cfg, "cb_code"))) in g, code in self.CODES, item)
+        # the bound-only group carries literals on the column itself and no value predicate
+        g = self.graph("extra:1")
+        self.assertEqual(set(g.triples((None, self.value, None))), set())
+        self.assertEqual({type(v) for v in g.objects(None, self.pred)}, {rdflib.Literal})
+
+    def test_shacl_focus_keys_equal_the_ored_view(self):
+        found = {}
+        for name, members in self.grouped.items():
+            got = shacl_check.focus_keys(self.cfg, members, shacl_check.validate(self.graph(name), self.ttl))
+            found.update({sid: got[sid] for sid in self.EXPECTED if sid in got})
+        self.assertEqual(found, self.EXPECTED)
+
+    def test_a_wrong_bound_is_seen(self):
+        """A shapes graph whose bound differs from the configuration's (test-only text) finds other keys."""
+        self.assertEqual(self.ttl.count('sh:maxInclusive "5"^^xsd:decimal'), 1)
+        wrong = self.ttl.replace('sh:maxInclusive "5"^^xsd:decimal', 'sh:maxInclusive "100"^^xsd:decimal')
+        got = shacl_check.focus_keys(self.cfg, self.grouped["main"], shacl_check.validate(self.graph("main"), wrong))
+        self.assertEqual(got["cb_ref"], {key(1), key(2)})
+
+    def test_focus_keys_unite_both_property_shapes(self):
+        from rdflib import BNode, URIRef
+        sh = lambda name: URIRef(shapes.SH + name)  # noqa: E731
+        results = rdflib.Graph()
+        for source, item in ((naming.rdf_property_shape(self.cfg, "cb_ref"), 2),
+                             (naming.rdf_bound_shape(self.cfg, "cb_ref"), 3),
+                             (naming.rdf_bound_shape(self.cfg, "cb_ref"), 2),
+                             (naming.rdf_property_shape(self.cfg, "cb_known"), 1),
+                             (naming.rdf_bound_shape(self.cfg, "cb_known"), 4),     # no such shape: ignored
+                             (naming.rdf_bound_shape(self.cfg, "cb_small"), 5)):    # another group: ignored
+            r = BNode()
+            results.add((r, URIRef(shacl_check.RDF_TYPE), sh("ValidationResult")))
+            results.add((r, sh("sourceShape"), URIRef(source)))
+            results.add((r, sh("focusNode"), self.node(item)))
+        got = shacl_check.focus_keys(self.cfg, self.grouped["main"], results)
+        self.assertEqual((got["cb_ref"], got["cb_known"]), ({key(2), key(3)}, {key(1)}))
+        self.assertNotIn("cb_small", got)
+
+
+class StaleShapesTtlTest(unittest.TestCase):
+    """A shapes.ttl written before class and bounds had a SHACL form (the shape only as a comment) no longer matches
+    the configuration: reason stops with exit 2 and asks for a new build instead of comparing nothing."""
+
+    def test_an_old_shapes_ttl_needs_a_new_build(self):
+        cfg = ClassAndBoundsOnRowsTest.config()
+
+        def old_reason(shape):   # 0.5.0
+            if shape.sql_violation:
+                return "sql_violation"
+            return "class_and_bounds" if shape.class_ and shapes.has_bounds(shape) else ""
+
+        with mock.patch.object(shapes, "no_shacl_reason", old_reason):
+            old_text, old_skipped = shapes.shapes_ttl(cfg)
+        self.assertEqual(old_skipped, ["open_le_total", "cb_ref"])
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "build").mkdir()
+            ttl = Path(tmp) / "build" / "shapes.ttl"
+            ttl.write_text(old_text, encoding="utf-8")
+            with self.assertRaises(StageError) as e:
+                stage_reason.shapes_ttl(cfg, Path(tmp))
+            self.assertEqual(e.exception.exit_code, EXIT_CONFIG)
+            self.assertIn("rerun `sxc.py build`", str(e.exception))
+            ttl.write_text(shapes.shapes_ttl(cfg)[0], encoding="utf-8")
+            self.assertEqual(stage_reason.shapes_ttl(cfg, Path(tmp)), shapes.shapes_ttl(cfg)[0])
 
 
 class DefinedSqlTest(unittest.TestCase):
@@ -900,6 +1038,128 @@ class ReasonValueGroupsTest(unittest.TestCase):
         c = get_check(res, "shacl:code_small")
         self.assertEqual((c.status, c.detail["shacl_only"], c.detail["sql_only"]), ("fail", 1, 0))
         for sid in ("code_known", "code_graded", "child_exists", "qty_positive", "stock_nonnegative"):
+            self.assertEqual(get_check(res, f"shacl:{sid}").status, "pass", sid)
+        self.assertEqual(res.status, "fail")
+
+
+@unittest.skipUnless(pgfixture.available() and HAVE_SHACL, "needs SXC_TEST_ADMIN_DSN, rdflib and pyshacl")
+class ReasonClassAndBoundsTest(unittest.TestCase):
+    """A shape with class and bounds (cb_ref) compared with SHACL in PostgreSQL, next to a class-only shape on the
+    same column (cb_known, the same value group) and a bound-only shape (cb_small, its own group). cb_item rows:
+    1 dangling and out of range, 2 dangling and in range, 3 existing and out of range, 4 existing and in range,
+    5 NULL. The expected keys come from these rows, not from the code under test."""
+
+    database = f"{PREFIX}_class_bounds"
+    ITEMS, CODES, EXPECTED = ClassAndBoundsOnRowsTest.ITEMS, ClassAndBoundsOnRowsTest.CODES, ClassAndBoundsOnRowsTest.EXPECTED
+    GROUPS = {"main": ["child_exists", "qty_positive", "stock_nonnegative", "cb_ref", "cb_known"], "extra:1": ["cb_small"]}
+
+    @classmethod
+    def setUpClass(cls):
+        cls.fx = pgfixture.PgFixture(cls.database, "clean")
+        cls.addClassCleanup(cls.fx.teardown)
+        cls.fx.setup()
+        conn = db.connect("SXC_PG_OWNER_DSN")
+        try:
+            with db.write_tx(conn):
+                conn.run("CREATE TABLE sxc_demo.cb_code (code integer PRIMARY KEY)")
+                conn.run("CREATE TABLE sxc_demo.cb_item (item_id integer PRIMARY KEY, code integer)")
+                for c in cls.CODES:
+                    conn.run("INSERT INTO sxc_demo.cb_code VALUES (:c)", c=c)
+                for item, code in cls.ITEMS:
+                    conn.run("INSERT INTO sxc_demo.cb_item VALUES (:i, CAST(:c AS integer))", i=item, c=code)
+        finally:
+            conn.close()
+        tmp = tempfile.TemporaryDirectory()
+        cls.addClassCleanup(tmp.cleanup)
+        cls.tmp = Path(tmp.name)
+        cls.cfg = ClassAndBoundsOnRowsTest.config()
+        cls.out = cls.tmp / "run"
+        stage_build.run(cls.cfg, types.SimpleNamespace(hierarchy=""), cls.out).write(cls.out)
+        cls.res = stage_reason.run(cls.cfg, types.SimpleNamespace(only=["shacl"]), cls.out)
+        exp, items = cls.fx.data["expected"], len(cls.ITEMS)
+        cls.group_rows = {"main": exp["bom_lines"] + exp["parts"] + exp["stock_rows"] + items + len(cls.CODES),
+                          "extra:1": items}
+
+    def setUp(self):
+        os.environ["SXC_PG_DSN"] = pgfixture.dsn_for(self.fx.check, self.fx.name)
+
+    def copy_out(self, name: str) -> Path:
+        out = self.tmp / name
+        shutil.copytree(self.out / "build", out / "build")
+        return out
+
+    def shacl_run(self, cfg=None, ttl=None):
+        cfg = cfg or self.cfg
+        conn = self.fx.check_conn()
+        try:
+            return shacl_check.run(conn, cfg, ttl or shapes.shapes_ttl(cfg)[0])
+        finally:
+            conn.close()
+
+    def test_the_class_and_bounds_shape_is_compared_not_sql_only(self):
+        self.assertFalse([n for n in self.res.not_proven if "cb_" in n or "class_and_bounds" in n], self.res.not_proven)
+        self.assertIn("shacl:open_le_total: no SHACL form (sql_violation); checked only in SQL (shape:open_le_total in build)",
+                      self.res.not_proven)
+        for name, ids in self.GROUPS.items():
+            for sid in ids:
+                c = get_check(self.res, f"shacl:{sid}")
+                n = len(self.EXPECTED.get(sid, ()))
+                self.assertEqual((c.status, c.detail["violations"], c.detail["shacl_focus_nodes"], c.detail["shacl_only"],
+                                  c.detail["sql_only"], c.detail["value_group"], c.detail["group_rows"],
+                                  c.detail["rows_exported"]),
+                                 ("pass", n, n, 0, 0, name, self.group_rows[name], sum(self.group_rows.values())), sid)
+        self.assertEqual(get_check(self.res, "shacl:cb_ref").detail["kind"], "class+bound")
+        self.assertEqual(self.res.status, "not_run", "--only shacl narrows the run")
+
+    def test_focus_keys_equal_the_view_keys(self):
+        got = self.shacl_run()
+        for sid, keys in self.EXPECTED.items():
+            self.assertEqual((got[sid]["shacl_keys"], got[sid]["sql_keys"]), (keys, keys), sid)
+        self.assertEqual(self.EXPECTED["cb_ref"], {key(1), key(2), key(3)})
+
+    def test_the_row_cap_still_counts_the_sum_over_groups(self):
+        total = sum(self.group_rows.values())
+        cfg = copy.deepcopy(self.cfg)
+        cfg.verify.shacl_max_rows = total
+        self.assertEqual({v["rows"] for v in self.shacl_run(cfg).values()}, {total})
+        cfg.verify.shacl_max_rows = total - 1
+        with self.assertRaises(shacl_check.TooManyRows) as e:
+            self.shacl_run(cfg)
+        self.assertEqual((e.exception.rows, e.exception.limit), (total, total - 1))
+
+    def test_a_wrong_bound_in_the_shapes_graph_disagrees(self):
+        ttl = shapes.shapes_ttl(self.cfg)[0]
+        self.assertEqual(ttl.count('sh:maxInclusive "5"^^xsd:decimal'), 1)
+        got = self.shacl_run(ttl=ttl.replace('sh:maxInclusive "5"^^xsd:decimal', 'sh:maxInclusive "100"^^xsd:decimal'))
+        self.assertEqual((got["cb_ref"]["shacl_keys"], got["cb_ref"]["sql_keys"]),
+                         ({key(1), key(2)}, {key(1), key(2), key(3)}))
+        conn = self.fx.check_conn()
+        res = Result("reason")
+        try:
+            with mock.patch.object(shacl_check, "run", return_value=got):
+                stage_reason._shacl(conn, self.cfg, stage_reason.require_stage(self.out, "build"),
+                                    shacl_check.plan(self.cfg)[0], ttl, res)
+        finally:
+            conn.close()
+        c = get_check(res, "shacl:cb_ref")
+        self.assertEqual((c.status, c.detail["shacl_only"], c.detail["sql_only"]), ("fail", 0, 1))
+
+    def test_a_corrupted_view_fails_the_shape(self):
+        view = ident.qualified(naming.shape_view(self.cfg, "cb_ref"))
+        shape = next(s for s in self.cfg.shapes if s.id == "cb_ref")
+        conn = self.fx.check_conn()
+        try:
+            with db.write_tx(conn):   # the view keeps only the class part: key 3 (existing, out of range) is lost
+                conn.run(f'CREATE OR REPLACE VIEW {view} AS SELECT t."item_id" FROM "sxc_demo"."cb_item" t WHERE '
+                         't."code" IS NOT NULL AND NOT EXISTS (SELECT 1 FROM "sxc_demo"."cb_code" c WHERE c."code" = t."code")')
+            res = stage_reason.run(self.cfg, types.SimpleNamespace(only=["shacl"]), self.copy_out("corrupted"))
+        finally:
+            with db.write_tx(conn):
+                conn.run(f"CREATE OR REPLACE VIEW {view} AS {shapes.violation_sql(self.cfg, shape)}")
+            conn.close()
+        c = get_check(res, "shacl:cb_ref")
+        self.assertEqual((c.status, c.detail["violations"], c.detail["shacl_only"], c.detail["sql_only"]), ("fail", 2, 1, 0))
+        for sid in ("cb_known", "cb_small", "child_exists", "qty_positive", "stock_nonnegative"):
             self.assertEqual(get_check(res, f"shacl:{sid}").status, "pass", sid)
         self.assertEqual(res.status, "fail")
 

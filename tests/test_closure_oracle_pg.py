@@ -124,25 +124,72 @@ class ClosureOraclePgTest(unittest.TestCase):
                          ("not_run", "budget_exceeded", "max_raw_rows"))
         self.assertTrue(any("budget_exceeded" in line for line in res.not_proven))
 
-    def test_unimplemented_cycle_report_is_not_proven_in_v3(self):
-        # Break caught: borrowing build's SCC-edge deletion to claim an independent cycle proof.
+    def build_cyclic(self, on_cycle):
+        """SECRET_PARENT <-> SECRET_CHILD, a self-loop on SECRET_C2 and a tail with a NULL quantity below them."""
         with db.write_tx(self.admin):
-            self.admin.run("INSERT INTO sxc_demo.oracle_edge VALUES ('SECRET_CHILD', 'SECRET_PARENT', 3)")
+            self.admin.run("INSERT INTO sxc_demo.oracle_edge VALUES ('SECRET_CHILD', 'SECRET_PARENT', 3), "
+                           "('SECRET_CHILD', 'SECRET_C2', 5), ('SECRET_CHILD', 'SECRET_C2', 7), "
+                           "('SECRET_C2', 'SECRET_C2', 11), ('SECRET_C2', 'SECRET_C3', NULL), ('SECRET_C3', 'SECRET_C4', 13)")
         cfg = copy.deepcopy(self.cfg)
-        cfg.hierarchies["oracle"].on_cycle = "report"
+        cfg.hierarchies["oracle"].on_cycle = on_cycle
         with db.write_tx(self.conn):
             checks, _ = closure.build(self.conn, cfg, cfg.hierarchies["oracle"])
+        return cfg, checks
+
+    def verify_cfg(self, cfg, out, build_status="pass"):
+        build = Result("build")
+        build.add("closure:oracle", build_status, "hierarchies.oracle")
+        build.write(out)
+        verifier = stage_verify._Verify(cfg, Path(out), {"cubes": []}, ["v3"])
+        verifier.run(self.conn)
+        return verifier.res
+
+    def test_v3_independently_verifies_report_mode_cycle_edge_removal(self):
+        # Break caught: borrowing build's SCC-edge deletion instead of recomputing it, or certifying a closure that
+        # differs from the raw edges once the edges inside cycles are removed.
+        cfg, checks = self.build_cyclic("report")
         self.assertEqual([c[1] for c in checks], ["pass", "pass"])
+        build_stats = checks[0][3]
+        self.assertEqual((build_stats["dropped_cycle_edges"], build_stats["cycle_nodes"]), (3, 3))
         with TemporaryDirectory() as tmp:
-            build = Result("build")
-            build.add("closure:oracle", "pass", "hierarchies.oracle")
-            build.write(tmp)
-            verifier = stage_verify._Verify(cfg, Path(tmp), {"cubes": []}, ["v3"])
-            verifier.run(self.conn)
-        check = next((c for c in verifier.res.checks if c.id == "v3:closure_oracle:oracle"), None)
-        self.assertIsNotNone(check)
-        self.assertEqual((check.status, check.detail["reason"]), ("not_run", "cycle_not_supported"))
-        self.assertTrue(any("cycle_not_supported" in line for line in verifier.res.not_proven))
+            res = self.verify_cfg(cfg, tmp)
+            check = next(c for c in res.checks if c.id == "v3:closure_oracle:oracle")
+            self.assertEqual((check.status, check.detail["cycle_handling"], check.detail["dropped_cycle_edges"],
+                              check.detail["cycle_nodes"], check.detail["matched_pairs"]),
+                             ("pass", "scc_edge_removal", 3, 3, 6))
+            self.assertTrue(any("v3:closure_oracle:oracle" in line and "inside cycles" in line
+                                for line in res.not_proven))
+            self.assertNotIn("SECRET", json.dumps(res.to_dict()))
+            for column in ("qty", "path_count"):
+                with self.subTest(column=column):
+                    with db.write_tx(self.conn):
+                        self.conn.run(f"UPDATE sxc_out.oracle_closure SET {column} = {column} + 1 "
+                                      "WHERE ancestor = 'SECRET_CHILD' AND descendant = 'SECRET_C2'")
+                    res = self.verify_cfg(cfg, tmp)
+                    check = next(c for c in res.checks if c.id == "v3:closure_oracle:oracle")
+                    self.assertEqual((check.status, check.detail["mismatched_columns"]), ("fail", {column: 1}))
+                    self.assertNotIn("SECRET", json.dumps(res.to_dict()))
+                    with db.write_tx(self.conn):
+                        self.conn.run(f"UPDATE sxc_out.oracle_closure SET {column} = {column} - 1 "
+                                      "WHERE ancestor = 'SECRET_CHILD' AND descendant = 'SECRET_C2'")
+            # A closure row reached only through an edge inside the cycle must not be accepted.
+            with db.write_tx(self.conn):
+                self.conn.run("INSERT INTO sxc_out.oracle_closure (ancestor, descendant, min_depth, max_depth, path_count, qty) "
+                              "VALUES ('SECRET_PARENT', 'SECRET_C2', 2, 2, 1, 24)")
+            res = self.verify_cfg(cfg, tmp)
+        check = next(c for c in res.checks if c.id == "v3:closure_oracle:oracle")
+        self.assertEqual((check.status, check.detail["extra_pairs"]), ("fail", 1))
+
+    def test_error_policy_cycle_still_fails_at_the_build_gate(self):
+        # Break caught: letting the new report-mode handling relax error mode, at build or in verify.
+        cfg, checks = self.build_cyclic("error")
+        self.assertEqual([(c[1], c[3]["reason"]) for c in checks], [("fail", "cycle")])
+        with TemporaryDirectory() as tmp:
+            res = self.verify_cfg(cfg, tmp, build_status="fail")
+        check = next(c for c in res.checks if c.id == "v3:closure_oracle:oracle")
+        self.assertEqual((check.status, check.detail["reason"]), ("not_run", "closure_not_passed"))
+        status, detail = closure_oracle.run(self.conn, cfg, cfg.hierarchies["oracle"])
+        self.assertEqual((status, detail["reason"]), ("fail", "cycle"))
 
     def test_new_raw_cycle_fails_error_policy_even_if_the_build_record_previously_passed(self):
         # Break caught: allowing a stale build record to conceal a newly cyclic error-policy graph.

@@ -9,7 +9,7 @@
     {
       "name": "semantic-crosscheck",
       "description": "Generate a closure, data rules, an OWL ontology and a Cube model from one config, then prove the layers agree with each other and with gold SQL",
-      "version": "0.5.0",
+      "version": "0.6.0",
       "source": "./",
       "author": {
         "name": "전문준"

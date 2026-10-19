@@ -33,7 +33,7 @@ python skills/semantic-crosscheck/scripts/sxc.py --version
 | `verify` | V1 strict compare, V2 strata sweep, V3 query shapes, V4 mutation tests | `--only v1,v2,v3,v4` (default all), `--gold ID` (repeatable) | `verify/result.json`, `verify/server.log`, `verify/mutants/<operator>__<target>/` (`model/*.yml`, `model.json`, `server.log`) |
 | `report` | summary of every stage | none | `report/result.json`, `report.md`, `report.json` |
 | `cube-install` | installs the pinned Cube adapter once per user | `--home DIR`, `--native-file PATH`, `--force` | `cube_install/result.json`, `cube_install/npm-ci.log`, `cube_install/smoke.log` |
-| `counterexample` | optional synthetic SQL mismatch search and reduction, or BOM metamorphic relations for one closure SQL | `--reference-sql`, `--candidate-sql`, `--metamorphic-sql`, `--scenario`, `--seed`, `--max-examples`, `--max-shrink-steps`, `--dsn-env`, `--statement-timeout-ms`, `--constraints`, `--replay` | `counterexample/result.json`, `counterexample/fixture.json` |
+| `counterexample` | optional synthetic SQL mismatch search and reduction, or BOM metamorphic relations (and, with `--scenario bom_exhaustive`, the exact closure oracle over a bounded-exhaustive enumeration) for one closure SQL | `--reference-sql`, `--candidate-sql`, `--metamorphic-sql`, `--scenario`, `--seed`, `--max-examples`, `--max-shrink-steps`, `--dsn-env`, `--statement-timeout-ms`, `--constraints`, `--replay` | `counterexample/result.json`, `counterexample/fixture.json` |
 
 Common options:
 
@@ -256,7 +256,8 @@ configuration ids; `<member>` is a Cube member (`cube.member`); `<stratum>` is a
 | counterexample | `counterexample:mutation:search` | never proves equivalence or a real-data V4 verdict | `fail` when supplied original/mutant SQL differ on an admissible operator-directed synthetic fixture; `not_run` when no difference is found within the bound |
 | counterexample | `counterexample:mutation:gold_agreement` | supplied original and independent gold SQL agree on the saved synthetic fixture | `fail` on disagreement; this does not establish correspondence to an actual Cube model |
 | counterexample | `counterexample:mutation:query`, `counterexample:mutation:recheck`, `counterexample:mutation:inputs` | no synthetic detection is established by an error | `error` on execution failure, unstable witness or changed inputs; unsupported SQL relation/column schema is `not_run` |
-| counterexample | `counterexample:metamorphic:<relation>` | `--metamorphic-sql` only (`<relation>`: `mr1_unfold`, `mr2_scale`, `mr3_disjoint`, `mr4_unit_node`): every admissible case with a non-vacuous transform agrees exactly with the relation's expected path-product answer | `fail` on a violated relation (replay fixture saved); `not_run` when vacuous in every case (`not_run_reasons`) |
+| counterexample | `counterexample:metamorphic:<relation>` | `--metamorphic-sql` only (`<relation>`: `mr1_unfold`, `mr2_scale`, `mr3_disjoint`, `mr4_unit_node`): every admissible case with a non-vacuous transform agrees exactly with the relation's expected path-product answer | `fail` on a violated relation (replay fixture saved); `not_run` when vacuous in every case (`not_run_reasons`); with `bom_exhaustive` also `not_run` after a resource bound (`resource_bound`), an early stop (`stopped_at_first_failure`) or in a replay (`replay_covers_one_case`) |
+| counterexample | `counterexample:metamorphic:oracle` | `--metamorphic-sql --scenario bom_exhaustive` only: every admissible case of the whole bounded enumeration (1,743 structures under 2 label placements) agrees exactly with the independent closure-oracle fold (qty only) | `fail` at the first disagreeing case (replay fixture saved); `not_run` when a case was not compared (`enumeration_incomplete`, e.g. `size_bound`), the run stopped at another check's failure, in a replay (`replay_covers_one_case`) or with no admissible case |
 | counterexample | `counterexample:metamorphic:shape` | error check only | `error` when the SQL answer is not closure-shaped (`reason`: missing or duplicate columns, duplicate pair, NULL, non-text id, non-exact qty) |
 | doctor | `python` | Python >= 3.11 | `fail` |
 | doctor | `pg8000` | pg8000 can be imported | `fail`, with the absolute pip command as the next action |
@@ -290,7 +291,7 @@ configuration ids; `<member>` is a Cube member (`cube.member`); `<stratum>` is a
 | verify | `v3:total:<member>` | the Cube total equals SQL computed from the configuration (or the closure table) | `fail`; `error`; `not_run` (`closure_not_passed`) |
 | verify | `v3:additive:<member>:<member>` | the groups of the measure by the ontology class column of a cube joined through many_to_one / one_to_one steps only, the NULL group included, add up to its total, and the NULL group equals independent SQL over the measure source (`null_group_equal`: an anti-join, or the matched rows without a class when Cube roots the query at the dimension's cube) | as `v3:total:<member>`; a join path with a one_to_many or unknown step gets no check, only a `not_proven` line (not applicable) |
 | verify | `v3:pair:<member>+<member>` | the two measures queried together equal the same measures queried alone, per key | as `v3:total:<member>` |
-| verify | `v3:closure_oracle:<h>` | raw edges independently recomputed in Python match every stored closure pair's exact quantity, logical path count and minimum/maximum depth in one read-only REPEATABLE READ snapshot | `fail` on differences, error-mode cycles or an exceeded configured depth; `error` on query failure; `not_run` for a failed build gate, report-mode cycles, unsupported keys/quantities or exceeded resource bounds |
+| verify | `v3:closure_oracle:<h>` | raw edges independently recomputed in Python match every stored closure pair's exact quantity, logical path count and minimum/maximum depth in one read-only REPEATABLE READ snapshot | `fail` on differences, error-mode cycles or an exceeded configured depth; `error` on query failure or an internal oracle defect (`scc_removal_left_cycle`); `not_run` for a failed build gate, unsupported keys/quantities or exceeded resource bounds. In `on_cycle = report` mode the oracle removes the edges inside strongly connected components itself and records `cycle_handling`, `dropped_cycle_edges` and `cycle_nodes` (informational, never compared with build's statistics); a pass that removed edges is listed in `not_proven` |
 | verify | `v4:<operator>:<target>` | the mutant was killed: a suite item failed against it (`killed_by`) | `fail` (it survived); `error` (`suite_error`, `startup`, `cube`, `write`, `model_mismatch`, `witness`); `not_run` (`closure_not_passed`, `suite_incomplete`). Equivalent and not applicable mutants get no check, only a `not_proven` line |
 | verify | `v4:suite` | never passes | `not_run` (`no_passing_suite_item`): no suite item passes on the unmutated model |
 | verify | `scope:v1`, `scope:v2`, `scope:v3`, `scope:v4`, `scope:gold:<gold>` | never pass | `not_run` (`excluded_by_only`, `excluded_by_gold`): the part or gold query a narrowed run left out |
@@ -310,10 +311,15 @@ depth are compared. Empty input is explicitly disclosed as lacking nonempty cove
 
 This check is bounded, not sampled: limits are 50,000 raw lines, 100,000 stored/expected pairs,
 10,000 nodes and 2,000,000 counted operations, with numeric-size bounds in `closure_oracle.Limits`.
-No matching prefix can pass when a limit is exceeded. A raw cycle fails in `on_cycle = error` mode;
-SCC-edge removal for `on_cycle = report` is unsupported and remains not proven. Only compatible built-in
-endpoint types with deterministic SQL equality are supported; character padding, citext, domains
-and nondeterministic collation are refused. These database-only checks are not replayed as V4
+No matching prefix can pass when a limit is exceeded. A raw cycle fails in `on_cycle = error` mode.
+In `on_cycle = report` mode the oracle reproduces build's rule independently: an iterative (non-recursive)
+Tarjan search, charged to the operation budget, finds the strongly connected components of the logical
+edge graph; every logical edge whose parent and child share a component (self-loops included) is removed
+and the rest is folded as above, depth limit and NULL semantics unchanged. A cycle left after removal is
+an internal `error`, never a pass. `dropped_cycle_edges` and `cycle_nodes` are informational; the verdict
+is the exact closure comparison, not agreement with build's counts, and a pass discloses the removal in
+`not_proven`. Only compatible built-in endpoint types with deterministic SQL equality are supported;
+character padding, citext, domains and nondeterministic collation are refused. These database-only checks are not replayed as V4
 Cube mutation suite items. They do not create a shared snapshot with Cube or other stages.
 
 **Synthetic OWL definition witnesses.** `reason --synthetic-witnesses` adds separate small graph
@@ -471,7 +477,16 @@ configuration, a hand edit) gives an `error` check with `reason=model_mismatch`,
 
 **SHACL vs SQL.** `build` writes `shapes.ttl` from the configuration: a node shape per configuration shape
 targeting the entity class, with one property shape (`sh:class`, `sh:minExclusive`, `sh:minInclusive`,
-`sh:maxInclusive`) and the configured severity. `reason` exports the needed rows as RDF in memory (target rows
+`sh:maxInclusive`) and the configured severity. A shape that combines `class` with bounds gets two property shapes
+in its node shape, both with its severity, because one RDF value cannot be a row IRI and a number at once (SHACL
+2017-07-20, 4.3: a value node that cannot be compared with a bound violates it): `<iri>shape/<id>/p` with
+`sh:class` on the column's predicate `<iri><entity>.<column>`, and `<iri>shape/<id>/b` with the bounds on the value
+predicate `<iri><entity>.<column>/value` (`naming.rdf_value_predicate`; no other generated IRI can equal it, since
+identifiers contain neither `.` nor `/`). The export writes, for every non-NULL value of such a column, both the
+referenced row's IRI on the column's predicate and the same value as a bound literal on the value predicate,
+whether or not the referenced row exists, so the bounds apply as in the view, which ORs the dangling reference
+with each bound; NULL writes neither. The results of both property shapes count for the shape, so its SHACL keys
+are the union of their focus nodes. `reason` exports the needed rows as RDF in memory (target rows
 with the shape paths; referenced entities with their types) in one read-only `REPEATABLE READ` transaction,
 counting them first against `verify.shacl_max_rows`, runs pySHACL without inference and compares, per shape, the
 set of focus-node keys with the keys in `v_shape_<id>` (both in `canon.key` form).
@@ -480,7 +495,9 @@ One RDF predicate carries one kind of value, and shapes on the same target colum
 `class` shape and a bound shape, or `class` shapes naming different entities): in one graph each value would
 violate the other shape's constraint. The compared shapes are therefore split into value groups
 (`shacl_check.groups`): each shape goes, in configuration order, to the first group in which its column
-(target, path) carries no other kind of value (`bound` literals or `class:<entity>` row IRIs), and a shape whose
+(target, path) carries no other kind of value (`bound` literals or `class:<entity>` row IRIs; a shape with `class`
+and bounds needs `class:<entity>`, since its literals go to the value predicate, which carries nothing else, so it
+shares a group with `class` shapes naming the same entity and is split from bound shapes on its column), and a shape whose
 column carries another kind in every group so far opens a new group. The first group is `main`, the others are
 `extra:1`, `extra:2`, ... in the order they are opened. Every shape that needs no split stays in `main`, so a
 configuration without a column shared by two value kinds (the demo included) exports one graph with exactly the
@@ -498,16 +515,16 @@ groups are still compared. The row cap and
 database errors occur before validation and still decide every shape. Each `shacl:<id>` check names its
 `value_group` and `group_rows`; `rows_exported` is the sum over the groups.
 
-Two kinds of shape are not compared and are listed in `not_proven` instead ("checked only in SQL"):
+One kind of shape is not compared and is listed in `not_proven` instead ("checked only in SQL"):
 
 - `sql_violation`: any shape with an `sql_violation` predicate, also when it has `class` or bounds as well
-  (no SHACL form);
-- `class_and_bounds`: a shape that combines `class` with bounds (its value cannot be a row IRI and a number at
-  once in RDF; no SHACL form). Value groups do not split it: its one view ORs both constraints, so it would need
-  the value as an IRI and as a literal in the same graph.
+  (no SHACL form).
 
 Releases up to 0.3.0 left every shape on a column shared by two value kinds uncompared (`shared_path`); value
-groups replace that exclusion.
+groups replace that exclusion. Releases up to 0.5.0 also left a shape combining `class` with bounds uncompared
+(`class_and_bounds`); the second property shape on the value predicate replaces that exclusion. Its `shapes.ttl`
+text changed, so a build output written before cannot be reasoned on (exit 2: rerun `build`), and the engine
+fingerprint marks the earlier results stale in `report`.
 
 `shapes.ttl` must equal what the configuration generates now; otherwise `reason` stops with exit 2 (rerun
 `build`).
@@ -583,7 +600,8 @@ Only the separate synthetic replay
 artifact contains generated row values; results and reports contain statistics, IDs and hashes.
 
 `--metamorphic-sql FILE` replaces the two-file comparison with a gold-independent check of one trusted
-closure SELECT (columns `ancestor`, `descendant`, `qty`) over seeded `bom_diamond` fixtures, with or without
+closure SELECT (columns `ancestor`, `descendant`, `qty`) over seeded `bom_diamond` fixtures (or the bounded
+`bom_exhaustive` enumeration described below), with or without
 `--constraints`. Q(a, d) is the path-product quantity: the sum over all paths of the product of `qty_per`. Each
 admissible case runs the SQL on the original fixture and on four transformed fixtures, each in its own read-only
 REPEATABLE READ transaction with bound values: `mr1_unfold` (shared sub-assemblies copied into a forest; summed
@@ -608,6 +626,33 @@ recorded ones differ. Results carry counts, the seed and transform hashes. These
 invariant under them (edge direction, a wrong quantity column, a filter mapping) and test only the given SQL:
 the generated closure is tied to gold through V1/V3/V5, and a passing relation upgrades no other check. The idea
 follows EDC (Detecting Logic Bugs in DBMSs via Equivalent Data Construction, PACMMOD 3(6), 2025); no code is used.
+
+The seeded `bom_diamond` fixtures share one diamond topology, so a closure that uses `UNION` (set semantics) instead
+of `UNION ALL` and collapses equal-product paths is seen only where the seeded quantities collide: with seed 7 the
+original diamond has two equal-product paths in 2 of the 64 default cases (19 and 39, caught by unfolding) and
+scaling creates one in 4 more. `--scenario bom_exhaustive` (with `--metamorphic-sql` only) replaces sampling by a
+bounded-exhaustive enumeration (`bom_exhaustive.py`): every connected acyclic BOM of 2 to 4 parts with 1 to 5
+`bom_line` rows, at most 2 rows per (parent, child) pair and `qty_per` in {1, 2}, one canonical representative per
+isomorphism class (1,743 structures: 5, 153 and 1,585 for 2, 3 and 4 parts), each under two label placements
+because ids are values in SQL: `topological` (parents get the smaller labels) and `reverse` (children do), 3,486
+cases in a fixed order (case i is structure i // 2 under placement i % 2). Each original answer is compared with
+`closure_oracle.expected_quantities`, the same exact Fraction fold that judges generated closures (duplicate lines
+summed), in check `counterexample:metamorphic:oracle` (absent pairs 0, reflexive rows ignored, `Decimal` answers
+converted exactly); the four relations also run on every case where they are not vacuous. The enumeration is not
+sampled: `--max-examples` must be omitted or cover every case, and the oracle passes only when every admissible
+case was compared. No check passes partially: a resource bound (`size_bound`, `inexact_arithmetic`) in an original
+answer makes every check `not_run`; one hit only in a relation's own transform, transformed answer or comparison
+makes only that relation `not_run`; at the first failure and in a one-case replay the failed checks `fail` and the
+others are `not_run`; statement timeouts stay `counterexample:query` errors.
+Inadmissible cases under `--constraints` are counted (`invalid_domain_examples`) and named in `not_proven`. The
+first failing case stops the run and `fixture.json` also binds the case index, placement, structure index and the
+SHA-256 of the whole enumeration; replay requires exactly that case. With the reference SQL a full run took 28 s
+(26 s with the example profile) on a loopback PostgreSQL 17.5. The `UNION` closure fails deterministically at case 4
+(two parallel `A -> B` lines with `qty_per` 1), the `min` candidate at the same case and a filter
+`parent_id < child_id` passes every `topological` case but fails case 1 (`reverse`). Only the stated scope, both
+placements and the `qty` column are tested; synthetic fixtures do not establish correctness on real data. The method
+follows Marinov, Andoni, Daniliuc, Khurshid and Rinard, "An Evaluation of Exhaustive Testing for Data Structures"
+(MIT CSAIL technical report, 2003); no code is used.
 See [counterexample reference](../skills/semantic-crosscheck/references/counterexamples.md).
 
 Optional `source.data_revision_sql_file` supplies a trusted, read-only single-text-scalar probe.

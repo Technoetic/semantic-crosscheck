@@ -14,8 +14,11 @@ python "${CLAUDE_PLUGIN_ROOT}/skills/semantic-crosscheck/scripts/sxc.py" counter
   tables. Both SQL files must also be supplied for `--replay`. Review SQL as code.
 - `--metamorphic-sql FILE` instead checks one trusted closure SELECT returning `ancestor`, `descendant`
   and `qty` against four BOM metamorphic relations, without gold; it cannot be combined with the two files
-  above and supports only `--scenario bom_diamond` (its default). `--max-shrink-steps` is not used.
-- `--scenario`: `nulls` (default), `duplicate_join`, `bom_diamond`, `date_boundary`.
+  above and supports only `--scenario bom_diamond` (its default) and `bom_exhaustive`. `--max-shrink-steps` is not used.
+- `--scenario`: `nulls` (default), `duplicate_join`, `bom_diamond`, `date_boundary`; `bom_exhaustive` only with
+  `--metamorphic-sql`: every connected acyclic BOM of 2 to 4 parts with 1 to 5 lines, at most 2 per pair and
+  `qty_per` in {1, 2} (1,743 structures under two label placements, 3,486 cases), judged by the exact closure oracle.
+  It always runs every case: omit `--max-examples` (a value below 3,486 is a configuration error).
 - `--mutation-operator` selects an operator-directed fixture family instead of `--scenario` or
   `--metamorphic-sql`. Supply the original query with `--reference-sql` and the deliberately changed
   query with `--candidate-sql`. An optional `--gold-sql` tests whether an independent gold query
@@ -43,6 +46,15 @@ every comparison agreed exactly; `not_run` when it was vacuous in every case; `f
 the original rows and transform specifications saved for `--replay` (same SQL file, seed and profile). A
 non-closure answer is the `counterexample:metamorphic:shape` error. Relations test only this SQL and cannot see
 errors invariant under them, such as a reversed edge direction or a wrong quantity column.
+With `--scenario bom_exhaustive`, `counterexample:metamorphic:oracle` also compares every case's answer exactly with
+the independent closure-oracle fold; it passes only when every admissible case of the enumeration was compared
+(with `--constraints`, inadmissible cases are counted in `invalid_domain_examples` and noted in `not_proven`).
+No check passes partially: at the first failure and in a one-case replay the failed checks are `fail` and the
+others `not_run` (`stopped_at_first_failure`, `replay_covers_one_case`); a resource bound in an original answer
+makes every check `not_run`; one hit only in a relation's own transform, transformed answer or comparison makes
+only that relation `not_run`. `--max-examples` must be omitted or at least 3,486. Replay needs the same SQL file,
+`--scenario bom_exhaustive`, `--seed` and profile.
+Only the stated scope, both label placements and `qty` are tested.
 
 ```text
 python "${CLAUDE_PLUGIN_ROOT}/skills/semantic-crosscheck/scripts/sxc.py" counterexample --metamorphic-sql closure.sql --seed 7

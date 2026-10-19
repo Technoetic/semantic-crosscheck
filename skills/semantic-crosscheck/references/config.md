@@ -135,14 +135,16 @@ Data rules. Each shape becomes a SQL view `v_shape_<id>` with the key columns of
 when it has a SHACL form, a node shape in `build/shapes.ttl`. A shape needs at least one of `class`, a
 bound, or `sql_violation`; when it has several, a row violating any of them violates the shape.
 
-`reason` compares a shape with SHACL only when it has a separate SHACL form. These shapes are reported as
-not proven, "checked only in SQL", instead of compared:
-
-- a shape with `sql_violation` (also when it has `class` or bounds as well);
-- a shape that combines `class` with bounds.
+`reason` compares a shape with SHACL only when it has a separate SHACL form. A shape with `sql_violation`
+(also when it has `class` or bounds as well) has none and is reported as not proven, "checked only in SQL",
+instead of compared. A shape that combines `class` with bounds is compared: `build/shapes.ttl` gives it
+two property shapes (`sh:class` on the column, the bounds on the same value written as a number), and a
+row that violates either one violates the shape, as in its view. Its target and class-entity rows count
+against `verify.shacl_max_rows` (releases up to 0.5.0 did not export such shapes).
 
 Shapes on the same `target` and `path` that need different kinds of RDF value (a `class` shape and a
-bound shape, or `class` shapes naming different entities) are all compared: `reason` puts each shape in
+bound shape, or `class` shapes naming different entities; a shape with `class` and bounds counts as a `class`
+shape here, since its bounds read a separate value predicate) are all compared: `reason` puts each shape in
 the first value group in which its column carries no other kind of value, and validates each group on its own
 data graph. Without such a shared column every shape is in one group (`main`) and the export is the same
 as without groups. A shape that collides opens an extra group (`extra:1`, `extra:2`, ...), which exports

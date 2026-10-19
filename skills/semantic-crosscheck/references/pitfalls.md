@@ -135,6 +135,8 @@ gold SQL and `crosscheck.toml` avoid them too.
   group in which its column carries no other kind of value (`main`, then `extra:1`, `extra:2`, ... for the
   colliding shapes), validates each group on its own data graph and reads a group's results only for its
   own shapes; the check detail names the `value_group`. Without a colliding shape there is only `main`.
+  One shape with both `class` and bounds is not such a collision: its bounds read the same value written
+  as a number on a second predicate (`<entity>.<column>/value`), so it needs only row IRIs on the column.
   Each extra group exports its target rows again, and `verify.shacl_max_rows` limits the sum over all
   groups, so splitting one column across value kinds can push a large export over the limit (every SHACL
   check is then `not_run`).

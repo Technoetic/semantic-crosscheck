@@ -36,8 +36,8 @@ Release notes: [docs/releases/v0.6.0.md](docs/releases/v0.6.0.md).
   has two property shapes: `sh:class` on the column predicate and the bounds on a new value predicate
   `<entity>.<column>/value`, which carries the same column value as a literal. A row flagged by either property
   shape counts for the shape. Only `sql_violation` shapes remain checked only in SQL. `build/shapes.ttl` changes
-  for configurations with such shapes, and the engine fingerprint changes: rerun `build`, then `reason`; earlier
-  results are reported stale. These shapes are now exported, so their target and class-entity rows count against
+  for configurations with such shapes, and the engine fingerprint changes: rerun the whole pipeline (`build` first, then
+  `reason`, `cube` and `verify`); earlier results are reported stale. These shapes are now exported, so their target and class-entity rows count against
   `verify.shacl_max_rows`, and next to a bound-only shape on the same column (or a class shape naming another
   entity) such a shape opens an extra value group that exports its target rows again. An unchanged configuration
   can therefore exceed the limit, which leaves every `shacl:<id>` check `not_run` (`resource_limit`): check the

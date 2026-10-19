@@ -4,6 +4,34 @@ All notable changes to this project are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- counterexample: `--metamorphic-sql` gains `--scenario bom_exhaustive`, a bounded-exhaustive enumeration of
+  every connected acyclic BOM with 2-4 parts, 1-5 `bom_line` rows, at most 2 rows per (parent, child) pair and
+  `qty_per` in {1, 2} (1,743 isomorphism classes x 2 label placements = 3,486 cases). The new check
+  `counterexample:metamorphic:oracle` compares every case's answer exactly with the independent closure-oracle
+  fold (`closure_oracle.expected_quantities`). It passes only when the whole enumeration was compared; resource
+  bounds, early stops and one-case replays are `not_run`. `--max-examples` must be omitted or cover every case.
+  The scenario is rejected outside `--metamorphic-sql`. A `UNION` closure now fails deterministically, while the
+  seeded `bom_diamond` cases see it in only some of the 64 default cases (method after Marinov et al., 2003).
+
+### Changed
+
+- The V3 independent closure oracle now verifies `on_cycle = "report"` hierarchies instead of reporting them
+  `not_run`: an iterative Tarjan search (charged to the operation budget) removes every logical edge inside a
+  strongly connected component, self-loops included, then folds the rest exactly. `dropped_cycle_edges` and
+  `cycle_nodes` are recorded for information only, a pass that removed edges is listed in `not_proven`, and a
+  cycle left after removal is an `error` (`scc_removal_left_cycle`). The `cycle_not_supported` reason is gone; an
+  unrecognised `on_cycle` value is `not_run` (`unsupported_on_cycle`).
+- reason now compares shapes that combine `class` with bounds against their SQL view through SHACL. The node shape
+  has two property shapes: `sh:class` on the column predicate and the bounds on a new value predicate
+  `<entity>.<column>/value`, which carries the same column value as a literal. A row flagged by either property
+  shape counts for the shape. Only `sql_violation` shapes remain checked only in SQL. `build/shapes.ttl` changes
+  for configurations with such shapes, and the engine fingerprint changes: rerun `build`, then `reason`; earlier
+  results are reported stale.
+
 ## [0.5.0] - 2026-10-19
 
 Release notes: [docs/releases/v0.5.0.md](docs/releases/v0.5.0.md).

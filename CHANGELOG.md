@@ -6,6 +6,10 @@ All notable changes to this project are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-21
+
+Release notes: [docs/releases/v0.7.0.md](docs/releases/v0.7.0.md).
+
 ### Added
 
 - Opt-in two-query `--shrink-strategy structured`: shared-budget single-row reduction, reverse
@@ -262,6 +266,7 @@ First release. Release notes: [docs/releases/v0.1.0.md](docs/releases/v0.1.0.md)
   followed by the clean and dirty demo end to end through the command line; whitespace check and a leak
   scan of the working tree and the whole history.
 
+[0.7.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.7.0
 [0.6.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.6.0
 [0.5.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.5.0
 [0.4.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.4.0

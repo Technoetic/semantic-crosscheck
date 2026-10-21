@@ -16,7 +16,7 @@ import os
 from pathlib import Path
 import re
 
-from . import canon, constraints, db
+from . import canon, constraints, db, ident
 from .result import EXIT_CONFIG, Result, StageError
 
 SCENARIOS = ('nulls', 'duplicate_join', 'bom_diamond', 'date_boundary')
@@ -64,7 +64,7 @@ def generate(scenario, seed, case_index):
     return fixture
 
 
-def wrap_sql(query, fixture, profile=None):
+def wrap_sql(query, fixture, profile=None, schema=None):
     """Typed VALUES CTEs plus a nested candidate CTE; values never interpolated."""
     if not isinstance(query, str) or not query.strip():
         raise ValueError('Empty trusted SQL')
@@ -75,9 +75,21 @@ def wrap_sql(query, fixture, profile=None):
     def cast(expression, data_type):
         # Explicit deterministic equality for the integrity profile's text keys
         # and checks, including databases with nondeterministic default collation.
-        suffix = ' COLLATE "C"' if profile is not None and data_type == 'text' else ''
+        suffix = ' COLLATE "C"' if (profile is not None or schema is not None) and data_type == 'text' else ''
         return f'CAST({expression} AS {data_type})' + suffix
-    for table, columns in SCHEMA.items():
+    selected_schema = SCHEMA if schema is None else schema
+    if schema is not None:
+        for table, columns in schema.items():
+            ident.check(table)
+            if table == 'sxc_candidate':
+                raise ValueError('Reserved synthetic table')
+            for name, kind in columns:
+                ident.check(name)
+                numeric = re.fullmatch(r'numeric\(([0-9]+),([0-9]+)\)', kind)
+                if kind not in ('text', 'integer', 'date') and not (
+                        numeric and 1 <= int(numeric[1]) <= 38 and 0 <= int(numeric[2]) <= int(numeric[1])):
+                    raise ValueError('Unsupported synthetic type')
+    for table, columns in selected_schema.items():
         rows = fixture[table]
         values = []
         for row_number, row in enumerate(rows):
@@ -89,10 +101,11 @@ def wrap_sql(query, fixture, profile=None):
                 params[parameter] = value
                 cells.append(cast(':' + parameter, data_type))
             values.append('(' + ', '.join(cells) + ')')
-        names = ', '.join(column[0] for column in columns)
+        names = ', '.join(ident.quote(column[0]) if schema is not None else column[0] for column in columns)
         body = ('VALUES ' + ', '.join(values)) if rows else (
             'SELECT ' + ', '.join(cast('NULL', data_type) for _, data_type in columns) + ' WHERE FALSE')
-        parts.append(f'{table}({names}) AS ({body})')
+        table_sql = ident.quote(table) if schema is not None else table
+        parts.append(f'{table_sql}({names}) AS ({body})')
     return ('WITH ' + ',\n'.join(parts) + '\n, sxc_candidate AS (\n' + query +
             f'\n) SELECT * FROM sxc_candidate LIMIT {ROW_LIMIT + 1}'), params
 
@@ -138,12 +151,12 @@ def compare_answers(reference_columns, reference_rows, candidate_columns, candid
             'candidate_only_rows': sum((candidate - reference).values())}
 
 
-def evaluate(conn, fixture, reference_sql, candidate_sql, timeout_ms, profile=None):
+def evaluate(conn, fixture, reference_sql, candidate_sql, timeout_ms, profile=None, schema=None):
     answers = []
     with db.read_only(conn, timeout_ms):
         conn.run('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ')
         for query in (reference_sql, candidate_sql):
-            sql, params = wrap_sql(query, fixture, profile=profile)
+            sql, params = wrap_sql(query, fixture, profile=profile, schema=schema)
             prepared = conn.prepare(sql)
             try:
                 rows = prepared.run(**params) or []
@@ -156,23 +169,32 @@ def evaluate(conn, fixture, reference_sql, candidate_sql, timeout_ms, profile=No
     return compare_answers(*answers[0], *answers[1])
 
 
-def shrink(fixture, predicate, max_steps, profile=None):
+def shrink(fixture, predicate, max_steps, profile=None, schema=None, strategy='rows', admissible=None):
     """Greedy row deletion. Invalid trials are skipped, never accepted as witnesses.
 
     A query error makes deletion 1-minimality unproven even when the remaining
     successfully evaluable deletions have reached a fixed point.
     """
-    constraints.validate_fixture(fixture, SCHEMA, profile)
+    if strategy == 'structured':
+        from . import reduction
+        return reduction.shrink(fixture, predicate, max_steps, profile=profile, schema=SCHEMA if schema is None else schema,
+                                admissible=admissible)
+    if strategy != 'rows':
+        raise ValueError('Unsupported shrink strategy')
+    selected_schema = SCHEMA if schema is None else schema
+    constraints.validate_fixture(fixture, selected_schema, profile)
+    if admissible is not None:
+        admissible(fixture)
     current = copy.deepcopy(fixture)
     steps = accepted = errors = invalid_domain = 0
     def summary(exhausted):
         return {'tables': current, 'steps': steps, 'accepted': accepted, 'shrink_errors': errors,
                 'invalid_domain_trials': invalid_domain,
-                'minimality_scope': 'admissible_single_row_deletions' if profile else 'single_row_deletions',
+                'minimality_scope': 'admissible_single_row_deletions' if profile or admissible is not None else 'single_row_deletions',
                 'deletion_1_minimal': not exhausted and errors == 0, 'budget_exhausted': exhausted}
     while True:
         changed = False
-        for table in SCHEMA:
+        for table in selected_schema:
             for index in range(len(current[table])):
                 if steps >= max_steps:
                     return summary(True)
@@ -180,7 +202,9 @@ def shrink(fixture, predicate, max_steps, profile=None):
                 del trial[table][index]
                 steps += 1
                 try:
-                    constraints.validate_fixture(trial, SCHEMA, profile)
+                    constraints.validate_fixture(trial, selected_schema, profile)
+                    if admissible is not None:
+                        admissible(trial)
                 except constraints.ConstraintViolation:
                     invalid_domain += 1
                     continue
@@ -251,6 +275,10 @@ def run(cfg, args, out):
 
     With --metamorphic-sql the stage instead checks one closure SQL against BOM metamorphic relations.
     """
+    if (getattr(args, 'witness_schema', None) is not None or getattr(args, 'shrink_strategy', 'rows') != 'rows'
+            or getattr(args, 'solver_timeout_ms', 3000) != 3000):
+        from . import search
+        return search.run(args, out)
     if getattr(args, 'gold_sql', None) is not None and getattr(args, 'mutation_operator', None) is None:
         raise StageError('counterexample: --gold-sql requires --mutation-operator', EXIT_CONFIG)
     if getattr(args, 'mutation_operator', None) is not None:

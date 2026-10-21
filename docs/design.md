@@ -252,7 +252,7 @@ configuration ids; `<member>` is a Cube member (`cube.member`); `<stratum>` is a
 | any | `runtime_evidence:stable` | opted-in build/reason/cube/verify actual full-pipeline evidence agrees at start/end | `fail` on change; `error` on a failed end probe; a failed start probe stops the stage |
 | report | `runtime_evidence:current` | error check only | `error` when opted-in current runtime cannot be read; missing/changed stage binding is also stale |
 | counterexample | `counterexample:search` | never proves general equivalence | `fail` with a reduced successful mismatch; `not_run` when bounded examples agree |
-| counterexample | `counterexample:query`, `counterexample:recheck`, `counterexample:inputs` | error checks only | `error` on query failure, unstable witness or a SQL edit during execution; no new replay fixture |
+| counterexample | `counterexample:query`, `counterexample:recheck`, `counterexample:inputs`, `counterexample:artifact` | error checks only | `error` on query failure, unstable witness, changed inputs or a replay artifact exceeding 1 MiB; no new replay fixture |
 | counterexample | `counterexample:mutation:search` | never proves equivalence or a real-data V4 verdict | `fail` when supplied original/mutant SQL differ on an admissible operator-directed synthetic fixture; `not_run` when no difference is found within the bound |
 | counterexample | `counterexample:mutation:gold_agreement` | supplied original and independent gold SQL agree on the saved synthetic fixture | `fail` on disagreement; this does not establish correspondence to an actual Cube model |
 | counterexample | `counterexample:mutation:query`, `counterexample:mutation:recheck`, `counterexample:mutation:inputs` | no synthetic detection is established by an error | `error` on execution failure, unstable witness or changed inputs; unsupported SQL relation/column schema is `not_run` |
@@ -696,3 +696,28 @@ or the checks it exercises without being reported). See `commands/xc-demo.md` fo
   the code: stages, options, check ids, configuration keys and defaults, minimum versions and pins.
 - The demo's `expected` numbers come from an independent Python implementation and are the reference for the
   closure, the shapes and the dirty-data findings.
+
+
+## Opt-in structured and finite-domain counterexample search
+
+The two-query mode adds `--shrink-strategy structured` and `--witness-schema FILE`.
+The existing row-only path and version 1 replay remain the default. Structured reduction
+attempts row deletion, reverse-FK closures and finite-rank non-key value simplifications
+under one trial budget; each accepted operation descends the row-count/cell-rank measure
+and restarts row deletion. The final single-row minimality flag is never global minimality.
+
+A strict user declaration supplies types, finite domains and row bounds; optional Z3
+encodes only the existing integrity language. It does not introspect operational schema
+or encode SQL query conditions. One `--solver-timeout-ms` deadline covers compilation
+and lexicographic model enumeration. Candidate models are independently domain-validated
+and evaluated by the existing PostgreSQL read-only REPEATABLE READ comparator. The same
+finite-domain and row-bound validator applies to reduction and replay steps.
+
+Extended fixture version 2 binds exact declaration/profile and SQL bytes, generator,
+strategy, seed and original synthetic input. Structured accepted traces are regenerated
+from that input and checked before DB connection; row-only reductions must be subsets.
+Saved statistics are untrusted: replay reevaluates SQL and recomputes shrink claims.
+Only fixture files contain rows and transformation values; count-only results omit them.
+Input drift and size limits prevent saving. No-model/no-disagreement/solver-unavailable
+outcomes are not_run plus not_proven, never correctness or equivalence proofs.
+See [the full input and replay contract](../skills/semantic-crosscheck/references/counterexamples.md#structured-reduction-and-typed-finite-domain-inputs).

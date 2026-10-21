@@ -418,7 +418,7 @@ python skills/semantic-crosscheck/scripts/sxc.py <stage> [--config PATH] [--out 
 | `verify` | V1·V2·V3·V4 검증 | `--only v1,v2,v3,v4`, `--gold ID` | `verify/result.json`, `verify/server.log`, `verify/mutants/*/` |
 | `report` | 필수 단계의 실행·최신성·통과 여부 종합 | 별도 옵션 없음 | `report/result.json`, `report.md`, `report.json` |
 | `cube-install` | 사용자별 고정 Cube 어댑터 설치 | `--home DIR`, `--native-file PATH`, `--force` | `cube_install/result.json`, `cube_install/npm-ci.log`, `cube_install/smoke.log` |
-| `counterexample` | 합성 데이터에서 SQL의 차이·BOM 변환 관계를 검사하고 축소·재현 | `--reference-sql FILE`, `--candidate-sql FILE`, `--metamorphic-sql FILE`, `--mutation-operator NAME`, `--gold-sql FILE`, `--scenario nulls`, `--seed N`, `--max-examples N`, `--max-shrink-steps N`, `--dsn-env NAME`, `--statement-timeout-ms N`, `--constraints FILE`, `--replay FILE` | `counterexample/result.json`, `counterexample/fixture.json` |
+| `counterexample` | 합성 데이터에서 SQL의 차이·BOM 변환 관계를 검사하고 축소·재현 | `--reference-sql FILE`, `--candidate-sql FILE`, `--metamorphic-sql FILE`, `--mutation-operator NAME`, `--gold-sql FILE`, `--scenario nulls`, `--seed N`, `--max-examples N`, `--max-shrink-steps N`, `--shrink-strategy structured`, `--witness-schema FILE`, `--solver-timeout-ms N`, `--dsn-env NAME`, `--statement-timeout-ms N`, `--constraints FILE`, `--replay FILE` | `counterexample/result.json`, `counterexample/fixture.json` |
 
 **공통 옵션**
 
@@ -444,6 +444,15 @@ NULL·중복 조인·BOM 다중 경로·날짜 경계를 생성하고, 결과 �
 [반례 생성 안내](skills/semantic-crosscheck/references/counterexamples.md)에 있습니다.
 차이가 발견되면 비교 실패(exit 1), 예산 안에서 발견하지 못하면 `not_run`입니다.
 쿼리 오류는 반례로 세지 않고, 행 삭제에 대한 최소성과 전체 최소를 구분합니다.
+
+두 SQL 파일 비교에서는 `--shrink-strategy structured`로 FK 의존 행 묶음 삭제와 비키 값 단순화를
+선택할 수 있습니다. 기본은 기존 `rows`이며, 실제 불일치와 무결성을 유지한 변환만 수용합니다.
+`--witness-schema FILE`은 사용자가 선언한 타입·유한 값 목록·행 수 범위에서 시험 데이터를 생성합니다.
+`python -m pip install -r requirements/witness.txt`로 선택 의존성을 설치하고
+`--solver-timeout-ms 3000`으로 전체 생성 시간을 제한합니다. 실제 PostgreSQL 비교로 반례를 확인하며,
+미발견·UNSAT·시간 초과·Z3 미설치는 동등성 증명이나 PASS가 아닙니다. 축소·재생도 선언 범위를 유지합니다.
+이 두 기능은 mutation/metamorphic 모드와 조합할 수 없으며 스키마 모드는 `--scenario`를 대체합니다.
+입력 형식·상한·실행 예는 [반례 참고 문서](skills/semantic-crosscheck/references/counterexamples.md#structured-reduction-and-typed-finite-domain-inputs)를 참고하세요.
 
 `--constraints examples/counterexamples/constraints.json`을 추가하면 선언한 PK·UNIQUE·
 NOT NULL·FK·CHECK를 지키는 데이터만 실행하고 축소합니다. FK를 깨는 부모 행 삭제는
@@ -564,7 +573,7 @@ flowchart TD
 | report | `stage:<name>` | 단계가 실행되었고 최신이며 통과 |
 | build·reason·cube·verify / report | `data_revision:stable`, `data_revision:current` | 구성된 데이터 버전이 안정적이며 현재 근거와 일치; 조회 오류는 실패로 닫음 |
 | build·reason·cube·verify / report | `runtime_evidence:stable`, `runtime_evidence:current` | 선택한 실제 실행 환경 근거가 안정적이며 현재와 일치; 누락·변경·조회 실패 시 기존 PASS 재사용 차단 |
-| counterexample | `counterexample:search`, `counterexample:query`, `counterexample:recheck`, `counterexample:inputs` | 합성 SQL 차이와 축소·재현 범위; 오류·미발견은 동등성 증명 불가 |
+| counterexample | `counterexample:search`, `counterexample:query`, `counterexample:recheck`, `counterexample:inputs`, `counterexample:artifact` | 합성 SQL 차이와 축소·재현 범위; 오류·미발견은 동등성 증명 불가, 재생 파일 크기 상한 초과 시 저장 거부 |
 
 조기 중단의 `stage`, doctor의 `database`, demo의 `demo:load`, verify의 `v4:suite`, 범위를 나타내는 `scope:*`, 설치의 `cube_install:*`까지 포함한 전체 목록은 [설계 문서의 카탈로그](docs/design.md#6-check-catalogue)를 참고합니다.
 

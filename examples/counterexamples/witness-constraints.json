@@ -1,0 +1,5 @@
+{
+  "version": 1,
+  "tables": {"items": {"primary_key": ["id"]}},
+  "checks": [{"table": "items", "column": "qty", "op": "ge", "value": "0"}]
+}

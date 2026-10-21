@@ -4,6 +4,26 @@ All notable changes to this project are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Opt-in two-query `--shrink-strategy structured`: shared-budget single-row reduction, reverse
+  foreign-key dependency group deletion and finite-rank non-key value simplification. Every accepted
+  trial preserves the declared integrity domain and actual SQL disagreement. Version 2 fixtures
+  bind the original synthetic input and validated transformation trace; legacy row-only replay remains.
+- `--witness-schema FILE`: a strict version 1 declaration of typed finite domains and row bounds,
+  with optional existing integrity profiles. Optional pinned Z3 generates models within
+  `--solver-timeout-ms`; PostgreSQL still compares both queries. Missing solver, bounded UNSAT,
+  unknown, timeout or no disagreement is never a correctness or equivalence proof.
+
+### Fixed
+
+- Validate numeric range with exact `Decimal.copy_abs()` so valid 29..38-digit declared
+  boundaries are not rejected by a caller's lower-precision Decimal context.
+- The Windows descendant cleanup/handle-leak regression triggers cleanup after the real
+  child reports readiness; its separate actual deadline test remains unchanged.
+
 ## [0.6.0] - 2026-10-20
 
 Release notes: [docs/releases/v0.6.0.md](docs/releases/v0.6.0.md).

@@ -48,6 +48,13 @@ For the demo, `demo` comes first, because the source tables exist only after it:
 
 The optional `counterexample` tool compares two trusted SQL files on generated synthetic data, reduces
 the witness by row deletion and supports replay ([xc-counterexample](../../commands/xc-counterexample.md)).
+Two-query search also supports opt-in `--shrink-strategy structured` for dependency group deletion
+and non-key value simplification, and `--witness-schema FILE` for finite-domain, typed synthetic
+inputs satisfying `--constraints`. Install `requirements/witness.txt`; bound generation with
+`--solver-timeout-ms`. This is a declared schema, not live schema discovery or SQL semantics in Z3.
+Keep failed/unknown/absent solver searches `not_run` with `not_proven`; a witness still requires
+actual PostgreSQL disagreement. Preserve exact input hashes and validate the saved transformation
+trace on replay. Do not send fixtures or row values to a model or put them in count-only results.
 It does not read `crosscheck.toml`, rejects `--config`, and is not a required pipeline stage. See the
 [synthetic counterexample contract](references/counterexamples.md); never describe bounded agreement
 as equivalence or a query error as a witness. Synthetic fixture values are stored only in the separate

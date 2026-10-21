@@ -410,9 +410,19 @@ class RuntimeTests(unittest.TestCase):
                               'Path(sys.argv[1]).write_text(str(child.pid))\n'
                               'print("v22.13.1",flush=True)\n', encoding='utf-8')
             before = handle_count()
+            read_chunk = runtime._available_pipe_chunk
+            def stop_after_descendant_is_ready(stream):
+                chunk = read_chunk(stream)
+                if chunk:
+                    # The wrapper writes its descendant PID before printing. Trigger
+                    # cleanup after actual readiness, independently of Windows Python
+                    # startup speed; the separate inherited-pipe test checks deadlines.
+                    raise runtime.RuntimeEvidenceError('version_probe_failed')
+                return chunk
             for index in range(3):
                 pid_file = self.root / ('descendant-' + str(index) + '.pid')
-                with mock.patch.object(runtime, 'PROBE_TIMEOUT_S', .25), self.assertRaises(runtime.RuntimeEvidenceError):
+                with mock.patch.object(runtime, '_available_pipe_chunk', side_effect=stop_after_descendant_is_ready), \
+                     self.assertRaises(runtime.RuntimeEvidenceError):
                     runtime._capture_version([sys.executable, str(script), str(pid_file)])
                 pid = int(pid_file.read_text())
                 child = api.OpenProcess(0x00100000, False, pid)  # SYNCHRONIZE only for our recorded child PID

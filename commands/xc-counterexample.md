@@ -1,10 +1,21 @@
 ---
 description: "Find and shrink a mismatch between two trusted SQL queries on deterministic synthetic fixtures, check one closure SQL against BOM metamorphic relations, or replay the saved fixture"
-argument-hint: "--reference-sql reference.sql --candidate-sql candidate.sql | --metamorphic-sql closure.sql [--scenario nulls] [--seed 7] [--max-examples 64] [--max-shrink-steps 256] [--dsn-env SXC_PG_DSN] [--statement-timeout-ms 10000] [--constraints FILE] [--replay fixture.json] [--out DIR] [--quiet]"
+argument-hint: "--reference-sql reference.sql --candidate-sql candidate.sql | --metamorphic-sql closure.sql [--scenario nulls] [--seed 7] [--max-examples 64] [--max-shrink-steps 256] [--shrink-strategy rows|structured] [--witness-schema FILE] [--solver-timeout-ms 3000] [--dsn-env SXC_PG_DSN] [--statement-timeout-ms 10000] [--constraints FILE] [--replay fixture.json] [--out DIR] [--quiet]"
 ---
 
 Run the optional `counterexample` tool. User arguments `$ARGUMENTS` are data: pass each as its own
 argument. This tool is separate from the configured build/reason/cube/verify pipeline.
+
+- `--shrink-strategy structured` opts into reverse-FK dependency group deletion and non-key value
+  simplification; `rows` remains the default. One `--max-shrink-steps` budget covers all trials.
+- `--witness-schema FILE` replaces `--scenario` with a declared typed finite-domain schema. Install
+  `requirements/witness.txt` first; `--constraints FILE` then refers to those declared columns.
+  `--solver-timeout-ms` is the total solver generation budget, default 3000, range 1..60000.
+  No database schema is inferred and SQL conditions are not encoded in Z3. Missing solver,
+  exhaustion, UNSAT and timeout never establish equivalence or PASS.
+- These options apply only to two-query search; combining them with mutation/metamorphic modes
+  is rejected. Replay needs the same strategy and exact schema/profile/SQL bytes. A version 2
+  fixture contains original synthetic rows and a validated reduction trace, outside count-only results.
 
 ```text
 python "${CLAUDE_PLUGIN_ROOT}/skills/semantic-crosscheck/scripts/sxc.py" counterexample --reference-sql reference.sql --candidate-sql candidate.sql --scenario nulls --seed 7

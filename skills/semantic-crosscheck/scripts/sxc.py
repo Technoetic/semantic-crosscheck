@@ -112,6 +112,12 @@ def parser() -> argparse.ArgumentParser:
     s.add_argument("--max-examples", type=int, default=None, help="bounded search examples (default: 64); bom_exhaustive always "
                                                                     "runs every case and refuses a smaller value")
     s.add_argument("--max-shrink-steps", type=int, default=256, help="bounded row-deletion attempts (default: 256)")
+    s.add_argument("--shrink-strategy", choices=["rows", "structured"], default="rows",
+                   help="rows (default), or constraint-preserving group deletion and value simplification")
+    s.add_argument("--witness-schema", default=None, metavar="FILE",
+                   help="version 1 typed finite-domain schema; replaces --scenario in two-query search")
+    s.add_argument("--solver-timeout-ms", type=int, default=3000,
+                   help="total finite-domain solver budget in milliseconds (default: 3000)")
     s.add_argument("--dsn-env", default="SXC_PG_DSN", help="NAME of the environment variable holding the read-only test PostgreSQL DSN")
     s.add_argument("--statement-timeout-ms", type=int, default=10000, help="per-query time limit (default: 10000)")
     s.add_argument("--replay", default=None, help="replay a previously generated fixture with matching SQL hashes")
@@ -214,7 +220,7 @@ def discard_report_files(out: Path | None) -> None:
 def main(argv=None) -> int:
     args = parser().parse_args(argv)
     stage = args.stage
-    if stage == "counterexample" and args.scenario is None and args.mutation_operator is None:
+    if stage == "counterexample" and args.scenario is None and args.mutation_operator is None and args.witness_schema is None:
         # Operator-directed fixtures have their own generator and reject legacy scenarios.
         args.scenario = "bom_diamond" if args.metamorphic_sql is not None else "nulls"
     if stage == "counterexample" and args.max_examples is None and not (

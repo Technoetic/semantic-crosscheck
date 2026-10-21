@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "tables": {
+    "items": {
+      "rows": [1, 2],
+      "columns": [
+        {"name": "id", "type": "integer", "values": [1, 2]},
+        {"name": "qty", "type": "numeric(8,3)", "values": [null, "0", "0.0005", "1"]}
+      ]
+    }
+  }
+}

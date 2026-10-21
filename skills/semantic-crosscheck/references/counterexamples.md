@@ -29,8 +29,9 @@ If a deletion cannot execute, the valid witness is retained and minimality stays
 ## Optional integrity profile
 
 Add `--constraints examples/counterexamples/constraints.json` to enforce a declared domain. The
-profile is not inferred from a production schema. It accepts only the four fixed synthetic tables
-and their existing columns, format `version: 1`, and the following rules:
+profile is not inferred from a production schema. Without `--witness-schema` it accepts only the
+four fixed synthetic tables and their existing columns; with it, the explicitly declared schema.
+It accepts format `version: 1`, and the following rules:
 
 - `tables.<table>.primary_key`: one nonempty column list; implies NOT NULL and uniqueness.
 - `tables.<table>.unique`: a list of column lists; PostgreSQL default NULLS DISTINCT semantics.
@@ -76,6 +77,59 @@ A discovered mismatch is `fail`/exit 1; no mismatch within the bound is `not_run
 equivalence. Invalid arguments or replay files are configuration errors. Runtime query failures are
 errors. `result.json` contains statistics and identifiers only; `fixture.json` alone contains the
 generated rows, together with generator/replay metadata and SQL fingerprints.
+
+## Structured reduction and typed finite-domain inputs
+
+Two-query search can opt into `--shrink-strategy structured`. It first tries single-row deletion,
+then reverse-FK dependency group deletion and non-key value simplification, restarting row deletion
+after each accepted transform. Keys and both sides of declared foreign keys are protected from
+value edits. The shared `--max-shrink-steps` bound covers every trial; errors/invalid trials are
+never witnesses. `deletion_1_minimal` covers only admissible single-row deletions of the final
+fixture, not all group/value operations or a global minimum. The default remains `rows`.
+
+Install `python -m pip install -r requirements/witness.txt` for `--witness-schema FILE`. This strict
+version 1 JSON declaration supplies a schema, finite column domains and row bounds. For example:
+
+```json
+{"version":1,"tables":{"items":{"rows":[1,2],"columns":[
+  {"name":"id","type":"integer","values":[1,2]},
+  {"name":"qty","type":"numeric(8,3)","values":[null,"0","0.0005","1"]}
+]}}}
+```
+
+Supported types are `text`, signed 32-bit `integer`, ISO `date`, and `numeric(p,s)` with
+1 <= p <= 38 and 0 <= s <= p. Identifiers are lower-case ASCII SQL identifiers, max 63 characters;
+all are quoted. The internal table name `sxc_candidate` is reserved. Bounds: 1..4 tables,
+1..8 columns/table, 0..4 rows/table, 1..8 supplied values/column, at most 64 cells at maximum row
+counts, 256 KiB input. Duplicate JSON keys, unknown fields and unsupported types fail before DB use.
+Domains collapse values equal after the actual declared cast. The existing optional `--constraints`
+language enforces keys, MATCH SIMPLE FKs, nullable UNIQUE and CHECK UNKNOWN behavior.
+
+```text
+python skills/semantic-crosscheck/scripts/sxc.py counterexample --reference-sql examples/counterexamples/witness-reference.sql --candidate-sql examples/counterexamples/witness-candidate.sql --witness-schema examples/counterexamples/witness-schema.json --constraints examples/counterexamples/witness-constraints.json --shrink-strategy structured --solver-timeout-ms 3000 --out .sxc
+```
+
+Z3 deterministically enumerates finite-domain row/cell assignments satisfying that declaration.
+The total `--solver-timeout-ms` budget (1..60000, default 3000) includes constraint compilation
+and model enumeration. `--max-examples` caps candidate models. Only models checked by the ordinary
+integrity validator reach the actual PostgreSQL comparison. Reduction and every replay step also
+preserve the declared value domains and row bounds. A missing solver, bounded UNSAT, timeout,
+unknown or no observed disagreement is `not_run` with `not_proven`, never PASS or a general
+absence/equivalence proof. SQL expressions, live schema discovery, OWL classification and arbitrary
+PostgreSQL DDL are not encoded. Seed is retained for replay identity; finite enumeration itself
+has a fixed lexicographic order. Use a dedicated synthetic database and trusted SQL files.
+
+These options cannot be combined with mutation or metamorphic modes. Schema mode replaces
+`--scenario`; a non-default solver budget requires schema mode. Version 2 replay binds SQL hashes,
+exact schema/profile bytes, strategy and generator identity. It validates original rows and the
+supported accepted-transform trace before connecting, then rechecks actual SQL and recomputes
+shrink claims. Only `fixture.json` stores rows/trace; public results contain counts/ids. A changed
+input or replay exceeding 1 MiB is not saved. Legacy row-deletion version 1 fixtures still use
+their original replay contract.
+
+This original implementation draws on [Vulcan](https://doi.org/10.1145/3586049) and
+[Qex](https://www.microsoft.com/en-us/research/publication/qex-symbolic-sql-query-explorer/);
+no source from those projects or GPL Perses is bundled.
 
 ## Operator-directed mutation fixtures
 

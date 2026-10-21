@@ -2,7 +2,8 @@
 
 semantic-crosscheck vendors no third-party code. Its dependencies are installed by the user:
 
-- Python packages from PyPI through `requirements/core.txt` and `requirements/reason.txt` (direct
+- Python packages from PyPI through `requirements/core.txt`, `requirements/reason.txt` and the optional
+  `requirements/witness.txt` (direct
   dependencies pinned to exact versions; their own dependencies are resolved by pip);
 - the Cube adapter's npm packages, installed by `sxc.py cube-install` into a per-user directory with
   `npm ci --ignore-scripts` from the committed `package-lock.json`;
@@ -28,6 +29,14 @@ recorded in `skills/semantic-crosscheck/adapters/cube/package-lock.json` (npm), 
 | owlready2 | 0.51 | LGPL-3.0-or-later | OWL ontology and the HermiT reasoner (`reason`) |
 | pySHACL | 0.40.1 | Apache-2.0 | SHACL validation (`reason`) |
 | rdflib | 7.6.0 | BSD-3-Clause | RDF graphs for SHACL (`reason`) |
+| z3-solver | 4.15.3.0 | MIT | Optional finite-domain integrity-valid synthetic inputs (`--witness-schema`) |
+
+Structured reduction is an original implementation informed by
+[Vulcan (2023)](https://doi.org/10.1145/3586049) and [Perses](https://github.com/uw-pluverse/perses).
+No Perses GPL-3.0 source is copied or bundled. Typed fixture generation borrows the bounded
+constraint-model principle of [Qex](https://www.microsoft.com/en-us/research/publication/qex-symbolic-sql-query-explorer/)
+and uses the separately installed [MIT Z3 implementation](https://github.com/Z3Prover/z3).
+Qex is a research reference, not a bundled tool. Z3 does not supply PostgreSQL query semantics.
 
 Their dependencies, as resolved by pip in the environment the licences were read from:
 

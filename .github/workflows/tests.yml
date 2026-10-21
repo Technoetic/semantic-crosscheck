@@ -28,10 +28,10 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
       - name: Install core requirements
-        run: python -m pip install --disable-pip-version-check -r requirements/core.txt
+        run: python -m pip install --disable-pip-version-check -r requirements/core.txt -r requirements/witness.txt
       - name: Command line starts
         run: python skills/semantic-crosscheck/scripts/sxc.py --version
-      # Only the core requirements are installed here: database tests skip without SXC_TEST_ADMIN_DSN, and
+      # Core and optional witness requirements are installed here: database tests skip without SXC_TEST_ADMIN_DSN, and
       # tests that need the reason packages or the Cube adapter skip when those are absent.
       - name: Unit tests
         run: python -m unittest discover -s tests -v
@@ -85,7 +85,7 @@ jobs:
           echo "SXC_JAVA=$JAVA_HOME/bin/java" >> "$GITHUB_ENV"
           echo "SXC_CUBE_HOME=$RUNNER_TEMP/sxc-cube" >> "$GITHUB_ENV"
       - name: Install reason requirements
-        run: python -m pip install --disable-pip-version-check -r requirements/reason.txt
+        run: python -m pip install --disable-pip-version-check -r requirements/reason.txt -r requirements/witness.txt
       - name: Install the pinned Cube adapter
         run: python skills/semantic-crosscheck/scripts/sxc.py cube-install
       # Fail here instead of letting the integration tests skip silently.

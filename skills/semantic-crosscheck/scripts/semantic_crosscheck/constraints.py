@@ -149,7 +149,9 @@ def _value(value, kind, literal=False):
         with localcontext() as context:
             context.prec = max(precision + scale + 2, len(number.as_tuple().digits) + scale + 2)
             stored = number.quantize(Decimal(1).scaleb(-scale), rounding=ROUND_HALF_UP)
-        if abs(stored) >= Decimal(10) ** (precision - scale):
+        # Decimal.__abs__ applies the ambient context and can round a valid
+        # 29..38-digit boundary up to the overflow threshold. copy_abs is exact.
+        if stored.copy_abs() >= Decimal(10) ** (precision - scale):
             raise ValueError('Numeric range')
         return stored
     raise ValueError('Unsupported synthetic type')

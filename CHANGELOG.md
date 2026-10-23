@@ -6,6 +6,10 @@ All notable changes to this project are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-10-23
+
+Release notes: [docs/releases/v0.8.0.md](docs/releases/v0.8.0.md).
+
 ### Added
 
 - Optional standalone `cube-replay` runs the existing synthetic mutation templates through actual compiled original/mutant Cube models and independently authored gold SQL. It requires a dedicated test DSN and explicit private-schema write opt-in; it does not promote real-data V4 coverage.
@@ -272,6 +276,7 @@ First release. Release notes: [docs/releases/v0.1.0.md](docs/releases/v0.1.0.md)
   followed by the clean and dirty demo end to end through the command line; whitespace check and a leak
   scan of the working tree and the whole history.
 
+[0.8.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.8.0
 [0.7.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.7.0
 [0.6.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.6.0
 [0.5.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.5.0

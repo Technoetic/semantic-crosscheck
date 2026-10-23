@@ -3,6 +3,7 @@
 The production exporter builds the graphs and shapes. Expected report tuples are
 hand-written below, never computed by that exporter or either validator. Both
 engines must independently match every expected constraint, including its value.
+Check IDs are pyshacl:<case> and jena:<case>, one per engine and corpus case.
 """
 from collections import Counter
 from dataclasses import dataclass

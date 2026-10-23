@@ -6,6 +6,12 @@ All notable changes to this project are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Optional standalone `cube-replay` runs the existing synthetic mutation templates through actual compiled original/mutant Cube models and independently authored gold SQL. It requires a dedicated test DSN and explicit private-schema write opt-in; it does not promote real-data V4 coverage.
+- Optional `tlp` checks bounded nonrecursive trusted SQL through true/false/NULL partitions, exact COUNT/SUM and multiset comparisons, including strict generated-fixture replay and observable input stability checks.
+- Optional `shacl-corpus` compares independently specified nonrecursive reports with pySHACL and separately installed Apache Jena. Missing/malformed/partial engines cannot pass; the operational reason stage is unchanged.
+
 ## [0.7.0] - 2026-10-21
 
 Release notes: [docs/releases/v0.7.0.md](docs/releases/v0.7.0.md).

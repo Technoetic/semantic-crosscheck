@@ -372,17 +372,18 @@ class RuntimeTests(unittest.TestCase):
 
     def test_actual_inherited_pipe_grandchild_cannot_extend_probe_deadline(self):
         self.need_runtime()
-        pid_file = self.root / 'grandchild.pid'
+        # This deadline check needs the inherited pipe, not a PID file. A hard
+        # timeout during that unused write can race Windows file cleanup; the
+        # readiness-based test below checks recorded descendant PIDs separately.
         script = self.root / 'version-wrapper.py'
-        script.write_text('import subprocess,sys\nfrom pathlib import Path\n'
+        script.write_text('import subprocess,sys\n'
                           'child=subprocess.Popen([sys.executable,"-c","import time;time.sleep(4)"], '
                           'stdout=sys.stdout,stderr=sys.stderr)\n'
-                          'Path(sys.argv[1]).write_text(str(child.pid))\n'
                           'print("v22.13.1",flush=True)\n', encoding='utf-8')
         readers_before = len(threading.enumerate())
         started = time.monotonic()
         with mock.patch.object(runtime, 'PROBE_TIMEOUT_S', .25), self.assertRaises(runtime.RuntimeEvidenceError):
-            runtime._capture_version([sys.executable, str(script), str(pid_file)])
+            runtime._capture_version([sys.executable, str(script)])
         elapsed = time.monotonic() - started
         self.assertLess(elapsed, 1.5, 'inherited pipe writers must not delay closing the probe')
         self.assertEqual(len(threading.enumerate()), readers_before, 'a probe cannot leave a blocked reader thread')

@@ -34,16 +34,21 @@ python skills/semantic-crosscheck/scripts/sxc.py --version
 | `report` | summary of every stage | none | `report/result.json`, `report.md`, `report.json` |
 | `cube-install` | installs the pinned Cube adapter once per user | `--home DIR`, `--native-file PATH`, `--force` | `cube_install/result.json`, `cube_install/npm-ci.log`, `cube_install/smoke.log` |
 | `counterexample` | optional synthetic SQL mismatch search and reduction, or BOM metamorphic relations (and, with `--scenario bom_exhaustive`, the exact closure oracle over a bounded-exhaustive enumeration) for one closure SQL | `--reference-sql`, `--candidate-sql`, `--metamorphic-sql`, `--scenario`, `--seed`, `--max-examples`, `--max-shrink-steps`, `--dsn-env`, `--statement-timeout-ms`, `--constraints`, `--replay` | `counterexample/result.json`, `counterexample/fixture.json` |
+| `cube-replay` | optional actual original/mutant Cube replay against independent gold SQL on owned synthetic tables | required `--mutation-operator`, `--allow-scratch-schema`, `--seed` (7), `--dsn-env` (`SXC_CUBE_REPLAY_DSN`), `--statement-timeout-ms` (10000), `--replay` | `cube_replay/result.json`, successful bound `cube_replay/fixture.json` |
+| `tlp` | optional ternary-logic partition consistency of a synthetic relation, including exact COUNT or SUM | required `--spec FILE`, `--seed` (7), `--max-examples` (64), `--dsn-env` (`SXC_TLP_DSN`), `--statement-timeout-ms` (10000), `--replay` | `tlp/result.json`, `tlp/fixture.json` |
+| `shacl-corpus` | optional actual pySHACL and Apache Jena comparison against independent expected nonrecursive reports | `--jena-home` (`SXC_JENA_HOME`), `--timeout-ms` (30000 per case and engine) | `shacl_corpus/result.json` |
 
 Common options:
 
-- `--config PATH` names the configuration. When it is given, the file must exist, for every stage, `doctor` and
-  `cube-install` included: `--config <name>: no such file (check the path; nothing was run)`, exit 2. A typo must
-  not quietly turn a check off. Without `--config`, `./crosscheck.toml` is used; only `doctor` and `cube-install`
-  run without one, every other stage stops with exit 2 (`no crosscheck.toml in the current directory: pass
-  --config PATH`).
+- `--config PATH` names the operational configuration. When supplied to an operational stage, the file must
+  exist, `doctor` and `cube-install` included: `--config <name>: no such file (check the path; nothing was run)`,
+  exit 2. Without it, operational stages use `./crosscheck.toml`; `doctor` and `cube-install` may run without
+  one, and other operational stages stop with exit 2 (`no crosscheck.toml in the current directory: pass
+  --config PATH`). Standalone `counterexample`, `cube-replay`, `tlp` and `shacl-corpus` reject explicit
+  `--config` and never load a configuration from the working directory.
 - `--out DIR` is the output directory. Default: `.sxc` next to the configuration, or `./.sxc` in the current
-  directory when there is no configuration (`doctor` and `cube-install` without `--config`).
+  directory when there is no configuration (`doctor` and `cube-install` without `--config`, or a standalone
+  synthetic stage).
 - `--quiet` prints only the summary line.
 
 A run goes through these steps:
@@ -56,10 +61,11 @@ A run goes through these steps:
    directory is left alone.
 3. The stage's previous `<stage>/result.json` is deleted, so an interrupted or killed run cannot leave an earlier
    verdict behind for `report`.
-4. The configuration is loaded and validated (exit 2 on any malformed entry, see config.md).
-5. The stage module runs: `run(cfg, args, out: Path) -> Result` (`cfg` is `None` only for `doctor` and
-   `cube-install` without a configuration). `sxc.py` writes the result atomically (`result.json.part`, then a
-   rename) and prints the summary.
+4. An operational configuration, when present, is loaded and validated (exit 2 on any malformed entry,
+   see config.md).
+5. The stage module runs: `run(cfg, args, out: Path) -> Result` (`cfg` is `None` for standalone synthetic
+   stages, and for `doctor` and `cube-install` without a configuration). `sxc.py` writes the result atomically
+   (`result.json.part`, then a rename) and prints the summary.
 
 When the stage cannot produce its own checks, the result holds a single `stage` check with status `error`:
 `message` for a `StageError` (exit 2 or 3), `reason=interrupted` for Ctrl-C (exit 1), or `exception` (the type)
@@ -219,6 +225,9 @@ parameters are ignored.
 | `shape_q` | `tests(cfg, model)`, `run_test(...)`, `pair_keys(conn, cfg, test)`, `sampled(test)`, `d95_keys(sampled, total)`, `sample_note(detail)`, `PAIR_KEY_CAP = 2000`, `join_path(cubes, measure_cube, dim_cube)`, `additive_path(steps)`, `null_group_sql(cfg, test)`, `not_applicable(cfg, model)` |
 | `mutate` | `OPERATORS`, `CLOSURE_OPERATORS`, `OUTCOMES`, `selected(cfg)`, `run_mutants(cfg, out, conn, model, suite, closure=None, sampled_items=())`, `verdict(status, item)`, `closure_status(cfg, out)` |
 | `demo` | `build(dirty, seed, scale) -> {"parts","edges","orders","stock","malformed","expected"}`, `load(conn, data)`, `reference(expected, variant, seed, scale)`, `TABLES`, `TableMismatch` |
+| `cube_replay` | `run(None, args, out) -> Result('cube_replay')`: actual model generation, named mutation, original/gold agreement and mutant/gold disagreement on owned synthetic schemas; hash-bound replay and scoped cleanup |
+| `tlp` | `run(None, args, out) -> Result('tlp')`: strict versioned trusted spec, bounded synthetic fixtures, materialized predicate partitions, exact multiset/aggregate comparisons and hash-bound replay |
+| `shacl_corpus` | `run(None, args, out) -> Result('shacl_corpus')`: fixed independent expected reports compared with actual pySHACL and Jena; bounded output/deadlines and owned process-tree cleanup |
 
 ## 5. Generated objects (names from `naming.py`)
 
@@ -259,6 +268,15 @@ configuration ids; `<member>` is a Cube member (`cube.member`); `<stratum>` is a
 | counterexample | `counterexample:metamorphic:<relation>` | `--metamorphic-sql` only (`<relation>`: `mr1_unfold`, `mr2_scale`, `mr3_disjoint`, `mr4_unit_node`): every admissible case with a non-vacuous transform agrees exactly with the relation's expected path-product answer | `fail` on a violated relation (replay fixture saved); `not_run` when vacuous in every case (`not_run_reasons`); with `bom_exhaustive` also `not_run` after a resource bound (`resource_bound`), an early stop (`stopped_at_first_failure`) or in a replay (`replay_covers_one_case`) |
 | counterexample | `counterexample:metamorphic:oracle` | `--metamorphic-sql --scenario bom_exhaustive` only: every admissible case of the whole bounded enumeration (1,743 structures under 2 label placements) agrees exactly with the independent closure-oracle fold (qty only) | `fail` at the first disagreeing case (replay fixture saved); `not_run` when a case was not compared (`enumeration_incomplete`, e.g. `size_bound`), the run stopped at another check's failure, in a replay (`replay_covers_one_case`) or with no admissible case |
 | counterexample | `counterexample:metamorphic:shape` | error check only | `error` when the SQL answer is not closure-shaped (`reason`: missing or duplicate columns, duplicate pair, NULL, non-text id, non-exact qty) |
+| cube-replay | `cube_replay:comparison` | actual original Cube answers equal independent gold SQL, and actual named-mutant answers differ on the same frozen synthetic fixture | `fail` when either comparison condition is false; `not_run` for an unsupported operator; errors do not count as mutation detections |
+| cube-replay | `cube_replay:runtime` | error or unavailable-runtime check only | `not_run` for missing dependencies or connection failure; `error` for runtime execution failure |
+| cube-replay | `cube_replay:cleanup` | only this invocation's recorded schemas were removed | `error` for schema ownership changes, schema cleanup or connection cleanup failure |
+| cube-replay | `cube_replay:artifact` | error check only | `error` when the bound successful replay fixture could not be written |
+| cube-replay | `cube_replay:inputs` | error check only | `error` when replay file bytes change during execution; no successful fixture is retained |
+| tlp | `tlp:consistency` | every bounded comparison has the same complete row multiset and exact COUNT or SUM after partitioning by predicate TRUE, FALSE and NULL | `fail` when a complete row or aggregate comparison disagrees; a pass proves internal partition consistency only |
+| tlp | `tlp:engine` | unavailable-engine check only | `not_run` when PostgreSQL cannot be reached |
+| tlp | `tlp:execution` | error check only | `error` for invalid/unsupported answers, timeout, unstable execution, changed spec/generator/replay inputs or artifact failure |
+| shacl-corpus | `pyshacl:<case>`, `jena:<case>` | each actual engine independently matches the case's hand-written canonical constraint-report multiset | `fail` on a constraint, path, severity or semantic value mismatch; `error` on timeout, nonzero engine exit, malformed/missing report or cleanup failure; valid conforming empty reports are compared explicitly |
 | doctor | `python` | Python >= 3.11 | `fail` |
 | doctor | `pg8000` | pg8000 can be imported | `fail`, with the absolute pip command as the next action |
 | doctor | `dsn` | the check-role DSN variable (`source.dsn_env`, or `SXC_PG_DSN` without a configuration) is set | `fail`; the database checks after it are `not_run` (`no_dsn`) |
@@ -300,6 +318,34 @@ configuration ids; `<member>` is a Cube member (`cube.member`); `<stratum>` is a
 | cube-install | `cube_install:already_installed` | an install matching the pins and this checkout's adapter files exists, so nothing was reinstalled | none |
 
 ## 7. Verification semantics
+
+**Independent runtime checks.** Standalone `cube-replay`, `tlp` and `shacl-corpus` use synthetic inputs and
+retain separate Result stages. Their successes never promote real-data V4, operational V1–V5 or the global
+report's coverage. Each preserves explicit `not_proven` scope limits, and missing engines, partial
+comparisons, timeouts and malformed output cannot pass.
+
+Cube replay uses the existing compiler and mutation implementation, runs both actual Cube models, and
+requires original/gold agreement plus mutant/gold disagreement. Its dedicated database is selected only
+through `SXC_CUBE_REPLAY_DSN` or `--dsn-env`; explicit `--allow-scratch-schema` permits creating and
+removing this invocation's private synthetic schemas. Schema names and OIDs are recorded for scoped
+cleanup. A fixture is saved only after successful comparison and cleanup; hashes bind its operator,
+generator, seed and exact data. This does not certify arbitrary supplied SQL or production models.
+
+TLP evaluates a strict versioned relation/predicate/COUNT-or-SUM specification on bounded synthetic
+fixtures, materializing each relation and predicate for a stable comparison. TRUE, FALSE and NULL
+partitions must preserve duplicates and NULL-sensitive aggregates, including empty/all-NULL SUM.
+Exact decimals never pass through floating point. Spec and replay hashes are checked before retaining
+evidence. Trusted SQL and custom functions retain the counterexample trust boundary: a read-only
+transaction and fixture CTEs do not constitute a SQL sandbox or prove business-query correctness.
+
+The SHACL corpus uses the production shape generator and RDF exporter, with independent literal
+expectations for class, bounds, NULL/no-triple, decimal, combined class+bounds and colliding value-group
+cases. Actual pySHACL and Jena must each match focus/path/component/severity/value multisets; result
+blank-node names, source-shape labels and diagnostic messages are ignored. Missing reports are distinct
+from valid conforming empty reports. Both engines have bounded stdout/stderr, a per-case deadline and
+owned descendant cleanup. Jena is an external optional runtime; the verified Jena 6.2.0 test distribution
+uses a Java 21-compatible runtime, while HermiT's main Java 11 minimum is unchanged. Details and scope
+are in `docs/cube-replay.md`, `docs/tlp.md` and `docs/shacl-corpus.md`.
 
 **Independent closure oracle.** V3 also reads raw edge lines and the closure table in a single
 read-only REPEATABLE READ transaction, before starting Cube. A reverse-topological Python fold

@@ -65,6 +65,14 @@ For additional synthetic coverage, use `counterexample --mutation-operator` with
 and optionally `--gold-sql`, or `reason --synthetic-witnesses` for configured OWL definitions.
 Synthetic checks do not replace actual-data V4/V5 checks or erase their `not_proven` disclosures.
 
+Additional standalone synthetic stages are available when explicitly requested:
+
+- `cube-replay`: actual compiled Cube original/mutant replay against independent gold on owned synthetic data ([command](../../commands/xc-cube-replay.md)). Require a dedicated `SXC_CUBE_REPLAY_DSN` and explicit `--allow-scratch-schema`; never select an operational DSN. Only this invocation's private schema may be removed.
+- `tlp`: trusted nonrecursive COUNT/SUM and row-multiset consistency under true/false/NULL partitioning ([command](../../commands/xc-tlp.md)). Use reviewed SQL and a dedicated `SXC_TLP_DSN`; observable stability is not proof that functions have no external effects.
+- `shacl-corpus`: independent nonrecursive expected reports compared with pySHACL and Apache Jena ([command](../../commands/xc-shacl-corpus.md)). Set `SXC_JENA_HOME` for the optional distribution; tested Jena 6.2.0 uses a Java 21 runtime. No production database is accessed.
+
+All three reject `--config`, ignore default operational configuration, and remain outside the required pipeline. Their passes must not erase real-data `not_proven` disclosures. Missing engines, malformed output, timeout or partial comparison cannot pass. Synthetic rows remain in labelled replay artifacts, never count-only results.
+
 Every stage is one command:
 
 ```text

@@ -3,7 +3,8 @@
 
     python sxc.py <stage> [--config crosscheck.toml] [--out DIR] [options]
 
-Stages: doctor, demo, build, reason, cube, verify, report, cube-install, counterexample.
+Stages: doctor, demo, build, reason, cube, verify, report, cube-install, counterexample,
+cube-replay, tlp, shacl-corpus.
 Each stage writes <out>/<stage>/result.json (counts and check ids only, never row values) and exits with
 0 pass, 1 a check failed or could not run, 2 configuration or usage error, 3 environment missing.
 
@@ -45,6 +46,9 @@ STAGES = {
     "report": "report",
     "cube-install": "cube_install",
     "counterexample": "counterexample",
+    "cube-replay": "cube_replay",
+    "tlp": "tlp",
+    "shacl-corpus": "shacl_corpus",
 }
 NEEDS_CONFIG = {"demo", "build", "reason", "cube", "verify", "report"}
 DEFAULT_CONFIG = "crosscheck.toml"
@@ -59,7 +63,8 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--version", action="version", version=f"semantic-crosscheck {VERSION}")
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--config", default=None, help="path to crosscheck.toml; it must exist when given (default: "
-                                                        "./crosscheck.toml, optional for doctor and cube-install)")
+                                                        "./crosscheck.toml, optional for doctor and cube-install; "
+                                                        "standalone synthetic stages reject --config)")
     common.add_argument("--out", default=None, help="output directory (default: .sxc next to the config)")
     common.add_argument("--quiet", action="store_true", help="print only the summary line")
     sub = p.add_subparsers(dest="stage", required=True, metavar="stage")
@@ -122,6 +127,26 @@ def parser() -> argparse.ArgumentParser:
     s.add_argument("--statement-timeout-ms", type=int, default=10000, help="per-query time limit (default: 10000)")
     s.add_argument("--replay", default=None, help="replay a previously generated fixture with matching SQL hashes")
     s.add_argument("--constraints", default=None, metavar="FILE", help="optional version 1 integrity profile for the fixed synthetic schema; replay requires the exact same file bytes")
+
+    s = sub.add_parser("cube-replay", parents=[common], help="replay a named synthetic mutation through actual Cube models and independent gold SQL")
+    s.add_argument("--mutation-operator", choices=mutate.OPERATORS, required=True)
+    s.add_argument("--seed", type=int, default=7)
+    s.add_argument("--dsn-env", default="SXC_CUBE_REPLAY_DSN", help="environment variable naming a dedicated throw-away database; never the operational DSN")
+    s.add_argument("--allow-scratch-schema", action="store_true", help="explicitly permit creating and cleaning up this invocation's private synthetic schema")
+    s.add_argument("--statement-timeout-ms", type=int, default=10000)
+    s.add_argument("--replay", default=None, metavar="FILE", help="replay a generated synthetic Cube fixture with matching input bindings")
+
+    s = sub.add_parser("tlp", parents=[common], help="check a bounded synthetic relation using true/false/NULL predicate partitions and COUNT or SUM")
+    s.add_argument("--spec", required=True, metavar="FILE", help="strict version 1 trusted SQL and aggregate specification")
+    s.add_argument("--dsn-env", default="SXC_TLP_DSN", help="environment variable holding a dedicated read-only synthetic test connection")
+    s.add_argument("--seed", type=int, default=7)
+    s.add_argument("--max-examples", type=int, default=64)
+    s.add_argument("--statement-timeout-ms", type=int, default=10000)
+    s.add_argument("--replay", default=None, metavar="FILE", help="replay a generated synthetic fixture bound to the exact spec bytes")
+
+    s = sub.add_parser("shacl-corpus", parents=[common], help="compare pySHACL and Apache Jena against independently expected nonrecursive synthetic reports")
+    s.add_argument("--jena-home", default="", help="Apache Jena distribution directory (default: SXC_JENA_HOME)")
+    s.add_argument("--timeout-ms", type=int, default=30000, help="per-engine-process deadline in milliseconds")
     return p
 
 
@@ -132,6 +157,10 @@ def config_path(stage: str, given: str | None) -> Path | None:
         if given is not None:
             raise StageError("counterexample uses synthetic fixtures, not --config; pass the trusted SQL instead "
                              "(--reference-sql and --candidate-sql, or --metamorphic-sql)", EXIT_CONFIG)
+        return None
+    if stage in {"cube-replay", "tlp", "shacl-corpus"}:
+        if given is not None:
+            raise StageError(f"{stage} uses standalone synthetic inputs, not --config", EXIT_CONFIG)
         return None
     if given is not None:
         p = Path(given)
@@ -166,6 +195,9 @@ def _brief(detail: dict) -> str:
 
 
 def _summary(res: Result, path, quiet: bool) -> str:
+    standalone = res.stage in {"cube_replay", "tlp", "shacl_corpus"}
+    if standalone:
+        path = None
     counts = {s: 0 for s in ("pass", "fail", "error", "not_run")}
     for c in res.checks:
         counts[c.status] += 1
@@ -180,7 +212,8 @@ def _summary(res: Result, path, quiet: bool) -> str:
             lines.append(f"  NOT PROVEN  {n}")
         if res.next_safe_action:
             lines.append(f"  next: {res.next_safe_action}")
-    return expand("\n".join(lines))
+    text = "\n".join(lines)
+    return text if standalone else expand(text)
 
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[3]
@@ -230,6 +263,12 @@ def main(argv=None) -> int:
     cfg = None
     out = Path(args.out) if args.out else None
     try:
+        if stage in {"cube-replay", "tlp", "shacl-corpus"}:
+            # These stages have a fixed standalone output location even when
+            # operational configuration is rejected before module dispatch.
+            out = out if out is not None else Path.cwd() / ".sxc"
+            ensure_out(out)
+            discard(out, result_name)
         cfg_file = config_path(stage, args.config)
         if out is None:
             out = (cfg_file.resolve().parent if cfg_file else Path.cwd()) / ".sxc"
@@ -249,7 +288,8 @@ def main(argv=None) -> int:
         revision_start = provenance.begin(cfg, result_name)
         mod = importlib.import_module(f"semantic_crosscheck.{STAGES[stage]}")
         res = mod.run(cfg, args, out)
-        res.inputs = inputs
+        if stage not in {"cube-replay", "tlp", "shacl-corpus"}:
+            res.inputs = inputs
         res = provenance.finish(cfg, res, revision_start)
     except StageError as e:
         if stage == "report":

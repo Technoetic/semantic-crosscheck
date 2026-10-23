@@ -1,0 +1,7 @@
+{
+  "schema_version": 1,
+  "scenario": "duplicate_join",
+  "relation_sql": "SELECT stock.part_id, stock.qty FROM stock JOIN sales_order ON stock.part_id = sales_order.part_id",
+  "predicate_sql": "qty > 4",
+  "aggregate": {"function": "count", "column": "*"}
+}

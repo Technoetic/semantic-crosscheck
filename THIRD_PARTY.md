@@ -9,6 +9,7 @@ semantic-crosscheck vendors no third-party code. Its dependencies are installed 
   `npm ci --ignore-scripts` from the committed `package-lock.json`;
 - the Cube native module, downloaded by `cube-install` from the Cube GitHub release and accepted only
   when its size and SHA-256 match `native-sha256.json`;
+- optional Apache Jena SHACL, supplied as a separately installed distribution for `shacl-corpus`;
 - the runtimes (Java for HermiT, Node.js for Cube, the PostgreSQL server).
 
 The independent arithmetic oracle and synthetic witnesses are original implementations using the
@@ -17,6 +18,12 @@ existing dependencies and Python standard library. Their design references inclu
 [Polygon](https://arxiv.org/abs/2504.06542) and
 [RDFGraphGen](https://arxiv.org/abs/2407.17941). No source from these projects is copied or bundled;
 NetworkX, Polygon, RDFGraphGen and a second OWL reasoner are not new runtime dependencies.
+
+The TLP partition-checking methodology is informed by
+[SQLancer](https://github.com/sqlancer/sqlancer), whose project is MIT-licensed. No SQLancer source is
+copied or bundled, and SQLancer is not a runtime dependency. The independent SHACL corpus uses
+[sheval](https://arxiv.org/abs/2609.05944v2) as an architectural reference only. Its repository's code
+licence was not verified; no sheval source is adopted, copied or bundled.
 
 Licence names below were read from the installed packages' metadata (Python) and from the licence fields
 recorded in `skills/semantic-crosscheck/adapters/cube/package-lock.json` (npm), unless noted otherwise.
@@ -111,5 +118,8 @@ On Linux the pinned modules need glibc 2.34 or later (x64) and 2.30 or later (ar
 | PostgreSQL 17 or later | every database stage | PostgreSQL License |
 | A Java runtime, 11 or later (CI uses Eclipse Temurin 21) | HermiT in `reason` | GPL-2.0 with the Classpath Exception (OpenJDK builds) |
 | Node.js 22 or later | `cube-install`, `cube`, `verify` | MIT, with bundled third-party components |
+| Apache Jena SHACL 6.2.0 (optional external distribution) | `shacl-corpus`; selected distribution uses a Java 21-compatible runtime | Apache-2.0; the binary distribution also carries its own dependency notices |
 
 These licence names for the runtimes come from their publishers, not from local metadata.
+Apache Jena's licence was also checked in the verified distribution's `LICENSE`; Jena and its Java
+runtime are not bundled with this repository. CI verifies the pinned archive's SHA-512 before extraction.

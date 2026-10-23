@@ -7,7 +7,7 @@
 **설정 하나에서 네 계층을 만들고, 서로의 결과를 교차 검증합니다.**<br/>
 계층마다 그럴듯한 설명을 넘어, **검사 ID · 건수 · 종료 코드로 일치 여부를 확인합니다.**
 
-[![Release](https://img.shields.io/badge/Release-v0.7.0-0D9488?style=for-the-badge)](docs/releases/v0.7.0.md)
+[![Release](https://img.shields.io/badge/Release-v0.8.0-0D9488?style=for-the-badge)](docs/releases/v0.8.0.md)
 [![CI](https://img.shields.io/github/actions/workflow/status/Technoetic/semantic-crosscheck/tests.yml?branch=main&style=for-the-badge&label=CI&logo=github)](https://github.com/Technoetic/semantic-crosscheck/actions/workflows/tests.yml)
 [![MIT](https://img.shields.io/badge/License-MIT-8B5CF6?style=for-the-badge)](LICENSE)
 [![Claude Code](https://img.shields.io/badge/Claude_Code-Plugin-191919?style=for-the-badge&logo=anthropic&logoColor=white)](#claude-code)
@@ -212,7 +212,7 @@ Cube는 항상 Tesseract SQL 플래너(`CUBEJS_TESSERACT_SQL_PLANNER=true`)로 �
 릴리스 태그를 고정해 등록합니다.
 
 ```text
-codex plugin marketplace add Technoetic/semantic-crosscheck --ref v0.7.0
+codex plugin marketplace add Technoetic/semantic-crosscheck --ref v0.8.0
 codex plugin add semantic-crosscheck@semantic-crosscheck-local
 ```
 
@@ -229,7 +229,7 @@ Windows PowerShell에서 실행 정책 때문에 `codex.ps1`이 거부되면 두
    python -m pip install -r "<plugin root>/requirements/reason.txt"
    ```
 
-   `<plugin root>` 예: `~/.claude/plugins/cache/semantic-crosscheck/semantic-crosscheck/0.7.0` 또는 `~/.codex/plugins/cache/semantic-crosscheck-local/semantic-crosscheck/0.7.0`. 패키지가 없으면 `/xc-doctor`가 실제 경로에 맞는 설치 명령을 안내합니다.
+   `<plugin root>` 예: `~/.claude/plugins/cache/semantic-crosscheck/semantic-crosscheck/0.8.0` 또는 `~/.codex/plugins/cache/semantic-crosscheck-local/semantic-crosscheck/0.8.0`. 패키지가 없으면 `/xc-doctor`가 실제 경로에 맞는 설치 명령을 안내합니다.
 2. psql을 사용하는 superuser가 `docs/setup-roles.sql`로 **loader·check 역할**을 만듭니다.
 3. Java를 `PATH`에 추가하거나 `SXC_JAVA`를 지정합니다.
 4. Node.js와 npm을 준비하고 `/xc-install` 또는 `sxc.py cube-install`로 **Cube 어댑터**를 한 번 설치합니다.
@@ -419,6 +419,9 @@ python skills/semantic-crosscheck/scripts/sxc.py <stage> [--config PATH] [--out 
 | `report` | 필수 단계의 실행·최신성·통과 여부 종합 | 별도 옵션 없음 | `report/result.json`, `report.md`, `report.json` |
 | `cube-install` | 사용자별 고정 Cube 어댑터 설치 | `--home DIR`, `--native-file PATH`, `--force` | `cube_install/result.json`, `cube_install/npm-ci.log`, `cube_install/smoke.log` |
 | `counterexample` | 합성 데이터에서 SQL의 차이·BOM 변환 관계를 검사하고 축소·재현 | `--reference-sql FILE`, `--candidate-sql FILE`, `--metamorphic-sql FILE`, `--mutation-operator NAME`, `--gold-sql FILE`, `--scenario nulls`, `--seed N`, `--max-examples N`, `--max-shrink-steps N`, `--shrink-strategy structured`, `--witness-schema FILE`, `--solver-timeout-ms N`, `--dsn-env NAME`, `--statement-timeout-ms N`, `--constraints FILE`, `--replay FILE` | `counterexample/result.json`, `counterexample/fixture.json` |
+| `cube-replay` | 고정 합성 데이터를 실제 Cube 원형·변형 모델과 독립 gold SQL로 비교 | `--mutation-operator NAME`, `--allow-scratch-schema`, `--seed N`, `--dsn-env NAME`, `--statement-timeout-ms N`, `--replay FILE` | `cube_replay/result.json`, `cube_replay/fixture.json` |
+| `tlp` | 참·거짓·NULL 분할의 행 중복과 COUNT/SUM 일관성 검사 | `--spec FILE`, `--dsn-env NAME`, `--seed N`, `--max-examples N`, `--statement-timeout-ms N`, `--replay FILE` | `tlp/result.json`, `tlp/fixture.json` |
+| `shacl-corpus` | 독립 기대 결과와 pySHACL·Apache Jena의 합성 보고서 비교 | `--jena-home DIR`, `--timeout-ms N` | `shacl_corpus/result.json` |
 
 **공통 옵션**
 
@@ -638,6 +641,16 @@ Cube의 기본 오류 로그에는 오류 클래스·코드·대략적인 범주
 </details>
 
 <a id="limitations-and-not-proven"></a>
+## 선택형 독립 실행 검사
+
+다음 세 명령은 운영 설정을 읽지 않는 별도 합성 검사다. `--config`를 거부하며, 성공해도 기존 V1–V5와 `report`의 실데이터 검증 범위를 넓히지 않는다.
+
+- **[실제 Cube 재생](docs/cube-replay.md):** 기존 9개 변이 템플릿의 고정 합성 데이터를 별도 시험 DB의 전용 스키마에 넣고, 실제 생성·변형 모델을 Cube로 실행한다. 독립 gold SQL과 원형은 일치하고 변형은 달라야 통과한다. `SXC_CUBE_REPLAY_DSN`과 명시적 `--allow-scratch-schema`가 필요하며, 이 실행이 만든 스키마만 정리한다.
+- **[SQL TLP 검사](docs/tlp.md):** 검토한 비재귀 SQL을 참·거짓·NULL로 나누고 `UNION ALL`로 합쳐 행의 중복과 COUNT/SUM을 비교한다. 전용 `SXC_TLP_DSN`을 사용하며, 빈 집합·NULL·정확한 소수·입력 변경·재생을 검사한다. 질의의 업무적 정답이나 범용 동등성 증명은 아니다.
+- **[독립 SHACL 코퍼스](docs/shacl-corpus.md):** 기존 class/bounds 범위의 고정 예제와 독립 기대 보고서를 pySHACL·Apache Jena에 각각 대조한다. 선택 설치한 `SXC_JENA_HOME`이 필요하다. 실제 확인한 Jena 6.2.0은 Java 21 실행 환경을 사용하며, 기본 HermiT 요구 환경은 그대로다.
+
+기본 환경에는 새 Python 의존성을 추가하지 않는다. 엔진 부재·시간 초과·잘못된 보고서·불안정한 입력을 통과로 처리하지 않으며, 합성 입력 행은 별도 fixture 파일에만 저장한다.
+
 ## ⚠️ 검증 한계와 not_proven
 
 **PASS는 이 데이터에서 수행한 검사들이 불일치를 찾지 못했다는 뜻입니다.** 모든 업무 규칙의 정확성이나 일반적인 모델의 무결성을 보증하지 않습니다.
@@ -672,16 +685,16 @@ Cube의 기본 오류 로그에는 오류 클래스·코드·대략적인 범주
 <a id="development"></a>
 ## 🧪 검증 근거와 개발
 
-| v0.7.0의 확인 근거 | 범위 |
+| v0.8.0의 확인 근거 | 범위 |
 |---|---|
-| [릴리스 검증 JSON](https://github.com/Technoetic/semantic-crosscheck/releases/download/v0.7.0/verification.json) | 공개 시 실제 소스 커밋, 원시 CI 로그의 테스트·제외, 독립 검증, archive SHA-256 기록 |
+| [릴리스 검증 JSON](https://github.com/Technoetic/semantic-crosscheck/releases/download/v0.8.0/verification.json) | 공개 시 실제 소스 커밋, 원시 CI 로그의 테스트·제외, 독립 검증, archive SHA-256 기록 |
 | [GitHub Actions](https://github.com/Technoetic/semantic-crosscheck/actions/workflows/tests.yml) | 6개 OS/Python 단위 작업 + PostgreSQL·HermiT·Cube 통합 + 보안 검사 = 8개 작업 |
 | 엄격한 통합 runner | 미실행 검사·빈 suite·실패·오류가 있으면 CI 실패 |
 | 실제 runtime 선택 모드 | 완전 실행 환경의 성공·설정 변경·근거 누락 시 PASS 차단을 실행하는 통합 CI |
-| 릴리스 전 로컬 소스 검증 | Windows·PostgreSQL 17.5·Java 21·Cube 1.8.3에서 920개·제외 0·실패/오류 0 · 소스 커밋 `b80b85d`의 세 모듈 분할 감사이며 최종 공개 커밋의 CI와 구분 |
-| 릴리스 배포 파일 | [소스 ZIP](https://github.com/Technoetic/semantic-crosscheck/releases/download/v0.7.0/semantic-crosscheck-0.7.0.zip) · [SHA256SUMS](https://github.com/Technoetic/semantic-crosscheck/releases/download/v0.7.0/SHA256SUMS) |
+| 릴리스 전 로컬 소스 검증 | Windows·PostgreSQL 17.5·Java 21·Cube 1.8.3에서 979개·제외 0·실패/오류 0 · 소스 커밋 `c03050a`의 전체 테스트 실행이며 최종 공개 커밋의 CI와 구분 |
+| 릴리스 배포 파일 | [소스 ZIP](https://github.com/Technoetic/semantic-crosscheck/releases/download/v0.8.0/semantic-crosscheck-0.8.0.zip) · [SHA256SUMS](https://github.com/Technoetic/semantic-crosscheck/releases/download/v0.8.0/SHA256SUMS) |
 
-최종 공개 커밋·CI 작업 URL·실제 집계는 릴리스와 함께 제공하는 **v0.7.0 검증 JSON**에서 확인합니다. 원시 CI 로그에서 읽은 집계만 공개 커밋의 근거로 사용하며, 이전 로컬 검증과 전체 엔진 통합 CI를 구분합니다.
+최종 공개 커밋·CI 작업 URL·실제 집계는 릴리스와 함께 제공하는 **v0.8.0 검증 JSON**에서 확인합니다. 원시 CI 로그에서 읽은 집계만 공개 커밋의 근거로 사용하며, 이전 로컬 검증과 전체 엔진 통합 CI를 구분합니다.
 
 ```bash
 python -m unittest discover -s tests -v
@@ -736,13 +749,13 @@ CI는 전체 이력을 가진 clone의 작업 트리·이력을 일반 패턴과
 
 **MIT** · [LICENSE](LICENSE). 런타임 의존성을 저장소에 포함하지 않으며 의존성 라이선스는 [THIRD_PARTY.md](THIRD_PARTY.md)에 정리했습니다.
 
-[설계 문서](docs/design.md) · [설정 레퍼런스](skills/semantic-crosscheck/references/config.md) · [문제와 함정](skills/semantic-crosscheck/references/pitfalls.md) · [변경 이력](CHANGELOG.md) · [v0.7.0 릴리스 노트](docs/releases/v0.7.0.md)
+[설계 문서](docs/design.md) · [설정 레퍼런스](skills/semantic-crosscheck/references/config.md) · [문제와 함정](skills/semantic-crosscheck/references/pitfalls.md) · [변경 이력](CHANGELOG.md) · [v0.8.0 릴리스 노트](docs/releases/v0.8.0.md)
 
 <div align="center">
 
 **한 계층의 설명을 믿기 전에, 다른 계층의 답과 대조합니다.**
 
-[빠른 시작으로 이동 ↑](#quick-start-with-the-demo) · [GitHub 릴리스](https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.7.0)
+[빠른 시작으로 이동 ↑](#quick-start-with-the-demo) · [GitHub 릴리스](https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.8.0)
 
 </div>
 
@@ -750,4 +763,4 @@ CI는 전체 이력을 가진 clone의 작업 트리·이력을 일반 패턴과
 
 설정 하나로 PostgreSQL의 계층·규칙, SHACL, OWL·HermiT, Cube 모델을 만들고 서로와 gold SQL을 비교합니다. `not_run`은 통과가 아니며, 전체 판정은 `report`와 `not_proven`을 함께 읽습니다. 원본 조회와 생성 스키마 기록을 분리하고, 데모 적재는 별도의 loader 역할을 사용합니다.
 
-요구 환경은 **Python 3.11 이상 · PostgreSQL 17 이상 · Java 11 이상 · Node.js 22 이상**입니다. Linux Cube에는 **glibc 2.34** 이상(x64), 2.30 이상(arm64)이 필요합니다. Codex 설치 태그는 **v0.7.0**, 라이선스는 MIT입니다.
+요구 환경은 **Python 3.11 이상 · PostgreSQL 17 이상 · Java 11 이상 · Node.js 22 이상**입니다. Linux Cube에는 **glibc 2.34** 이상(x64), 2.30 이상(arm64)이 필요합니다. Codex 설치 태그는 **v0.8.0**, 라이선스는 MIT입니다.

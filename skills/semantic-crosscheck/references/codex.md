@@ -42,6 +42,16 @@ default.
 | `report` | [xc-report.md](../../../commands/xc-report.md) | `sxc.py report --config crosscheck.toml` |
 | `install` or `cube-install` | [xc-install.md](../../../commands/xc-install.md) | `sxc.py cube-install` |
 | `counterexample` | [xc-counterexample.md](../../../commands/xc-counterexample.md) | `sxc.py counterexample --reference-sql reference.sql --candidate-sql candidate.sql` |
+| `cube-replay` | [xc-cube-replay.md](../../../commands/xc-cube-replay.md) | `sxc.py cube-replay --mutation-operator measure_agg_to_max --allow-scratch-schema` |
+| `tlp` | [xc-tlp.md](../../../commands/xc-tlp.md) | `sxc.py tlp --spec spec.json` |
+| `shacl-corpus` | [xc-shacl-corpus.md](../../../commands/xc-shacl-corpus.md) | `sxc.py shacl-corpus --jena-home /opt/apache-jena --timeout-ms 30000` |
+
+The last three commands are optional standalone synthetic checks. They reject `--config`, ignore any
+working-directory configuration and preserve independent Result stages; their success does not change
+operational V1–V5 or global report coverage. `cube-replay` requires a dedicated throw-away connection
+and explicit `--allow-scratch-schema` for its owned synthetic schema lifecycle. TLP accepts trusted SQL
+in a strict versioned spec; read-only execution is not a SQL sandbox. The SHACL corpus checks both
+actual validators against independent expected reports.
 
 ## Arguments and execution
 
@@ -62,6 +72,10 @@ default.
 - `SXC_PG_DSN`, `SXC_PG_OWNER_DSN` (demo only), `PGPASSWORD`, `SXC_JAVA` and `SXC_CUBE_HOME` must be
   visible to the commands Codex runs. If a stage reports a missing variable, ask the user to provide it
   through the environment; never ask for a password in the chat or write one into a file.
+- Auxiliary tests use `SXC_CUBE_REPLAY_DSN` and `SXC_TLP_DSN` for dedicated synthetic test connections.
+  They never infer authorization to select operational DSNs. `SXC_JENA_HOME` selects an external Jena
+  distribution for `shacl-corpus`; the tested Jena 6.2.0 distribution needs a Java 21-compatible runtime.
+  This optional engine does not change HermiT's Java 11 minimum.
 - `SXC_CUBE_DEBUG=1` and `SXC_DEBUG=1` are for the user's local debugging only: their output can hold row
   values, so do not set them on your own and never paste what they print.
 

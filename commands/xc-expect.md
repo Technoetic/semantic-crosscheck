@@ -45,7 +45,8 @@ orders the row text by `COLLATE "C"` and fixes `TimeZone`, `DateStyle`, `Interva
 `bytea_output` and `lc_monetary` while it reads. A side that cannot run, or expected rows whose keys are equal in
 their typed form (`expected_duplicate_keys`), is an error; a case whose closure or Cube members did not pass is
 not_run; every not_run case gets a `not_proven` line. While the cases run, a second session holds SHARE locks on the
-source and built closure tables when the role can take them, so writers wait; otherwise `expect:fixture` records
+source and built closure tables when they can be taken, so writers wait (not, for example, when the role lacks
+UPDATE, DELETE, TRUNCATE or MAINTAIN, or a conflicting lock outlasts `source.statement_timeout_ms`); otherwise `expect:fixture` records
 `locked: false` and a `not_proven` line says so. `expect:fixture` compares the source-table digest taken before the
 build with digests of the source and closure tables taken before and after the cases, and a difference turns every
 pass into not_run. This shows equality at those points, not one shared snapshot, covers no other table, and gold and

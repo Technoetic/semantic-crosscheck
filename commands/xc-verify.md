@@ -40,7 +40,9 @@ python "${CLAUDE_PLUGIN_ROOT}/skills/semantic-crosscheck/scripts/sxc.py" verify 
   sample's detection bound (detail `d95_keys`, `d95_rate`): a mismatch affecting at least that many
   keys is detected with 95% probability if the mismatching keys are independent of the sample order;
   fewer can be missed. A sample never compares the NULL key group (keys that are NULL), which its equals
-  filter leaves out; since 0.9.0, not proven says so. Since 0.9.0, with
+  filter leaves out; since 0.9.0, not proven says so. A sample also does not yet check that Cube
+  answered every sampled key: a key missing from the together answer is still counted in
+  `compared n of N keys` and in the d95 bound (only the chunked comparison refuses it). Since 0.9.0, with
   `verify.pair_key_budget` (default 2000) raised to at least the key count, the pair test compares every
   key instead, in chunks of 2,000 keys from one read-only snapshot plus the NULL key group (detail
   `mode`, `chunks`, `compared_keys`, `answered_keys`, `total_keys`, `null_key_group`, `elapsed_ms`; no

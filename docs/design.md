@@ -528,7 +528,9 @@ N = 5,000, 29 at N = 20,000, 149 at N = 100,000 and 1,496 at N = 1,000,000. The 
 and adds that a mismatch affecting at least D keys (r%) is detected with 95% probability, assuming the mismatching
 keys are independent of the fixed md5 sample order, and that fewer mismatching keys may be missed. Since 0.9.0
 it also says that the NULL key group is not compared in a sample: the `equals` filter leaves it out, so
-the bound covers the non-NULL keys only. The bound is a statement about the sample, not a verdict: the check's status
+the bound covers the non-NULL keys only. A sample does not yet check that Cube answered every sampled key: a
+key missing from the together answer is still counted as compared and in the d95 bound; only the chunked
+comparison below refuses it (`keys_not_answered`). The bound is a statement about the sample, not a verdict: the check's status
 is unchanged.
 
 **Chunked pair tests** (since 0.9.0). `verify.pair_key_budget` (default 2000, at least the cap) is the

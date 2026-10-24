@@ -36,10 +36,14 @@ Release notes: [docs/releases/v0.9.0.md](docs/releases/v0.9.0.md).
   sides equal the expected rows; agreeing sides that differ from them fail as `common_mode` (authored) or
   `regression` (captured), a disagreement as `gold_mismatch`, `cube_mismatch` or `both_mismatch`; a case whose
   pinned `fixture_sha256` differs is `not_run` (`fixture_mismatch`). The digest orders the row text by
-  `COLLATE "C"` and fixes the session settings that change it, so a pin depends on the rows and the column types,
-  not on the database's default collation or session settings. `expect:fixture` compares digests of the fixture
+  `COLLATE "C"` and fixes TimeZone, DateStyle, IntervalStyle, extra_float_digits, bytea_output and lc_monetary,
+  so a pin depends on the rows and the column types (and on the database encoding for text outside ASCII), not
+  on the database's default collation or session settings. `expect:fixture` compares digests of the fixture
   taken before the build and around the cases while a second session holds SHARE locks on its source and closure
-  tables when the role can take them (otherwise `locked: false` and a not proven line says so). Captured passes are
+  tables when they can be taken (not, for example, when the role lacks UPDATE, DELETE, TRUNCATE or MAINTAIN, or a
+  conflicting lock outlasts `source.statement_timeout_ms`; then `locked: false` and a not proven line says so).
+  The build objects stay in the fixture database's output schema (no cleanup; the next run rebuilds them; all
+  cases share that database). Captured passes are
   regression evidence only. The result stays out of `report` and operational V1-V5 coverage; editing a case changes
   `crosscheck.toml`, so `report` needs the operational stages rerun. Example: `examples/expect/`.
 - `shacl-corpus --w3c-suite [DIR]` (or `SXC_W3C_SHACL_SUITE` with a bare `--w3c-suite`) compares pySHACL and Apache Jena

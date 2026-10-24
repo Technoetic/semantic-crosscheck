@@ -63,7 +63,7 @@ CONFIG_SECTIONS = {
     "[cube]": config.Cube,
     "[verify]": config.Verify,
     "[[gold]]": config.Gold,
-    "[[gold.expect]]": getattr(config, "Expect", None),
+    "[[gold.expect]]": config.Expect,
 }
 
 

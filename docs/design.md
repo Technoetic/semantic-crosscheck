@@ -222,7 +222,7 @@ parameters are ignored.
 | `cube_client` | `CubeClient.load(query) -> list[dict]` (polls "Continue wait", explicit limit 50,000, never `renewQuery`, no proxies), `meta()` |
 | `compare` | `run_binding(conn, client, cfg, gold, params, cache=None, types=None)`, `compare_rows(gold, g_rows, c_rows, types=None)`, `member_kinds(model)`, `gold_kinds(gold, kinds)` |
 | `sweep` | `bindings(conn, cfg, gold)`, `strata_names(gold)`, `md5_order(column)` |
-| `shape_q` | `tests(cfg, model)`, `run_test(...)`, `pair_keys(conn, cfg, test)`, `sampled(test)`, `d95_keys(sampled, total)`, `sample_note(detail)`, `PAIR_KEY_CAP = 2000`, `join_path(cubes, measure_cube, dim_cube)`, `additive_path(steps)`, `null_group_sql(cfg, test)`, `not_applicable(cfg, model)` |
+| `shape_q` | `tests(cfg, model)`, `run_test(..., budget=None)` (the baseline V3 run passes `verify.pair_key_budget`), `pair_keys(conn, cfg, test, budget=None)`, `sampled(test)`, `d95_keys(sampled, total)`, `sample_note(detail)`, `chunk_note(detail)`, `PAIR_KEY_CAP = 2000` (defined in `config`), `join_path(cubes, measure_cube, dim_cube)`, `additive_path(steps)`, `null_group_sql(cfg, test)`, `not_applicable(cfg, model)` |
 | `mutate` | `OPERATORS`, `CLOSURE_OPERATORS`, `OUTCOMES`, `selected(cfg)`, `run_mutants(cfg, out, conn, model, suite, closure=None, sampled_items=())`, `verdict(status, item)`, `closure_status(cfg, out)` |
 | `demo` | `build(dirty, seed, scale) -> {"parts","edges","orders","stock","malformed","expected"}`, `load(conn, data)`, `reference(expected, variant, seed, scale)`, `TABLES`, `TableMismatch` |
 | `cube_replay` | `run(None, args, out) -> Result('cube_replay')`: actual model generation, named mutation, original/gold agreement and mutant/gold disagreement on owned synthetic schemas; hash-bound replay and scoped cleanup |
@@ -445,6 +445,27 @@ N = 5,000, 29 at N = 20,000, 149 at N = 100,000 and 1,496 at N = 1,000,000. The 
 and adds that a mismatch affecting at least D keys (r%) is detected with 95% probability, assuming the mismatching
 keys are independent of the fixed md5 sample order, and that fewer mismatching keys may be missed. The bound is a
 statement about the sample, not a verdict: the check's status is unchanged.
+
+**Chunked pair tests** (unreleased, after 0.8.0). `verify.pair_key_budget` (default 2000, at least the cap) is the
+largest key count the baseline V3 run compares in full; the default keeps the sample above the cap. A pair test with
+more keys than the cap and no more than the budget reads the key count and every non-NULL key, in the same md5 order,
+in one `REPEATABLE READ` snapshot, splits them into consecutive chunks of 2,000 keys (the last chunk holds the rest)
+and runs the same `equals`-filtered together and alone queries per chunk, so the cost grows linearly with the keys
+(ceil(N / 2,000) times that of the sample) instead of with their square. The NULL key group, which the unfiltered
+queries of at most 2,000 keys include and an `equals` filter leaves out, is then compared with a `notSet` filter
+(together on the grouped member, alone on each alone dimension). Mismatched keys, duplicate keys and alone-only keys
+add up over the chunks and the NULL key group; the test passes only when every chunk and the NULL key group pass, and
+a query that cannot run in any chunk makes it an `error` whose detail says `mode`, `chunks` and `chunks_compared`
+(the chunks that finished; all of them when the NULL key group failed). The detail of a finished comparison gains
+`mode = "chunked"`, `chunks`, `compared_keys`, `total_keys`, `null_key_group` (the NULL key group's own `keys`,
+`mismatched`, `duplicate_keys` and `alone_only_keys`, which the top-level counts include) and `elapsed_ms` (from the
+key read to the last answer), and carries no `sampled_keys`, `d95_keys` or `d95_rate`. Its `not_proven` line says
+that every key was compared in C chunks plus the NULL key group, that the key set comes from one `REPEATABLE READ`
+snapshot at the start, and that Cube reads each chunk in its own session, so no snapshot is shared across chunks or
+with SQL: the longer the run, the longer that unshared window. Above the budget the sample and its bound stay, the
+detail gains `pair_key_budget`, and the `not_proven` line adds that the key count exceeds the budget. V4 replays a
+chunked test against its sample, the first chunk of the same key read, never every chunk: the item enters the suite
+on its chunked V3 status, and the `sample_blind_possible` marking and the V4 `not_proven` line are unchanged.
 
 **V3 additivity over join paths.** Predefined joins inflate totals when a row matches several rows of the
 joined cube ("Aggregation Consistency Errors in Semantic Layers and How to Avoid Them", HILDA 2023,

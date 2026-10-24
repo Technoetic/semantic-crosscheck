@@ -97,9 +97,9 @@ plugin's `requirements/` files). The roles come from
    rewritten on every run. When a check fails, fix the configuration entry named in `config_ref`, the
    gold SQL, or the source data.
 2. **A pass means only what the checks prove.** Show the NOT PROVEN lines with every verdict: empty
-   strata, equivalent mutants, shapes compared only in SQL, vacuous defined classes, sampled pair tests,
-   components that are not installed. A `not_run` check is not a pass, and a stage that was never run
-   is not a pass. Do not describe an unproven part as verified.
+   strata, equivalent mutants, shapes compared only in SQL, vacuous defined classes, sampled or chunked
+   pair tests, components that are not installed. A `not_run` check is not a pass, and a stage that was
+   never run is not a pass. Do not describe an unproven part as verified.
 3. **A narrowed run is not a result.** `--only`, `--gold` and `--hierarchy` leave `not_run` checks
    (`scope:*`, `closure:<h>` with `excluded_by_option`) for what they skip. Use them while fixing one
    thing, then rerun in full; report the verdict of `report`, which counts missing and stale stages as

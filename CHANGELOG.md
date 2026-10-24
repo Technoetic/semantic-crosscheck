@@ -6,6 +6,19 @@ All notable changes to this project are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `verify.pair_key_budget` (default 2000, at least 2000): a V3 pair test with more keys than the
+  2,000-key cap and no more than the budget compares every key in the baseline run. The key count and
+  every non-NULL key are read in md5 order in one REPEATABLE READ snapshot and compared in consecutive
+  chunks of 2,000 keys through the existing filtered queries, plus the NULL key group through a `notSet`
+  filter, which the sample left out. A mismatch in any chunk or in the NULL key group fails the test and
+  a query error in any of them makes it an error. The detail says `mode = "chunked"` with `chunks`,
+  `compared_keys`, `total_keys`, `null_key_group` and `elapsed_ms`, without sample or d95 fields, and not
+  proven states that Cube reads each chunk in its own session, sharing no snapshot with the other chunks
+  or with SQL. Above the budget the sample and its d95 bound stay and not proven names the budget. V4
+  still replays the 2,000-key sample (the first chunk). The default keeps the previous comparison.
+
 ## [0.8.0] - 2026-10-23
 
 Release notes: [docs/releases/v0.8.0.md](docs/releases/v0.8.0.md).

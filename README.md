@@ -243,14 +243,14 @@ Windows PowerShell에서 실행 정책 때문에 `codex.ps1`이 거부되면 두
 
 | 변수 | 사용하는 단계 | 의미 |
 |---|---|---|
-| `SXC_PG_DSN` | DB 단계·Cube | 검사 역할 DSN: `postgresql://user@host:port/database[?sslmode=...]` · `source.dsn_env`로 이름 변경 가능 |
+| `SXC_PG_DSN` | DB 단계(`expect` 제외)·Cube | 검사 역할 DSN: `postgresql://user@host:port/database[?sslmode=...]` · `source.dsn_env`로 이름 변경 가능 |
 | `SXC_PG_OWNER_DSN` | `demo` | 가상 데이터를 적재하는 loader 역할 DSN · `source.owner_dsn_env`로 이름 변경 가능 |
 | `PGPASSWORD` | DB 단계·Cube | 암호가 없는 DSN의 암호 · pg8000은 `~/.pgpass`를 읽지 않음 |
 | `SXC_JAVA` | `doctor`, `reason` | Java 실행 파일의 절대 경로 또는 `PATH`의 명령 이름 |
-| `SXC_CUBE_HOME` | `cube-install`, `doctor`, `cube`, `verify` | Cube 설치 위치 · 기본값은 사용자 캐시 |
-| `SXC_CUBE_DEBUG` | `cube`, `verify` | `1`이면 Cube 오류 전문을 `server.log`에 기록 · 행 값이 포함될 수 있어 로컬 디버깅에만 사용 |
+| `SXC_CUBE_HOME` | `cube-install`, `doctor`, `cube`, `verify`, `expect` | Cube 설치 위치 · 기본값은 사용자 캐시 |
+| `SXC_CUBE_DEBUG` | `cube`, `verify`, `expect` | `1`이면 Cube 오류 전문을 `server.log`에 기록 · 행 값이 포함될 수 있어 로컬 디버깅에만 사용 |
 | `SXC_DEBUG` | 모든 단계 | `1`이면 예외 traceback 출력 · 로컬 디버깅에만 사용 |
-| `SXC_EXPECT_DSN` | `expect` | 0.8.0 이후(미출시): 사용자가 적재한 전용 fixture DB의 DSN · `--dsn-env`로 이름 변경 가능 · 운영 DSN 변수와 같은 DB를 가리키면 거부 |
+| `SXC_EXPECT_DSN` | `expect` | 0.8.0 이후(미출시): 사용자가 적재한 전용 fixture DB의 DSN · `--dsn-env`로 이름 변경 가능 · 이 환경에 설정된 운영 DSN 변수와 값이 같거나 같은 호스트·포트·DB를 가리키면 거부. 같은 서버를 다른 이름으로 가리키면 알아내지 못하므로 전용 DB를 사용 |
 
 PowerShell에서는 `$env:SXC_PG_DSN = "..."` 형식으로 지정합니다.
 
@@ -427,7 +427,7 @@ python skills/semantic-crosscheck/scripts/sxc.py <stage> [--config PATH] [--out 
 
 **공통 옵션**
 
-- `--config PATH`: 명시하면 반드시 존재해야 합니다. 없으면 exit 2이며 단계를 실행하지 않습니다. 생략하면 `./crosscheck.toml`을 찾습니다. `doctor`·`cube-install`은 설정 없이도 실행합니다. 별도 합성 도구 `counterexample`은 설정을 읽지 않으며 `--config`를 거부합니다. `expect`는 운영 설정을 읽지만 fixture DB에만 접속합니다.
+- `--config PATH`: 명시하면 반드시 존재해야 합니다. 없으면 exit 2이며 단계를 실행하지 않습니다. 생략하면 `./crosscheck.toml`을 찾습니다. `doctor`·`cube-install`은 설정 없이도 실행합니다. 별도 합성 도구 `counterexample`은 설정을 읽지 않으며 `--config`를 거부합니다. 0.8.0 이후(미출시) `expect`는 운영 설정을 읽지만 fixture DB에만 접속합니다.
 - `--out DIR`: 기본 출력 위치는 설정 옆 `.sxc`입니다. 설정 없이 실행하면 `./.sxc`이며, 새 출력 디렉터리에는 내용 `*`의 `.gitignore`를 만듭니다.
 - `--quiet`: 요약 한 줄만 출력합니다. `sxc.py --version`은 버전을 표시합니다.
 
@@ -579,7 +579,7 @@ flowchart TD
 | build·reason·cube·verify / report | `data_revision:stable`, `data_revision:current` | 구성된 데이터 버전이 안정적이며 현재 근거와 일치; 조회 오류는 실패로 닫음 |
 | build·reason·cube·verify / report | `runtime_evidence:stable`, `runtime_evidence:current` | 선택한 실제 실행 환경 근거가 안정적이며 현재와 일치; 누락·변경·조회 실패 시 기존 PASS 재사용 차단 |
 | counterexample | `counterexample:search`, `counterexample:query`, `counterexample:recheck`, `counterexample:inputs`, `counterexample:artifact` | 합성 SQL 차이와 축소·재현 범위; 오류·미발견은 동등성 증명 불가, 재생 파일 크기 상한 초과 시 저장 거부 |
-| expect | `expect:<gold>[<i>]`, `expect:build`, `expect:cube`, `expect:fixture`, `expect:cases` | 0.8.0 이후(미출시): fixture에서 gold SQL과 Cube가 모두 기대 행과 일치; 서로 같은데 기대 행과 다르면 `common_mode`(authored)·`regression`(captured) 실패, fixture가 실행 중 바뀌면 통과 불가 |
+| expect | `expect:<gold>[<i>]`, `expect:build`, `expect:cube`, `expect:fixture`, `expect:cases` | 0.8.0 이후(미출시): fixture에서 gold SQL과 Cube가 모두 기대 행과 일치; 서로 같은데 기대 행과 다르면 `common_mode`(authored)·`regression`(captured) 실패, build 전과 사례 전후에 잰 fixture 테이블 해시가 다르면 통과 불가(그 시점들의 비교일 뿐 한 시점의 같은 데이터를 보장하지는 않음) |
 
 조기 중단의 `stage`, doctor의 `database`, demo의 `demo:load`, verify의 `v4:suite`, 범위를 나타내는 `scope:*`, 설치의 `cube_install:*`까지 포함한 전체 목록은 [설계 문서의 카탈로그](docs/design.md#6-check-catalogue)를 참고합니다.
 
@@ -656,7 +656,7 @@ Cube의 기본 오류 로그에는 오류 클래스·코드·대략적인 범주
 
 기본 환경에는 새 Python 의존성을 추가하지 않는다. 엔진 부재·시간 초과·잘못된 보고서·불안정한 입력을 통과로 처리하지 않으며, 합성 입력 행은 별도 fixture 파일에만 저장한다.
 
-**[문자 그대로 기대 행](commands/xc-expect.md) (0.8.0 이후(미출시)):** gold SQL과 설정이 같은 실수를 공유하면 둘은 일치하고 V1은 통과한다. `[[gold]]` 항목에 선택 `[[gold.expect]]` 사례(파라미터, 기대 행, 출처 `authored`/`captured`, 명세 위치 `spec`)를 두면, `expect`가 사용자가 미리 적재한 전용 fixture DB(`SXC_EXPECT_DSN`, 명시적 `--allow-fixture-database`)에서 build·cube를 돌리고 gold SQL과 Cube를 각각 실행해 기대 행과 비교한다. 둘이 서로 같은데 기대 행과 다르면 `common_mode`, 한쪽만 다르면 그쪽 실패다. 운영 설정을 읽지만 운영 DSN에는 접속하지 않고, 같은 DB를 가리키는 fixture DSN은 거부하며, fixture SQL을 실행하지 않는다. 명세에서 쓴 `authored` 행만 독립 근거이고 `captured` 행은 회귀 감지용이다. 결과는 `report`에 포함하지 않으며 운영 V1–V5 범위를 넓히지 않는다. 예제는 `examples/expect/`에 있다.
+**[문자 그대로 기대 행](commands/xc-expect.md) (0.8.0 이후(미출시)):** gold SQL과 설정이 같은 실수를 공유하면 둘은 일치하고 V1은 통과한다. `[[gold]]` 항목에 선택 `[[gold.expect]]` 사례(파라미터, 기대 행, 출처 `authored`/`captured`, 명세 위치 `spec`, 선택 `fixture_sha256` 고정값)를 두면, `expect`가 사용자가 미리 적재한 전용 fixture DB(`SXC_EXPECT_DSN`, 명시적 `--allow-fixture-database`)에서 build·cube를 돌리고 gold SQL과 Cube를 각각 실행해 기대 행과 비교한다. 둘이 서로 같은데 기대 행과 다르면 `common_mode`(authored)·`regression`(captured), 한쪽만 다르면 `gold_mismatch`·`cube_mismatch`, 서로 다르게 틀리면 `both_mismatch`로 실패한다. `common_mode`·`regression`이면 gold SQL과 설정을 고치기 전에 fixture 행과 기대 행이 명세를 따르는지부터 확인한다. fixture를 잘못 적재해도 같은 결과가 나오기 때문이다. 운영 설정을 읽지만 운영 DSN에는 접속하지 않는다. fixture DSN이 이 환경에 설정된 운영 DSN 변수와 값이 같거나 같은 호스트·포트·DB를 가리키면 거부하지만, 같은 서버를 다른 이름으로 가리키면 알아내지 못하므로 fixture는 전용 DB여야 한다. fixture SQL은 실행하지 않고 임시 스키마도 만들지 않는다. build가 만든 뷰와 closure 테이블은 fixture DB의 출력 스키마에 남고 다음 실행 때 다시 만들어지며, 모든 사례가 하나의 fixture DB를 함께 쓴다. 명세에서 쓴 `authored` 행만 독립 근거이고 `captured` 행은 회귀 감지용이다. 결과는 `report`에 포함하지 않으며 운영 V1–V5 범위를 넓히지 않는다. 사례를 고치면 `crosscheck.toml`이 바뀌므로 `report` 전에 운영 단계를 다시 실행한다. 예제는 `examples/expect/`에 있다.
 
 ## ⚠️ 검증 한계와 not_proven
 
@@ -676,7 +676,7 @@ Cube의 기본 오류 로그에는 오류 클래스·코드·대략적인 범주
 <details>
 <summary><b>지원 모델·질의·실행의 나머지 제한</b></summary>
 
-- 기준 gold SQL과 설정에 같은 오류가 있으면 일치할 수 있습니다. 생성 객체와 별도로 기준 질의를 작성합니다. 0.8.0 이후(미출시) `expect`는 업무 명세에서 쓴 기대 행(`[[gold.expect]]`, `source = "authored"`)과 gold SQL·Cube를 fixture에서 함께 비교해 공유된 실수를 `common_mode`로 실패시킵니다. 다만 사례의 fixture 행과 파라미터가 다루는 범위만 확인하며, 기대 행이 명세를 잘못 옮기면 그 오류는 남습니다.
+- 기준 gold SQL과 설정에 같은 오류가 있으면 일치할 수 있습니다. 생성 객체와 별도로 기준 질의를 작성합니다. 0.8.0 이후(미출시) `expect`는 업무 명세에서 쓴 기대 행(`[[gold.expect]]`, `source = "authored"`)과 gold SQL·Cube를 fixture에서 함께 비교해 공유된 실수를 `common_mode`로 실패시킵니다. 다만 사례가 쓰는 fixture DB의 행과 사례의 파라미터가 다루는 범위만 확인하며, 기대 행이 명세를 잘못 옮기면 그 오류는 남습니다.
 - OWL은 열린 세계 의미론입니다. SQL과 의미가 맞는 지원 정의만 비교하며 범용 RDF/OWL 가져오기·동기화 서비스는 제공하지 않습니다.
 - gold 질의당 순회 파라미터는 하나입니다. 여러 파라미터는 `param_sets`를 사용합니다. `timeDimensions`는 `granularity` 대신 `dateRange`, `closure_join`은 정확히 하나의 계층이 필요합니다.
 - Cube 응답의 상한은 **50,000행**입니다. 상한에 도달하면 부분 비교로 통과시키지 않고 오류로 처리합니다.

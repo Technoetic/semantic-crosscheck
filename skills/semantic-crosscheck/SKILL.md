@@ -77,11 +77,15 @@ The `expect` stage (after 0.8.0, not released yet) addresses a gold query and th
 mistake ([command](../../commands/xc-expect.md)). It reads the operational `--config` for the `[[gold.expect]]`
 cases (literal expected rows per gold entry, see [references/config.md](references/config.md)) but runs build,
 cube, the gold SQL and Cube only against a dedicated fixture database the user has loaded, named by `--dsn-env`
-(default `SXC_EXPECT_DSN`), with explicit `--allow-fixture-database`; it refuses a fixture DSN that names an
-operational database and never runs fixture SQL. `common_mode` means gold and Cube agree with each other but not
-with rows written from the specification: report it as a shared defect, not as a pass of either side. Only
-`authored` cases with a `spec` are independent evidence; `captured` rows detect regressions only. Like the
-standalone stages it stays outside `report` and never widens operational V1-V5 coverage.
+(default `SXC_EXPECT_DSN`), with explicit `--allow-fixture-database`, and never runs fixture SQL. Take the fixture
+DSN variable and `--allow-fixture-database` only from the user, for a database the user names as a dedicated fixture;
+never select or suggest an operational DSN. A fixture DSN is refused when it equals, or names the same host, port and database as, an operational DSN variable set in this environment; another name for the same server is not detected, so the fixture must be a dedicated database.
+`common_mode` means gold and Cube agree with each other but not with rows written from the specification: first
+check that the fixture rows and the expected rows follow the cited specification (a wrongly loaded fixture gives the
+same verdict; a case can pin `fixture_sha256`), and only then report a defect the gold SQL and the configuration
+share, never a pass of either side. Only `authored` cases with a `spec` are independent evidence; `captured` rows
+detect regressions only. Like the standalone stages it stays outside `report` and never widens operational V1-V5
+coverage.
 
 Every stage is one command:
 

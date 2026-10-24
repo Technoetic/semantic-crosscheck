@@ -5,7 +5,10 @@ business specification are a third oracle that is neither SQL nor the configurat
 configuration contract (exit 2 for every malformed case, values never echoed), the verdict of one case on
 hand-written rows (pass, common_mode, regression, gold_mismatch, cube_mismatch, both_mismatch, partial columns, NULL,
 empty expected rows), the guards that run before anything connects (consent, an unset fixture variable, a fixture
-DSN that names an operational database) and the separation from the operational report.
+DSN that names an operational database) and the separation from the operational report. RunTest drives the whole
+stage with a fake connection, build, Cube and digests to hold its fail-closed guards: a Cube row without a member is
+an error, a changed or unreadable fixture turns passes into not_run, a failed closure, Cube or member check gates
+the cases, a pinned fixture_sha256 must match, and the CLI runs no operational revision or runtime probe.
 tests/test_expect_pg.py runs the stage against PostgreSQL and Cube.
 """
 
@@ -189,6 +192,21 @@ class ExpectConfigTest(unittest.TestCase):
         self.refused(BASE + GOLD + case_text(rows=f'[{{ part_id = "A", part_class = {{ v = "{SENTINEL}" }}, qty = 1 }}]'),
                      "null = true")
 
+    def test_the_null_marker_is_exactly_null_equals_true(self):
+        for marker in ("{ null = 1 }", "{ null = 1.0 }", '{ null = true, v = 1 }'):
+            with self.subTest(marker=marker):
+                self.refused(BASE + GOLD + case_text(rows=f'[{{ part_id = "A", part_class = {marker}, qty = 1 }}]'),
+                             "null = true")
+
+    def test_a_case_may_pin_its_fixture_digest(self):
+        pin = "0123456789abcdef" * 4
+        case = load(BASE + GOLD + case_text(fixture_sha256=f'"{pin}"')).gold[0].expect[0]
+        self.assertEqual(case.fixture_sha256, pin)
+        self.assertEqual(load(BASE + GOLD + CASE).gold[0].expect[0].fixture_sha256, "")
+        for bad in (f'"{pin.upper()}"', f'"{SENTINEL}"', '"abc"', "7"):
+            with self.subTest(pin=bad):
+                self.refused(BASE + GOLD + case_text(fixture_sha256=bad), "fixture_sha256")
+
     def test_a_zero_if_null_column_cannot_expect_null(self):
         self.refused(BASE + GOLD + case_text(rows='[{ part_id = "A", part_class = "x", qty = { null = true } }]'),
                      "zero_if_null")
@@ -323,6 +341,12 @@ class JudgeTest(unittest.TestCase):
         status, detail = self.judge([], [], CUBE_ROWS[:1])
         self.assertEqual((status, detail["reason"]), ("fail", "cube_mismatch"))
 
+    def test_expected_keys_equal_only_in_typed_form_are_an_error_of_the_rows(self):
+        rows = [{"part_id": 1, "part_class": "x", "qty": 1}, {"part_id": "1", "part_class": "x", "qty": 1}]
+        status, detail = self.judge(rows, [{"part_id": "1", "part_class": "x", "qty": 1}],
+                                    [{"part_id": "1", "part_class": "x", "qty": "1"}])
+        self.assertEqual((status, detail["reason"]), ("error", "expected_duplicate_keys"))
+
     def test_details_hold_counts_and_ids_only(self):
         rows = [{"part_id": SENTINEL, "part_class": SENTINEL, "qty": 2}]
         _status, detail = self.judge(rows, [{"part_id": SENTINEL, "part_class": "x", "qty": 3}], [])
@@ -403,6 +427,230 @@ class GuardTest(unittest.TestCase):
         self.assertEqual([(c.id, c.detail["reason"]) for c in res.checks], [("expect:cases", "no_cases")])
 
 
+KINDS = {"has_component_closure.descendant": "string", "has_component_descendant.part_class": "string",
+         "has_component_closure.qty": "number"}
+RUN_GOLD = [{"part_id": "A", "part_class": "assembly", "qty": Decimal("2")},
+            {"part_id": "C", "part_class": None, "qty": Decimal("7")}]
+RUN_CUBE = [{"has_component_closure.descendant": "A", "has_component_descendant.part_class": "assembly",
+             "has_component_closure.qty": "2"},
+            {"has_component_closure.descendant": "C", "has_component_descendant.part_class": None,
+             "has_component_closure.qty": "7"}]
+PIN = "a" * 64
+
+
+def digest(fixture=PIN, tables="b" * 64):
+    return {"fixture_sha256": fixture, "tables_sha256": tables, "rows": 6}
+
+
+class FakeConn:
+    def __init__(self, log, lock_error=None):
+        self.log, self.lock_error = log, lock_error
+
+    def run(self, sql, **_params):
+        self.log.append(sql)
+        if sql.startswith("LOCK TABLE") and self.lock_error:
+            raise self.lock_error
+        return []
+
+    def close(self):
+        self.log.append("close")
+
+
+class FakeClient:
+    def __init__(self, rows):
+        self.rows = rows
+
+    def load(self, _query):
+        return [dict(r) for r in self.rows]
+
+
+class RunTest(unittest.TestCase):
+    """expect.run end to end with a fake fixture connection, inner stages, Cube and digests."""
+
+    def setUp(self):
+        self.assertIsNotNone(expect, "the expect stage (semantic_crosscheck.expect) is missing")
+
+    def stage(self, text=BASE + GOLD + CASE, digests=None, closure="pass", closure_apply="pass", meta="pass",
+              members="pass", cube_rows=RUN_CUBE, environ=None, lock_error=None, gold_rows=RUN_GOLD):
+        """Run the stage; returns (result, checks by id, call order, SQL statements)."""
+        order, sql = [], []
+        sequence = iter(digests if digests is not None else [digest(), digest(), digest()])
+
+        def fake_digest(_conn, _cfg, hierarchies=()):
+            order.append(f"digest{len(hierarchies)}")
+            value = next(sequence)
+            if isinstance(value, BaseException):
+                raise value
+            return value
+
+        def fake_build(_cfg, _args, work):
+            order.append("build")
+            Path(work).mkdir(parents=True, exist_ok=True)
+            res = Result("build")
+            for cid, st in (("closure:has_component", closure), ("closure_apply:has_component", closure_apply)):
+                if st is not None:
+                    res.add(cid, st, "hierarchies.has_component")
+            return res
+
+        def fake_cube(_cfg, _args, _work):
+            order.append("cube")
+            res = Result("cube")
+            if meta is not None:
+                res.add("cube:meta", meta, "", cube_version="1.8.3", sql_planner="tesseract")
+            if members is not None:
+                res.add("cube:gold_members:q01_explosion", members, "gold[0] q01_explosion")
+            return res
+
+        @contextlib.contextmanager
+        def fake_serve(_cfg, _run_dir, _log):
+            order.append("serve")
+            yield FakeClient(cube_rows)
+
+        def fake_connect(_name):
+            order.append("connect")
+            return FakeConn(sql, lock_error if order.count("connect") == 2 else None)
+
+        def fake_gold_rows(_conn, _cfg, _gold, _params):
+            order.append("gold")
+            return [dict(r) for r in gold_rows]
+
+        environ = {**OPERATIONAL, FIXTURE_ENV: "postgresql://u@127.0.0.1:5432/sxc_fixture"} if environ is None else environ
+        cfg = load(text)
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, environ), \
+                patch.object(expect, "fixture_digest", side_effect=fake_digest), \
+                patch.object(expect.db, "connect", side_effect=fake_connect), \
+                patch.object(expect.stage_build, "run", side_effect=fake_build), \
+                patch.object(expect.stage_cube, "run", side_effect=fake_cube), \
+                patch.object(expect.cube_gen, "load_model", return_value={}), \
+                patch.object(expect.compare, "member_kinds", return_value=KINDS), \
+                patch.object(expect.compare, "gold_rows", side_effect=fake_gold_rows), \
+                patch.object(expect.cube_run, "serve", side_effect=fake_serve):
+            for name in (FIXTURE_ENV, *OPERATIONAL):
+                if name not in environ:
+                    os.environ.pop(name, None)
+            res = expect.run(cfg, args(), tmp)
+        json.dumps(res.to_dict())
+        return res, {c.id: c for c in res.checks}, order, sql
+
+    def test_a_passing_run_fingerprints_before_build_and_locks_the_fixture_during_the_cases(self):
+        res, checks, order, sql = self.stage()
+        self.assertEqual(res.status, "pass", res.to_dict())
+        self.assertEqual(order[:3], ["connect", "digest0", "build"], "the first digest must precede the build")
+        self.assertLess(order.index("connect", 1), order.index("serve"))
+        fixture = checks["expect:fixture"].detail
+        self.assertEqual((fixture["fixture_sha256"], fixture["locked"], fixture["operational_variables_compared"]),
+                         (PIN, True, 2))
+        self.assertEqual(sum(s.endswith("IN SHARE MODE") for s in sql), 3)   # part, bom_line and the built closure
+        self.assertTrue(any("separate sessions" in n for n in res.not_proven))
+        self.assertIn("every case matched", res.next_safe_action)
+
+    def test_a_cube_row_without_a_member_is_an_error_not_a_null(self):
+        rows = [RUN_CUBE[0], {k: v for k, v in RUN_CUBE[1].items() if k != "has_component_descendant.part_class"}]
+        res, checks, _order, _sql = self.stage(cube_rows=rows)
+        case = checks["expect:q01_explosion[0]"]
+        self.assertEqual((case.status, case.detail["side"], case.detail["error"]), ("error", "cube", "MissingMember"))
+        self.assertEqual(res.status, "error")
+
+    def test_a_fixture_that_changes_during_the_cases_turns_passes_into_not_run(self):
+        res, checks, _order, _sql = self.stage(digests=[digest(), digest(), digest(tables="c" * 64)])
+        self.assertEqual((checks["expect:fixture"].status, checks["expect:fixture"].detail["reason"]),
+                         ("error", "fixture_changed"))
+        case = checks["expect:q01_explosion[0]"]
+        self.assertEqual((case.status, case.detail["reason"]), ("not_run", "fixture_changed"))
+        self.assertIn("expect:q01_explosion[0]: not run (fixture_changed)", res.not_proven)
+        self.assertNotEqual(res.status, "pass")
+
+    def test_a_fixture_that_changes_between_build_and_the_cases_is_detected(self):
+        _res, checks, _order, _sql = self.stage(digests=[digest(), digest(fixture="d" * 64), digest(fixture="d" * 64)])
+        self.assertEqual(checks["expect:fixture"].detail["reason"], "fixture_changed")
+        self.assertEqual(checks["expect:q01_explosion[0]"].status, "not_run")
+
+    def test_a_failing_second_fingerprint_is_fingerprint_failed(self):
+        _res, checks, _order, _sql = self.stage(digests=[digest(), digest(), ValueError("unreadable")])
+        self.assertEqual((checks["expect:fixture"].status, checks["expect:fixture"].detail["reason"]),
+                         ("error", "fingerprint_failed"))
+        case = checks["expect:q01_explosion[0]"]
+        self.assertEqual((case.status, case.detail["reason"]), ("not_run", "fingerprint_failed"))
+
+    def test_an_unreadable_fixture_builds_and_serves_nothing(self):
+        res, checks, order, _sql = self.stage(digests=[ValueError("no table")])
+        self.assertEqual((checks["expect:fixture"].detail["reason"], checks["expect:fixture"].detail["error"]),
+                         ("fingerprint_failed", "ValueError"))
+        case = checks["expect:q01_explosion[0]"]
+        self.assertEqual((case.status, case.detail["reason"]), ("not_run", "fixture_unreadable"))
+        self.assertNotIn("build", order)
+        self.assertNotIn("serve", order)
+        self.assertIn("expect:q01_explosion[0]: not run (fixture_unreadable)", res.not_proven)
+
+    def gated(self, reason, **stage):
+        res, checks, order, _sql = self.stage(digests=[digest()], **stage)
+        case = checks["expect:q01_explosion[0]"]
+        self.assertEqual((case.status, case.detail["reason"]), ("not_run", reason))
+        self.assertNotIn("serve", order)
+        self.assertNotIn("gold", order)
+        self.assertEqual((checks["expect:fixture"].status, checks["expect:fixture"].detail["reason"]),
+                         ("not_run", "no_case_ran"))
+        self.assertTrue(any(n.startswith(f"expect:q01_explosion[0]: not run ({reason}") for n in res.not_proven))
+        self.assertNotEqual(res.status, "pass")
+        return case
+
+    def test_a_closure_that_did_not_pass_gates_its_cases(self):
+        case = self.gated("closure_not_passed", closure="fail")
+        self.assertEqual((case.detail["hierarchy"], case.detail["build_check"]), ("has_component", "fail"))
+        self.gated("closure_not_passed", closure=None)
+        self.gated("closure_not_passed", closure_apply="fail")
+
+    def test_cube_not_serving_the_model_gates_the_cases(self):
+        self.gated("cube_not_passed", meta="error")
+        self.gated("cube_not_passed", meta=None)
+
+    def test_members_that_did_not_pass_gate_the_cases(self):
+        self.gated("gold_members_not_passed", members="fail")
+        self.gated("gold_members_not_passed", members=None)
+
+    def test_a_pinned_fixture_digest_must_match(self):
+        other = BASE + GOLD + case_text(fixture_sha256='"' + "f" * 64 + '"')
+        case = self.gated("fixture_mismatch", text=other)
+        self.assertNotIn("hierarchy", case.detail)
+        res, checks, _order, _sql = self.stage(text=BASE + GOLD + case_text(fixture_sha256=f'"{PIN}"'))
+        self.assertEqual((res.status, checks["expect:q01_explosion[0]"].status), ("pass", "pass"))
+
+    def test_unset_operational_variables_are_counted_and_named(self):
+        res, checks, _order, _sql = self.stage(environ={FIXTURE_ENV: "postgresql://u@127.0.0.1:5432/sxc_fixture"})
+        self.assertEqual(checks["expect:fixture"].detail["operational_variables_compared"], 0)
+        self.assertTrue(any("0 operational DSN variable(s) set" in n for n in res.not_proven))
+        unset = [n for n in res.not_proven if n.startswith("operational DSN variable(s) not set")]
+        self.assertEqual(len(unset), 1)
+        self.assertIn("SXC_T_EXPECT_OPERATIONAL", unset[0])
+        self.assertIn("SXC_T_EXPECT_OWNER", unset[0])
+        res, _checks, _order, _sql = self.stage()
+        self.assertFalse(any(n.startswith("operational DSN variable(s) not set") for n in res.not_proven))
+
+    def test_a_lock_that_cannot_be_taken_is_disclosed(self):
+        res, checks, _order, _sql = self.stage(lock_error=ValueError("permission denied"))
+        self.assertEqual(res.status, "pass")
+        self.assertFalse(checks["expect:fixture"].detail["locked"])
+        self.assertTrue(any("could not be locked" in n for n in res.not_proven))
+
+    def test_common_mode_and_regression_first_check_the_fixture_and_the_rows(self):
+        wrong = [dict(RUN_CUBE[0]), dict(RUN_CUBE[1], **{"has_component_closure.qty": "6"})]
+        shared = [RUN_GOLD[0], dict(RUN_GOLD[1], qty=Decimal("6"))]
+        res, checks, _order, _sql = self.stage(cube_rows=wrong, gold_rows=shared)
+        self.assertEqual(checks["expect:q01_explosion[0]"].detail["reason"], "common_mode")
+        self.assertIn("first check that the fixture rows and the expected rows follow the cited specification",
+                      res.next_safe_action)
+        captured = BASE + GOLD + case_text(source='"captured"', spec=None)
+        res, checks, _order, _sql = self.stage(text=captured, cube_rows=wrong, gold_rows=shared)
+        self.assertEqual(checks["expect:q01_explosion[0]"].detail["reason"], "regression")
+        self.assertIn("first check that the fixture rows and the expected rows follow the cited specification",
+                      res.next_safe_action)
+
+    def test_a_pass_of_captured_cases_only_says_so(self):
+        res, _checks, _order, _sql = self.stage(text=BASE + GOLD + case_text(source='"captured"', spec=None))
+        self.assertEqual(res.status, "pass")
+        self.assertIn("every case is captured", res.next_safe_action)
+
+
 class CommandLineTest(unittest.TestCase):
     def setUp(self):
         self.assertIsNotNone(expect, "the expect stage (semantic_crosscheck.expect) is missing")
@@ -430,6 +678,25 @@ class CommandLineTest(unittest.TestCase):
                 self.assertNotIn("sentinel", text)
                 self.assertNotIn("postgresql://", text)
             self.assertEqual((out / "build" / "result.json").read_text(encoding="utf-8"), '{"stage": "build"}')
+
+    def test_the_command_line_runs_no_operational_revision_or_runtime_probe(self):
+        probed = BASE.replace('schemas = ["sxc_demo"]\n', 'schemas = ["sxc_demo"]\ndata_revision_sql_file = "revision.sql"\n'
+                              'runtime_evidence = true\n')
+        self.assertIn("runtime_evidence = true", probed)
+        passing = Result("expect")
+        passing.add("expect:q01_explosion[0]", "pass", "gold[0] q01_explosion expect[0]", source="authored")
+        with config_dir(probed + GOLD + CASE) as path:
+            (path.parent / "revision.sql").write_text("SELECT 'r1'", encoding="utf-8")
+            with patch.dict(os.environ, {**OPERATIONAL, FIXTURE_ENV: "postgresql://u@127.0.0.1:5432/sxc_fixture"}), \
+                    patch("semantic_crosscheck.db.connect", side_effect=AssertionError("probe connected")) as connect, \
+                    patch.object(expect, "run", return_value=passing), \
+                    contextlib.redirect_stderr(io.StringIO()), contextlib.redirect_stdout(io.StringIO()):
+                code = sxc.main(["expect", "--config", str(path), "--dsn-env", FIXTURE_ENV, "--allow-fixture-database"])
+            written = json.loads((path.parent / ".sxc" / "expect" / "result.json").read_text(encoding="utf-8"))
+        self.assertEqual(code, 0, written)
+        connect.assert_not_called()
+        self.assertEqual(written["provenance"]["binding"], "not_applicable")
+        self.assertEqual(written["runtime_evidence"]["binding"], "not_applicable")
 
     def test_report_never_reads_the_expect_result(self):
         with tempfile.TemporaryDirectory() as tmp:

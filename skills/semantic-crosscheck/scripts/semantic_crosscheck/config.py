@@ -25,7 +25,7 @@ CUBE_VERSION = "1.8.3"           # the adapter's package-lock and native hashes 
 PAIR_KEY_CAP = 2000              # keys per V3 pair query (shape_q: the sample and chunk size); the least budget
 TABLES = ("version", "source", "entities", "hierarchies", "shapes", "measures", "ontology", "cube", "verify", "gold")
 EXPECT_SOURCES = ("authored", "captured")
-EXPECT_KEYS = ("source", "spec", "params", "rows", "partial")
+EXPECT_KEYS = ("source", "spec", "params", "rows", "partial", "fixture_sha256")
 NULL_CELL = {"null": True}       # TOML has no NULL: an expected cell written { null = true } is SQL NULL
 _SCALARS = (str, int, float, datetime.date, datetime.time)   # bool is an int and datetime a date: both accepted
 _MEMBER = re.compile(r"^[a-z_][a-z0-9_]{0,62}\.[a-z_][a-z0-9_]{0,62}$")
@@ -185,6 +185,7 @@ class Expect:
     spec: str = ""                 # where in the business specification the rows come from (required when authored)
     params: dict = field(default_factory=dict)   # the gold query's parameter values for this case
     partial: bool = False          # compare only the columns the rows name (every key column among them)
+    fixture_sha256: str = ""       # optional pin: expect:fixture's fixture_sha256 of the fixture the rows were written for
 
 
 @dataclass
@@ -311,8 +312,11 @@ def _expect_cases(ref: str, gg: Gold, raw) -> list:
             _err(cref, "params values must be strings, numbers, booleans, dates or times")
         if "rows" not in e:
             _err(cref, "rows is required (rows = [] expects no rows)")
+        pin = e.get("fixture_sha256", "")
+        if not isinstance(pin, str) or (pin and not re.fullmatch(r"[0-9a-f]{64}", pin)):
+            _err(cref, "fixture_sha256 must be the 64 lowercase hexadecimal digits of expect:fixture's fixture_sha256")
         cases.append(Expect(source=e["source"], rows=_expect_rows(cref, gg, e["rows"], partial), spec=spec,
-                            params=dict(params), partial=partial))
+                            params=dict(params), partial=partial, fixture_sha256=pin))
     return cases
 
 
@@ -338,7 +342,7 @@ def _expect_rows(cref: str, gg: Gold, rows, partial: bool) -> list:
         cells = {}
         for col, v in row.items():
             if isinstance(v, dict):
-                if v != NULL_CELL:
+                if set(v) != {"null"} or v["null"] is not True:   # not v != NULL_CELL: 1 == 1.0 == True
                     _err(rref, f"column {col!r}: the only table value is {{ null = true }} (SQL NULL)")
                 if col in gg.zero_if_null:
                     _err(rref, f"column {col!r} is in zero_if_null: the gold SQL coalesces it to 0, so it cannot "

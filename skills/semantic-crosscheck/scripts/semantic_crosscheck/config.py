@@ -8,6 +8,7 @@ them is refused without repeating it, because messages reach results, reports an
 type-checked here so a wrong type is a configuration error naming its entry, not a crash in a later stage.
 """
 
+import datetime
 import re
 import tomllib
 from dataclasses import dataclass, field
@@ -23,6 +24,10 @@ STRATA = ("top", "mid", "leaf", "leaf_parent", "deep", "shared", "empty")
 CUBE_VERSION = "1.8.3"           # the adapter's package-lock and native hashes are pinned to this release
 PAIR_KEY_CAP = 2000              # keys per V3 pair query (shape_q: the sample and chunk size); the least budget
 TABLES = ("version", "source", "entities", "hierarchies", "shapes", "measures", "ontology", "cube", "verify", "gold")
+EXPECT_SOURCES = ("authored", "captured")
+EXPECT_KEYS = ("source", "spec", "params", "rows", "partial")
+NULL_CELL = {"null": True}       # TOML has no NULL: an expected cell written { null = true } is SQL NULL
+_SCALARS = (str, int, float, datetime.date, datetime.time)   # bool is an int and datetime a date: both accepted
 _MEMBER = re.compile(r"^[a-z_][a-z0-9_]{0,62}\.[a-z_][a-z0-9_]{0,62}$")
 _ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
@@ -173,6 +178,16 @@ class Param:
 
 
 @dataclass
+class Expect:
+    """One [[gold.expect]] case: literal expected rows of the gold query on a dedicated fixture (the expect stage)."""
+    source: str                    # authored (written from the specification named by spec) | captured (from a run)
+    rows: list                     # expected output rows keyed by gold column; a NULL cell is None
+    spec: str = ""                 # where in the business specification the rows come from (required when authored)
+    params: dict = field(default_factory=dict)   # the gold query's parameter values for this case
+    partial: bool = False          # compare only the columns the rows name (every key column among them)
+
+
+@dataclass
 class Gold:
     id: str
     sql: str                       # path relative to the config file
@@ -182,6 +197,7 @@ class Gold:
     zero_if_null: list = field(default_factory=list)   # gold columns the gold SQL coalesces to 0 (Cube null counts as 0)
     params: dict = field(default_factory=dict)         # param name -> Param (at most one swept parameter)
     param_sets: list = field(default_factory=list)     # explicit list of {param: value} dicts (multi-parameter queries)
+    expect: list = field(default_factory=list)         # [[gold.expect]] cases (Expect), checked only by the expect stage
 
     def sql_path(self, cfg: "Config") -> Path:
         return cfg.base_dir() / self.sql
@@ -259,6 +275,89 @@ def _member(ref: str, m) -> str:
     if not isinstance(m, str) or not _MEMBER.match(m):
         _err(ref, f"bad Cube member {m!r} (use cube.member)")
     return m
+
+
+def _expect_cases(ref: str, gg: Gold, raw) -> list:
+    """The [[gold.expect]] cases of one gold entry. Messages name keys and positions, never values: parameters and
+    rows are expected row values."""
+    if not isinstance(raw, list):
+        _err(ref, "expect must be an array of tables ([[gold.expect]])")
+    bindings = [set(gg.params)] if gg.params else [set(ps) for ps in gg.param_sets]
+    cases = []
+    for j, e in enumerate(raw):
+        cref = f"{ref} expect[{j}]"
+        _known_keys(e, EXPECT_KEYS, cref)
+        if e.get("source") not in EXPECT_SOURCES:
+            _err(cref, 'source is required: "authored" (rows written from the business specification named by spec) '
+                       'or "captured" (rows taken from an earlier run)')
+        spec = e.get("spec", "")
+        if not isinstance(spec, str):
+            _err(cref, "spec must be a string")
+        if e["source"] == "authored" and not spec.strip():
+            _err(cref, "an authored case needs spec: where in the business specification its rows come from")
+        partial = e.get("partial", False)
+        if type(partial) is not bool:
+            _err(cref, "partial must be a boolean (true or false)")
+        params = e.get("params", {})
+        if not isinstance(params, dict):
+            _err(cref, "params must be a table of the gold query's parameter values")
+        if not bindings and params:
+            _err(cref, "the gold query has no parameters: remove params")
+        if bindings and set(params) not in bindings:
+            names = ", ".join(sorted(bindings[0]))
+            _err(cref, f"params must bind exactly the gold query's parameters ({names})" if gg.params else
+                       f"params must name the same parameters as an entry of param_sets ({names})")
+        if not all(isinstance(v, _SCALARS) for v in params.values()):
+            _err(cref, "params values must be strings, numbers, booleans, dates or times")
+        if "rows" not in e:
+            _err(cref, "rows is required (rows = [] expects no rows)")
+        cases.append(Expect(source=e["source"], rows=_expect_rows(cref, gg, e["rows"], partial), spec=spec,
+                            params=dict(params), partial=partial))
+    return cases
+
+
+def _expect_rows(cref: str, gg: Gold, rows, partial: bool) -> list:
+    """Expected rows with { null = true } cells as None. Duplicate keys are refused as written; keys that are equal
+    only in canonical form (1 and "1") make the comparison fail instead."""
+    if not isinstance(rows, list):
+        _err(cref, "rows must be an array of tables keyed by gold columns (possibly empty)")
+    columns, named, out = set(gg.map), None, []
+    for r, row in enumerate(rows):
+        rref = f"{cref} rows[{r}]"
+        if not isinstance(row, dict):
+            _err(rref, "must be a table keyed by gold columns")
+        if set(row) - columns:
+            _err(rref, "names a column that is not a gold column (the keys of gold.map)")
+        if partial:
+            named = set(row) if named is None else named
+            if set(row) != named:
+                _err(rref, "a partial case names the same columns in every row")
+        elif set(row) != columns:
+            _err(rref, f"column {sorted(columns - set(row))[0]!r} is missing: a case lists every gold column "
+                       "unless partial = true")
+        cells = {}
+        for col, v in row.items():
+            if isinstance(v, dict):
+                if v != NULL_CELL:
+                    _err(rref, f"column {col!r}: the only table value is {{ null = true }} (SQL NULL)")
+                if col in gg.zero_if_null:
+                    _err(rref, f"column {col!r} is in zero_if_null: the gold SQL coalesces it to 0, so it cannot "
+                               "expect NULL")
+                v = None
+            elif not isinstance(v, _SCALARS):
+                _err(rref, f"column {col!r}: values must be strings, numbers, booleans, dates or times, or "
+                           "{ null = true }")
+            cells[col] = v
+        out.append(cells)
+    if named is not None and set(gg.key) - named:
+        _err(cref, f"a partial case must name every key column ({sorted(set(gg.key) - named)[0]!r} is missing)")
+    seen = {}
+    for r, row in enumerate(out):
+        k = tuple((type(row[c]).__name__, row[c]) for c in gg.key)
+        if k in seen:
+            _err(cref, f"rows[{seen[k]}] and rows[{r}] have the same key")
+        seen[k] = r
+    return out
 
 
 def load(path: str | Path) -> Config:
@@ -462,6 +561,7 @@ def _load(path: str | Path) -> Config:
         if isinstance(g.get("key"), str):
             g["key"] = [g["key"]]
         params = g.pop("params", {}) or {}
+        expects = g.pop("expect", [])
         try:
             gg = Gold(**g)
         except TypeError as e:
@@ -518,5 +618,6 @@ def _load(path: str | Path) -> Config:
                 _err(ref, "param_sets entries must be non-empty tables")
             for pname in ps:
                 ident.check(pname)
+        gg.expect = _expect_cases(ref, gg, expects)
         cfg.gold.append(gg)
     return cfg

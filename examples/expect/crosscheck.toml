@@ -1,0 +1,74 @@
+# semantic-crosscheck example: literal expected rows ([[gold.expect]]) for the demo's explosion gold query.
+# Load fixture.sql into a dedicated fixture database, point SXC_EXPECT_DSN at it, then run
+#   python skills/semantic-crosscheck/scripts/sxc.py expect --config examples/expect/crosscheck.toml --allow-fixture-database
+# The expected rows below were written from this (synthetic) specification, not from a run of the gold SQL or Cube:
+#
+#   Specification EX-1, section 2, explosion of product P-100. One P-100 is built from 2 A-200 and 1 C-300, one
+#   A-200 from 3 C-300 and one C-300 from 4 R-400. Exploding P-100 lists every part below it once, with its shortest
+#   and longest path, the number of paths and the quantity needed per P-100:
+#     A-200  assembly   depth 1 to 1  1 path   2
+#     C-300  component  depth 1 to 2  2 paths  1 + 2 x 3 = 7
+#     R-400  raw        depth 2 to 3  2 paths  1 x 4 + 2 x 3 x 4 = 28
+#   Section 3, explosion of assembly A-200: C-300 3, R-400 3 x 4 = 12.
+version = 1
+
+[source]
+dsn_env = "SXC_PG_DSN"              # operational check role; expect never connects to it
+owner_dsn_env = "SXC_PG_OWNER_DSN"
+schemas = ["sxc_demo"]
+output_schema = "sxc_out"
+
+[entities.part]
+table = "sxc_demo.part"
+key = ["part_id"]
+
+[entities.bom_line]
+table = "sxc_demo.bom_line"
+key = ["parent_id", "child_id", "line_no"]
+
+[hierarchies.has_component]
+edge = "bom_line"
+node = "part"
+parent = "parent_id"
+child = "child_id"
+quantity = "qty_per"
+max_depth = 32
+on_cycle = "error"
+
+[[gold]]
+id = "q01_explosion"
+sql = "../../demo/gold/q01_explosion.sql"
+key = "part_id"
+[gold.cube_query]
+dimensions = ["has_component_closure.descendant", "has_component_closure.min_depth", "has_component_closure.max_depth", "has_component_closure.path_count", "has_component_descendant.part_class"]
+measures = ["has_component_closure.qty"]
+filters = [{ member = "has_component_closure.ancestor", operator = "equals", values = [":root"] }]
+[gold.map]
+part_id = "has_component_closure.descendant"
+part_class = "has_component_descendant.part_class"
+min_depth = "has_component_closure.min_depth"
+max_depth = "has_component_closure.max_depth"
+path_count = "has_component_closure.path_count"
+qty = "has_component_closure.qty"
+[gold.params.root]
+strata = ["top", "mid", "deep", "leaf_parent", "empty"]
+
+[[gold.expect]]
+source = "authored"
+spec = "EX-1 section 2: explosion of product P-100"
+params = { root = "P-100" }
+rows = [
+  { part_id = "A-200", part_class = "assembly", min_depth = 1, max_depth = 1, path_count = 1, qty = 2 },
+  { part_id = "C-300", part_class = "component", min_depth = 1, max_depth = 2, path_count = 2, qty = 7 },
+  { part_id = "R-400", part_class = "raw", min_depth = 2, max_depth = 3, path_count = 2, qty = 28 },
+]
+
+[[gold.expect]]
+source = "authored"
+spec = "EX-1 section 3: explosion of assembly A-200"
+params = { root = "A-200" }
+partial = true
+rows = [
+  { part_id = "C-300", qty = 3 },
+  { part_id = "R-400", qty = 12 },
+]

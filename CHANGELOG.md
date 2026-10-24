@@ -18,6 +18,15 @@ All notable changes to this project are recorded here. The format follows
   proven states that Cube reads each chunk in its own session, sharing no snapshot with the other chunks
   or with SQL. Above the budget the sample and its d95 bound stay and not proven names the budget. V4
   still replays the 2,000-key sample (the first chunk). The default keeps the previous comparison.
+- Literal expected-row oracle for limit L3 (gold SQL and configuration sharing one mistake): optional
+  `[[gold.expect]]` cases on a `[[gold]]` entry (`source` `authored` with a `spec` location, or `captured`;
+  `params`, `rows` with `{ null = true }` for NULL, `partial`) and a new `expect` stage. It reads the operational
+  configuration but runs build, cube, the gold SQL and Cube only on a dedicated fixture database the user loaded
+  (`--dsn-env`, default `SXC_EXPECT_DSN`, with explicit `--allow-fixture-database`), refuses a fixture DSN that names
+  an operational database and never runs fixture SQL. `expect:<gold>[<i>]` passes only when both sides equal the
+  expected rows; agreeing sides that differ from them fail as `common_mode` (authored) or `regression` (captured),
+  a disagreement as `gold_mismatch`, `cube_mismatch` or `both_mismatch`. Captured passes are regression evidence
+  only. The result stays out of `report` and operational V1-V5 coverage. Example: `examples/expect/`.
 
 ## [0.8.0] - 2026-10-23
 

@@ -4,7 +4,7 @@
     python sxc.py <stage> [--config crosscheck.toml] [--out DIR] [options]
 
 Stages: doctor, demo, build, reason, cube, verify, report, cube-install, counterexample,
-cube-replay, tlp, shacl-corpus.
+cube-replay, tlp, shacl-corpus, expect.
 Each stage writes <out>/<stage>/result.json (counts and check ids only, never row values) and exits with
 0 pass, 1 a check failed or could not run, 2 configuration or usage error, 3 environment missing.
 
@@ -49,8 +49,9 @@ STAGES = {
     "cube-replay": "cube_replay",
     "tlp": "tlp",
     "shacl-corpus": "shacl_corpus",
+    "expect": "expect",
 }
-NEEDS_CONFIG = {"demo", "build", "reason", "cube", "verify", "report"}
+NEEDS_CONFIG = {"demo", "build", "reason", "cube", "verify", "report", "expect"}
 DEFAULT_CONFIG = "crosscheck.toml"
 
 
@@ -147,6 +148,13 @@ def parser() -> argparse.ArgumentParser:
     s = sub.add_parser("shacl-corpus", parents=[common], help="compare pySHACL and Apache Jena against independently expected nonrecursive synthetic reports")
     s.add_argument("--jena-home", default="", help="Apache Jena distribution directory (default: SXC_JENA_HOME)")
     s.add_argument("--timeout-ms", type=int, default=30000, help="per-engine-process deadline in milliseconds")
+
+    s = sub.add_parser("expect", parents=[common], help="run the gold queries and Cube on a dedicated fixture database and compare "
+                                                       "both with the literal expected rows of [[gold.expect]]")
+    s.add_argument("--dsn-env", default="SXC_EXPECT_DSN", help="NAME of the environment variable holding the DSN of the dedicated "
+                                                               "fixture database (never an operational one)")
+    s.add_argument("--allow-fixture-database", action="store_true", help="explicitly permit building the configured views and "
+                                                                          "closure tables in that database's output schema")
     return p
 
 

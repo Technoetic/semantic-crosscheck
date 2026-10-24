@@ -169,8 +169,11 @@ class ChunkedBaselineTest(unittest.TestCase):
         st, d = shape_q.run_test(KeysConn(every), KeyedClient(every, null="bad"), cfg, {}, pair_test(cfg))
         self.assertEqual((st, d["mismatched"]), ("fail", {A: 1}))
         every = keys(CAP + 1)
-        _v, c, _t = baseline(self, CAP, KeysConn(every), KeyedClient(every, null="bad"))
+        v, c, _t = baseline(self, CAP, KeysConn(every), KeyedClient(every, null="bad"))
         self.assertEqual((c.status, c.detail["sampled_keys"]), ("pass", CAP), "a sample cannot see the NULL key group")
+        (line,) = v.res.not_proven
+        self.assertIn("the NULL key group is not compared in a sample (its equals filter leaves it out), so a mismatch "
+                      "there is not detected", line, "and its not_proven line says so")
 
     def test_counts_add_up_over_the_chunks(self):
         every = keys(2 * CAP + 10)

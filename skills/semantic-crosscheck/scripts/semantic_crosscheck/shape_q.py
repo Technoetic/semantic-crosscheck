@@ -33,6 +33,8 @@ Above PAIR_KEY_CAP keys the test therefore compares a deterministic sample of PA
 verify.seed, read once from the node table or the closure table and reused by every replay), filtered in each of
 its queries, and its detail says how many keys were compared out of how many (sampled_keys, total_keys). The key
 count and the sample are read in one REPEATABLE READ snapshot, so the sample is drawn from the keys that were counted.
+The sample's equals filter leaves out the NULL key group, which a sampled test therefore never compares (sample_note
+says so next to the detection bound, which counts the non-NULL keys only).
 A sampled detail also carries the sample's detection bound (d95_keys, and d95_rate = d95_keys / total_keys): the
 smallest number of mismatching keys of which a sample of n out of N keys holds at least one with probability 95% or
 more, assuming the mismatching keys are independent of the fixed md5 order; fewer mismatching keys may all lie outside
@@ -396,8 +398,9 @@ def d95_keys(sampled: int, total: int) -> int | None:
 
 
 def sample_note(detail: dict) -> str:
-    """The not_proven text of a sampled pair test's detail: how many keys it compared, its detection bound and, when
-    the detail names verify.pair_key_budget (the baseline run), that the key count exceeded it."""
+    """The not_proven text of a sampled pair test's detail: how many keys it compared, its detection bound (over the
+    non-NULL keys: the sample's equals filter leaves the NULL key group out, so it is never compared) and, when the
+    detail names verify.pair_key_budget (the baseline run), that the key count exceeded it."""
     n, total = detail["sampled_keys"], detail["total_keys"]
     note = f"compared {n} of {total} keys (a deterministic sample with verify.seed); the other keys were not compared"
     d95 = detail.get("d95_keys")
@@ -410,6 +413,8 @@ def sample_note(detail: dict) -> str:
         note += (f"; a mismatch affecting at least {d95} keys ({100 * d95 / total:.3g}%) is detected with 95% "
                  "probability, assuming the mismatching keys are independent of the fixed md5 sample order; fewer "
                  "mismatching keys may be missed")
+    note += ("; the NULL key group is not compared in a sample (its equals filter leaves it out), so a mismatch there "
+             "is not detected")
     budget = detail.get("pair_key_budget")
     if budget is not None:
         note += (f"; the key count exceeds verify.pair_key_budget ({budget}), so the keys were not compared in chunks "

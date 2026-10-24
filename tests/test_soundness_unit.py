@@ -412,7 +412,9 @@ class PairSampleTest(unittest.TestCase):
                                             "verify.seed); the other keys were not compared; a mismatch affecting at "
                                             "least 2 keys (0.08%) is detected with 95% probability, assuming the "
                                             "mismatching keys are independent of the fixed md5 sample order; fewer "
-                                            "mismatching keys may be missed"])
+                                            "mismatching keys may be missed; the NULL key group is not compared in a "
+                                            "sample (its equals filter leaves it out), so a mismatch there is not "
+                                            "detected"])
 
     def test_v4_says_when_its_pair_tests_were_sampled(self):
         tmp = tempfile.TemporaryDirectory()

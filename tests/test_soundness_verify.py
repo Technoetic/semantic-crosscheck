@@ -7,7 +7,8 @@
                                        never a kill; a closure that did not pass in build gates the closure mutants
                                        (no false survivor on a stale closure table); V3 pair tests above the key cap
                                        compare a deterministic sample that Cube filters, and within
-                                       verify.pair_key_budget every key in chunks plus the NULL key group (notSet)
+                                       verify.pair_key_budget every key in chunks (each answered by Cube) plus the
+                                       NULL key group (notSet), a real NULL key included
   TypedVerifyTest   (database + Cube)  text keys that look numeric stay distinct, timestamps with a time of day match
                                        Cube's rendering, and text that differs only in its spelling of a number fails
 
@@ -262,23 +263,75 @@ class CubeVerifyTest(unittest.TestCase):
         self.assertEqual([c.id for c in res.checks if c.status not in ("pass",) and not c.id.startswith("scope:")], [])
 
     def test_pair_tests_within_the_budget_compare_every_key_in_chunks(self):
+        """Through real Cube: every key the chunks ask for comes back in the together answers (answered_keys, and the
+        answered keys outside the NULL key group equal the key count: both pair kinds are rooted at the key table), and
+        the NULL key group is queried (a notSet filter on the grouped member and on each alone dimension) and answered
+        empty, which also shows Cube honours notSet: ignoring it would return every key there. The demo has no NULL
+        key (primary keys, closure ends), and in a generated model a NULL key joins no measure row while measure cubes
+        drop NULL keys (cube_gen.where_sql), so a disagreement only in the NULL key group cannot come from Cube here;
+        test_pair_chunks covers that it fails."""
         cfg = copy.deepcopy(self.cfg)
         cfg.verify.pair_key_budget = 10_000       # above every key count of the demo
-        with mock.patch.object(shape_q, "PAIR_KEY_CAP", 500):
+        with mock.patch.object(shape_q, "PAIR_KEY_CAP", 500), \
+                mock.patch.object(shape_q, "_null_keys", wraps=shape_q._null_keys) as null_keys:
             res = self.verify(cfg, self.out("chunked"), ["v3"])
         pairs = [c for c in res.checks if c.id.startswith("v3:pair:")]
         self.assertEqual(len(pairs), 4)
+        self.assertEqual(null_keys.call_count, 3 * len(pairs), "the NULL key group: together and both alone queries")
         for c in pairs:
             d = c.detail
             self.assertEqual((c.status, d.get("mode"), d["duplicate_keys"], d["mismatched"]), ("pass", "chunked", 0, {}),
                              c.id)
             self.assertGreater(d["total_keys"], 500, c.id)
             self.assertEqual((d["compared_keys"], d["chunks"]), (d["total_keys"], -(-d["total_keys"] // 500)), c.id)
+            self.assertEqual(d["answered_keys"], d["total_keys"], "Cube answered every key the chunks asked for")
+            self.assertEqual(d["keys"] - d["null_key_group"]["keys"], d["total_keys"], c.id)
             self.assertFalse({"sampled_keys", "d95_keys", "d95_rate"} & set(d), c.id)
-            self.assertEqual((d["null_key_group"]["mismatched"], d["null_key_group"]["duplicate_keys"]), ({}, 0), c.id)
+            alone = {m: 0 for m in d["alone_only_keys"]}
+            self.assertEqual(d["null_key_group"], {"keys": 0, "mismatched": {}, "duplicate_keys": 0,
+                                                   "alone_only_keys": alone}, c.id)
             prefix = f"{c.id}: compared every key ({d['total_keys']}) in {d['chunks']} chunks of at most 500 plus the NULL"
             self.assertTrue(any(line.startswith(prefix) for line in res.not_proven), c.id)
         self.assertEqual([c.id for c in res.checks if c.status not in ("pass",) and not c.id.startswith("scope:")], [])
+
+    def test_a_real_null_key_is_answered_in_the_null_key_group(self):
+        """A node table with every part and one NULL key (no primary key): through real Cube the chunks answer every
+        non-NULL key and the notSet query answers the NULL key, which joins no measure row on either side, so it is
+        counted (null_key_group keys 1, no alone-only key) and agrees."""
+        owner_run(self.fx, "CREATE TABLE sxc_demo.sound_null_part AS SELECT part_id FROM sxc_demo.part",
+                  "INSERT INTO sxc_demo.sound_null_part VALUES (NULL)")
+        try:
+            cfg = copy.deepcopy(self.cfg)
+            cfg.entities["sound_node"] = Entity("sound_node", "sxc_demo.sound_null_part", ["part_id"])
+            cfg.measures["sound_firm"] = dataclasses.replace(cfg.measures["firm_open"], name="sound_firm",
+                                                             closure_join="", node="sound_node")
+            cfg.measures["sound_hand"] = dataclasses.replace(cfg.measures["on_hand"], name="sound_hand", node="sound_node")
+            cfg.verify.pair_key_budget = 10_000
+            out = self.tmp / "null_key"
+            shutil.copytree(self.tmp / "base" / "build", out / "build")
+            conn = self.fx.check_conn()
+            try:
+                with db.read_only(conn):
+                    model, _notes = cube_gen.generate(cfg, conn)
+            finally:
+                conn.close()
+            cube_gen.write_model(model, out / "cube" / "model")
+            cube = Result("cube")
+            cube.add("cube:model", "pass", "", cubes=len(model["cubes"]))
+            cube.write(out)
+            with mock.patch.object(shape_q, "PAIR_KEY_CAP", 500):
+                res = self.verify(cfg, out, ["v3"])
+        finally:
+            owner_run(self.fx, "DROP TABLE sxc_demo.sound_null_part")
+        a, b = "m_sound_firm.value", "m_sound_hand.value"
+        c = next(c for c in res.checks if c.id == f"v3:pair:{a}+{b}")
+        d = c.detail
+        self.assertEqual((c.status, d.get("mode")), ("pass", "chunked"), d)
+        self.assertGreater(d["total_keys"], 500)
+        self.assertEqual((d["answered_keys"], d["compared_keys"], d["keys"]),
+                         (d["total_keys"], d["total_keys"], d["total_keys"] + 1), "the NULL key counts once, apart")
+        self.assertEqual(d["null_key_group"], {"keys": 1, "mismatched": {}, "duplicate_keys": 0,
+                                               "alone_only_keys": {a: 0, b: 0}})
 
 
 TYPED_CONFIG = """version = 1

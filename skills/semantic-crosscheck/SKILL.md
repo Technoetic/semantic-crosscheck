@@ -84,8 +84,9 @@ never select or suggest an operational DSN. A fixture DSN is refused when it equ
 check that the fixture rows and the expected rows follow the cited specification (a wrongly loaded fixture gives the
 same verdict; a case can pin `fixture_sha256`), and only then report a defect the gold SQL and the configuration
 share, never a pass of either side. Only `authored` cases with a `spec` are independent evidence; `captured` rows
-detect regressions only. Like the standalone stages it stays outside `report` and never widens operational V1-V5
-coverage.
+detect regressions only: for `regression`, first check that the loaded fixture is the one the rows were captured on
+(compare `expect:fixture`'s `fixture_sha256` with the case's pin, or pin it). Like the standalone stages it stays
+outside `report` and never widens operational V1-V5 coverage.
 
 Every stage is one command:
 

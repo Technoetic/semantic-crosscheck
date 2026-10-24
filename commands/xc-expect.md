@@ -20,7 +20,8 @@ python "${CLAUDE_PLUGIN_ROOT}/skills/semantic-crosscheck/scripts/sxc.py" expect 
   same server is not detected, so the fixture must be a dedicated database. `expect:fixture` records how many
   operational variables were compared (`operational_variables_compared`) and `not_proven` names the unset ones.
 - `--allow-fixture-database` is required when the configuration has cases (exit 2 without it): it permits the stage
-  to build the configured views and closure tables in that database's output schema. There is no scratch schema and
+  to build the configured views and closure tables in that database's output schema, and to hold SHARE locks on the
+  fixture's source and closure tables while the cases run, so writers to them wait. There is no scratch schema and
   no cleanup: those objects stay in the fixture database and the next run rebuilds them.
 - Take the fixture DSN variable and `--allow-fixture-database` only from the user, for a database the user names as a
   dedicated fixture. Never select, guess or suggest an operational DSN for it.
@@ -33,17 +34,22 @@ and, for every case, runs the gold SQL and the gold's Cube query with the case's
 fixture database. Each side is compared with the expected rows (`expect:<gold>[<i>]`): both equal them is a pass; gold
 and Cube agreeing with each other but not with the rows is `common_mode` (authored rows) or `regression` (captured
 rows); a disagreement is `gold_mismatch`, `cube_mismatch` or `both_mismatch`, and the detail says which side equals
-the rows. For `common_mode` and `regression`, first check that the fixture rows and the expected rows follow the
-cited specification: a wrongly loaded fixture gives the same verdict, and changing the gold SQL and the configuration
-to match it would create the shared mistake this stage looks for. A case can pin the `fixture_sha256` of the fixture
-it was written for; on another fixture it is not_run (`fixture_mismatch`). A side that cannot run, or expected rows
-whose keys are equal in their typed form (`expected_duplicate_keys`), is an error; a case whose closure or Cube
-members did not pass is not_run; every not_run case gets a `not_proven` line. While the cases run, a second session
-holds SHARE locks on the source and built closure tables, so writers wait. `expect:fixture` compares the source-table
-digest taken before the build with digests of the source and closure tables taken before and after the cases, and a
-difference turns every pass into not_run. This shows equality at those points, not one shared snapshot, covers no
-other table, and gold and Cube read in separate sessions; `not_proven` says so. A configuration without cases gives
-`expect:cases` not_run.
+the rows. For `common_mode`, first check that the fixture rows and the expected rows follow the cited specification:
+a wrongly loaded fixture gives the same verdict, and changing the gold SQL and the configuration to match it would
+create the shared mistake this stage looks for. For `regression`, first check that the loaded fixture is the one the
+rows were captured on (compare `expect:fixture`'s `fixture_sha256` with the case's pin, or pin it). A case can pin the
+`fixture_sha256` of the fixture it was written for; on another fixture it is not_run (`fixture_mismatch`). The pin
+depends on the source tables' names, their rows and the order and types of their columns (and on the database
+encoding for text outside ASCII), not on the database's default collation or the session's settings: the digest
+orders the row text by `COLLATE "C"` and fixes `TimeZone`, `DateStyle`, `IntervalStyle`, `extra_float_digits`,
+`bytea_output` and `lc_monetary` while it reads. A side that cannot run, or expected rows whose keys are equal in
+their typed form (`expected_duplicate_keys`), is an error; a case whose closure or Cube members did not pass is
+not_run; every not_run case gets a `not_proven` line. While the cases run, a second session holds SHARE locks on the
+source and built closure tables when the role can take them, so writers wait; otherwise `expect:fixture` records
+`locked: false` and a `not_proven` line says so. `expect:fixture` compares the source-table digest taken before the
+build with digests of the source and closure tables taken before and after the cases, and a difference turns every
+pass into not_run. This shows equality at those points, not one shared snapshot, covers no other table, and gold and
+Cube read in separate sessions; `not_proven` says so. A configuration without cases gives `expect:cases` not_run.
 
 Rows written from the business specification (`source = "authored"`, with `spec` naming where) are the only
 independent evidence; captured rows are regression evidence only and are listed in `not_proven`. The result is

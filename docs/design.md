@@ -404,19 +404,26 @@ reads it, and no pass widens operational V1–V5 or report coverage.
   HTTP status); so are expected rows whose keys are equal in their typed form (`expected_duplicate_keys`). A case is
   `not_run` when a closure it uses did not pass (`closure:<h>` or `closure_apply:<h>`; `closure_not_passed`), Cube
   did not serve the model (`cube_not_passed`) or its members did not pass `cube:gold_members:<gold>`
-  (`gold_members_not_passed`); every `not_run` case gets a `not_proven` line. The next action for `common_mode` and
-  `regression` starts with checking that the fixture rows and the expected rows follow the cited specification: a
-  wrongly loaded fixture gives the same verdict, and changing the gold SQL and the configuration to match it would
-  create the shared mistake this stage looks for.
+  (`gold_members_not_passed`); every `not_run` case gets a `not_proven` line. The next action for `common_mode`
+  starts with checking that the fixture rows and the expected rows follow the cited specification: a wrongly loaded
+  fixture gives the same verdict, and changing the gold SQL and the configuration to match it would create the shared
+  mistake this stage looks for. Captured rows need not cite a specification and come from a run, so the next action
+  for `regression` starts with checking that the loaded fixture is the one the rows were captured on (compare
+  `expect:fixture`'s `fixture_sha256` with the case's pin, or pin it).
 - `expect:fixture` hashes the row count and an in-database md5 of every source table before the build, and of every
   source and built closure table before and after the cases, each digest in one REPEATABLE READ snapshot. While the
-  cases run, a second session holds SHARE locks on those tables (as `cube-replay` does), so a writer waits; a role
-  that cannot take them is recorded (`locked: false`) and disclosed in `not_proven`. A changed digest
+  cases run, a second session holds SHARE locks on those tables (as `cube-replay` does), so a writer waits; locks
+  that cannot be taken (for example a role without UPDATE, DELETE, TRUNCATE or MAINTAIN, or a conflicting lock held
+  past `source.statement_timeout_ms`) are recorded (`locked: false`) and disclosed in `not_proven`. A changed digest
   (`fixture_changed`) or a failed fingerprint (`fingerprint_failed`) is an error and turns every passing case into
   `not_run`. The digests show equality at those points, not one shared snapshot, cover only the entity and built
   closure tables, and the gold SQL and Cube read in separate sessions; `not_proven` says so. `fixture_sha256` covers
   the source tables only and is not salted, so the result can confirm guessed fixture rows: keep the fixture
-  synthetic.
+  synthetic. A case stores it as a pin compared across runs and databases, so each digest orders the row text by
+  `COLLATE "C"` and fixes `TimeZone`, `DateStyle`, `IntervalStyle`, `extra_float_digits`, `bytea_output` and
+  `lc_monetary` with `SET LOCAL` in its transaction: a pin depends on the source tables' names, their rows and the
+  order and types of their columns (and on the database encoding for text outside ASCII), not on the database's
+  default collation or the session's settings. The digest format is versioned (`sxc-expect-fixture-v2`).
 - Captured passes carry `independent: false` and a `not_proven` line: their rows come from a run, not from a
   specification, and a pass of captured cases only says so in its next action. Authored rows are independent only as
   far as they follow the cited specification. Results hold counts, ids and the fixture hash, never rows, parameter

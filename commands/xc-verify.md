@@ -39,7 +39,12 @@ python "${CLAUDE_PLUGIN_ROOT}/skills/semantic-crosscheck/scripts/sxc.py" verify 
   `verify.seed`, counted and drawn in one read-only snapshot) and says so in not proven, with the
   sample's detection bound (detail `d95_keys`, `d95_rate`): a mismatch affecting at least that many
   keys is detected with 95% probability if the mismatching keys are independent of the sample order;
-  fewer can be missed.
+  fewer can be missed. Unreleased (after 0.8.0): with `verify.pair_key_budget` (default 2000) raised to
+  at least the key count, the pair test compares every key instead, in chunks of 2,000 keys from one
+  read-only snapshot plus the NULL key group (detail `mode`, `chunks`, `compared_keys`, `total_keys`,
+  `null_key_group`, `elapsed_ms`; no `d95_keys`), and not proven says that Cube reads each chunk in its
+  own session, sharing no snapshot with the other chunks or with SQL. Above the budget the sample stays
+  and not proven names the budget. V4 still replays the 2,000-key sample, the first chunk.
 - V4 patches copies of the model and serves each mutant in a fresh Cube process. Only suite items that
   pass against the unmutated model are replayed (V1, the first `verify.mutant_bindings` bindings per
   stratum, V3), and the suite stops at the first item that does not pass. Only a failing item kills a
@@ -72,7 +77,8 @@ disclosed as having no nonempty coverage.
 Exit code 0: every check passed (`v1:<gold>`, `v2:<gold>:<stratum>`, `v3:total:<member>`,
 `v3:additive:<member>:<member>`, `v3:pair:<member>+<member>`, `v4:<operator>:<target>`) and none was left
 out. A pass means only what these checks prove on this data. Always show the NOT PROVEN lines (empty
-strata, equivalent mutants, sampled pair tests, join paths additivity does not apply to) next to the verdict.
+strata, equivalent mutants, sampled or chunked pair tests, join paths additivity does not apply to) next to the
+verdict.
 
 ## Failures
 
@@ -92,7 +98,9 @@ that generated the model. Fix `crosscheck.toml` or the gold SQL file, never the 
   without a classified dimension row (`null_group_equal` false; `orphan_rows` counts the rows with no
   dimension row at all).
 - `v3:pair:<member>+<member>` fails: measures queried together differ from the same measures queried
-  alone, which is join fan-out (wrong grain or relationship).
+  alone, which is join fan-out (wrong grain or relationship). A chunked test adds up its counts over
+  every chunk and the NULL key group (`null_key_group` holds the latter's own); when it is `error`,
+  `chunks_compared` says how many chunks finished.
 - `v4:<operator>:<target>` fails: a mutant that changes results on this data survived, so the gold suite
   cannot see that kind of error. Add a gold query, a mapped column or a stratum that would observe it,
   then rerun. Do not drop the operator from `verify.mutation_operators` to hide a survivor. When the

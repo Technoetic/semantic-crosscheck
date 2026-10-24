@@ -6,10 +6,14 @@ engines must independently match every expected constraint, including its value.
 Check IDs are pyshacl:<case> and jena:<case>, one per engine and corpus case.
 
 The opt-in W3C mode (--w3c-suite) takes the expected reports from the W3C data-shapes
-core test suite instead: third-party expectations that sxc's exporter and corpus
-cannot share a mistake with. Only cases inside the sxc profile run; everything else
-is not_run with a reason. Check IDs are w3c:<engine>:<case>, the case being the
-suite-relative test name. The suite is read, never copied into this repository.
+core test suite instead: third-party expectations that sxc's corpus cannot share a
+mistake with. Both engines validate the suite's own shapes and data graphs, so this
+mode checks engine conformance on the components sxc emits but never runs sxc's
+exporter; it complements the fixed corpus rather than replacing it. Only cases inside
+the sxc profile run; everything else is not_run with a reason. Check IDs are
+w3c:<engine>:<case>, the case being the suite-relative test name, plus w3c:suite
+(never passes) when an unpinned suite runs. The suite is read, never copied into
+this repository.
 """
 from collections import Counter
 from dataclasses import dataclass
@@ -44,7 +48,8 @@ SHT = 'http://www.w3.org/ns/shacl-test#'
 RDFS_CLASS = 'http://www.w3.org/2000/01/rdf-schema#Class'
 OWL_CLASS = 'http://www.w3.org/2002/07/owl#Class'
 # w3c/data-shapes at this commit (2026-10-09). The digest covers the sorted suite-relative paths and bytes of
-# every core manifest and graph file load_w3c_suite reads; it, not the commit label, decides "pinned".
+# every core manifest and graph file load_w3c_suite reads; it alone decides "pinned", and only a pinned suite
+# is recorded with this commit (no commit label in the checkout is trusted).
 W3C_SUITE_COMMIT = '1dfcd9f30cab70ac02b049611eeba451fa1308e7'
 W3C_SUITE_SHA256 = '27d212e662936162ed5707f57ab927e1a6a33e7e487844c71d2e0b704e53725b'
 W3C_TESTS = 'data-shapes-test-suite/tests/'
@@ -52,13 +57,17 @@ W3C_CORE = W3C_TESTS + 'core/'
 MAX_SUITE_FILES = 1024
 MAX_SUITE_FILE_BYTES = 1048576
 # Suite files are parsed against this synthetic base, so resolved IRIs never carry a local path and a
-# document-relative term in an expected report is recognisable (relative_iri).
-_BASE = 'http://sxc.invalid/w3c-suite/'
+# document-relative term in an expected report is recognisable (relative_iri): any IRI on this host, including
+# '</x>' or '../' above the base. A network-path reference ('//host/x') leaves the host and is not detectable.
+_HOST = 'http://sxc.invalid/'
+_BASE = _HOST + 'w3c-suite/'
 _ABSENT = ('absent',)
-# The sxc profile is what shapes.shapes_ttl() emits: sh:class and the three numeric BOUNDS with sh:severity
-# Violation or Warning, on property shapes with one IRI sh:path reached by sh:property from a node shape with
-# sh:targetClass. The suite reaches the same constraints on IRI focus nodes through sh:targetNode, implicit
-# class targets (a shape that is an rdfs:Class) and node-level constraints; those count as inside the profile.
+# The sxc profile follows the exporter: the constraint components and severities shapes.shapes_ttl() emits,
+# sh:class and the three numeric BOUNDS with one sh:severity Violation or Warning. shapes_ttl() puts them on
+# property shapes with one IRI sh:path reached by sh:property from a sh:targetClass node shape; the suite reaches
+# the same components on IRI focus nodes through sh:targetNode, implicit class targets (a shape that is an
+# rdfs:Class) and node-level constraints, which count as inside the profile. sh:datatype, sh:maxExclusive,
+# sh:minCount and sh:maxCount stay outside because the exporter never emits them.
 _CONSTRAINTS = ('class', 'minExclusive', 'minInclusive', 'maxInclusive')
 _NODE_KEYS = frozenset(('targetClass', 'targetNode', 'property', 'severity') + _CONSTRAINTS)
 _PROPERTY_KEYS = frozenset(('path', 'targetClass', 'targetNode', 'severity') + _CONSTRAINTS)
@@ -83,7 +92,6 @@ _PROFILE_ORDER = ('sparql', 'complex_path', 'closed_shape', 'unsupported_target'
                   'unsupported_component', 'unsupported_value')
 OWL_IMPORTS = 'http://www.w3.org/2002/07/owl#imports'
 _SAFE_ID = re.compile(r'[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*')
-_COMMIT = re.compile(r'[0-9a-f]{40}')
 
 
 class CorpusError(Exception):
@@ -123,7 +131,6 @@ class W3CSuite:
     cases: tuple
     files: dict     # suite-relative path -> bytes read, the exact content the engines receive
     sha256: str
-    commit: str
 
 
 def _number(text):
@@ -300,7 +307,10 @@ def _w3c_expected(graph, node):
             raise CorpusError('non_iri_focus')
         if isinstance(path, Literal):
             raise CorpusError('malformed_expected')
-        if any(isinstance(v, URIRef) and str(v).startswith(_BASE) for v in (focus, path, value)):
+        # The engines resolve a relative reference against their private copy, never against _HOST.
+        on_host = lambda v: isinstance(v, URIRef) and str(v).startswith(_HOST)
+        if any(on_host(v.datatype if isinstance(v, Literal) else v)
+               for v in (focus, path, component, severity, value)):
             raise CorpusError('relative_iri')
         try:
             results.append((_term(focus), _ABSENT if path is None else _term(path), str(component), str(severity),
@@ -573,6 +583,7 @@ def _w3c_profile(graph):
 
     SHACL vocabulary is checked graph-wide (an unused or ill-formed path node is still outside the profile),
     shape keys and values per shape. Data triples are not shapes; the expected report's terms are allowed.
+    rdflib terms never equal plain strings, so IRI values are compared through str().
     """
     from rdflib import Literal, RDF, URIRef
     sh = lambda name: URIRef(SH + name)
@@ -636,7 +647,9 @@ def _w3c_profile(graph):
             for bound in graph.objects(shape, sh(name)):
                 if not (isinstance(bound, Literal) and str(bound.datatype) in _NUMERIC and not bound.ill_typed):
                     flag('unsupported_value', name)
-        if any(value not in _SEVERITIES for value in graph.objects(shape, sh('severity'))):
+        # shapes_ttl() writes exactly one severity; SHACL leaves several on one shape undefined.
+        severities = list(graph.objects(shape, sh('severity')))
+        if len(severities) > 1 or any(not (isinstance(v, URIRef) and str(v) in _SEVERITIES) for v in severities):
             flag('unsupported_value', 'severity')
         if any(not list(graph.objects(value, sh('path'))) for value in graph.objects(shape, sh('property'))):
             flag('unsupported_value', 'property')
@@ -744,6 +757,14 @@ def _w3c_entry(files, graph, entry, case_id):
     reason, features = _w3c_profile(shapes_graph)
     if reason:
         return W3CCase(case_id, reason, features)
+    if data != shape_file:
+        # Engines take shapes only from the shapes graph, but they load the data graph too: it must parse and
+        # must not import anything outside the digested files.
+        data_graph = files.graph(data)
+        if data_graph is None:
+            return W3CCase(case_id, 'malformed_graph')
+        if (None, URIRef(OWL_IMPORTS), None) in data_graph:
+            return W3CCase(case_id, 'unsupported_component', ('owl_imports',))
     results = list(graph.objects(entry, mf('result')))
     try:
         if len(results) != 1:
@@ -757,8 +778,9 @@ def _w3c_entry(files, graph, entry, case_id):
 def load_w3c_suite(root):
     """Read the core manifests of a w3c/data-shapes checkout (mf:include recursion) and classify every entry.
 
-    root holds data-shapes-test-suite/ and optionally PINNED_COMMIT. A missing, escaping, non-Turtle or
-    non-manifest include makes the suite unusable (StageError): its entries could not be enumerated.
+    root holds data-shapes-test-suite/. A missing, escaping, non-Turtle or non-manifest include makes the suite
+    unusable (StageError): its entries could not be enumerated. An entry listed more than once is not_run
+    (duplicate_entry): which listing describes it is ambiguous.
     """
     from rdflib import RDF, URIRef
     files = _SuiteFiles(root)
@@ -789,42 +811,43 @@ def load_w3c_suite(root):
             for entry in entries:
                 index += 1
                 case_id = _case_id(entry, rel, index)
-                if case_id not in cases:
-                    cases[case_id] = _w3c_entry(files, graph, entry, case_id)
+                # Classified (and its files read) either way, so the digest does not depend on listing order.
+                case = _w3c_entry(files, graph, entry, case_id)
+                cases[case_id] = W3CCase(case_id, 'duplicate_entry') if case_id in cases else case
         for target in sorted(targets):
             manifest(target, depth + 1)
 
     manifest(top, 0)
-    commit = ''
-    marker = Path(root) / 'PINNED_COMMIT'
-    try:
-        if marker.is_file() and marker.stat().st_size <= 128:
-            text = marker.read_text(encoding='ascii', errors='replace').strip()
-            commit = text if _COMMIT.fullmatch(text) else ''
-    except OSError:
-        commit = ''
-    return W3CSuite(tuple(cases[key] for key in sorted(cases)), dict(files.data), suite_digest(files.data), commit)
+    return W3CSuite(tuple(cases[key] for key in sorted(cases)), dict(files.data), suite_digest(files.data))
 
 
 def run_w3c(suite, allow_unpinned, home, java, timeout):
     """Run both engines on every in-profile case of a loaded suite, exactly as the fixed corpus runs them.
 
     Engines read private copies of the digested bytes (same relative layout, so a case whose data and shapes
-    are one document still is). An unpinned suite runs nothing unless explicitly allowed.
+    are one document still is). An unpinned suite runs nothing unless explicitly allowed, and an allowed one
+    adds w3c:suite as not_run, so it can never pass.
     """
     pinned = suite.sha256 == W3C_SUITE_SHA256
     runnable = pinned or allow_unpinned
     result = Result('shacl_corpus')
-    result.inputs = {'w3c_suite_commit': suite.commit, 'w3c_suite_sha256': suite.sha256,
+    result.inputs = {'w3c_suite_commit': W3C_SUITE_COMMIT if pinned else '', 'w3c_suite_sha256': suite.sha256,
                      'w3c_suite_files': len(suite.files), 'w3c_suite_pinned': pinned}
     inside = sum(1 for case in suite.cases if not case.reason)
     result.not_proven.append(
         f'W3C SHACL core subset inside the sxc profile only ({inside} of {len(suite.cases)} entries; the rest are '
-        'not_run): it does not prove production data, SQL equivalence, other SHACL features, recursive SHACL, '
-        'SHACL-SPARQL or operational V1-V5 coverage.')
+        "not_run): both engines validate the suite's own shapes and data graphs, so this mode does not exercise "
+        "sxc's exporter (run the fixed corpus too), and it does not prove production data, SQL equivalence, "
+        'other SHACL features, recursive SHACL, SHACL-SPARQL or operational V1-V5 coverage.')
+    result.not_proven.append(
+        'A W3C pass compares the canonical (focus, path, component, severity, value) multiset only: sh:sourceShape, '
+        'result messages and the datatype or lexical form of numeric values are not compared, so it is not W3C '
+        'full compliance.')
     if not pinned:
-        result.not_proven.append('The W3C suite content digest differs from the pinned commit; '
-                                 + ('results are not comparable with the recorded baseline.' if allow_unpinned
+        result.not_proven.append('The W3C suite content digest differs from the pinned commit, so its expected '
+                                 'reports are not verified as the W3C suite\'s; '
+                                 + ('results are not comparable with the recorded baseline and the stage cannot '
+                                    'pass (w3c:suite).' if allow_unpinned
                                     else 'no case was run (--allow-unpinned-suite runs it anyway).'))
     with tempfile.TemporaryDirectory(prefix='sxc-shacl-w3c-') as temporary:
         copy = Path(temporary).resolve()
@@ -851,10 +874,14 @@ def run_w3c(suite, allow_unpinned, home, java, timeout):
                     result.add(check_id, 'error', '', reason=problem.reason)
                 except Exception:
                     result.add(check_id, 'error', '', reason='validation_failed')
+    if not pinned and allow_unpinned:
+        # The expected reports of an unpinned suite are not verified as the W3C suite's: never a pass.
+        result.add('w3c:suite', 'not_run', '', reason='suite_not_pinned')
     states = {check.status for check in result.checks}
     result.next_safe_action = (
         'Resolve engine errors, then rerun the W3C subset.' if 'error' in states else
         'Investigate the engine that disagrees with the W3C expected report before relying on that feature.'
         if 'fail' in states else
+        'Rerun on the pinned W3C suite before relying on these results.' if not pinned else
         'Out-of-profile W3C cases are not_run, not passed; review the profile before applying conclusions.')
     return result

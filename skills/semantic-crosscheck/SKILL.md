@@ -73,6 +73,16 @@ Additional standalone synthetic stages are available when explicitly requested:
 
 All three reject `--config`, ignore default operational configuration, and remain outside the required pipeline. Their passes must not erase real-data `not_proven` disclosures. Missing engines, malformed output, timeout or partial comparison cannot pass. Synthetic rows remain in labelled replay artifacts, never count-only results.
 
+The `expect` stage (after 0.8.0, not released yet) addresses a gold query and the configuration sharing one
+mistake ([command](../../commands/xc-expect.md)). It reads the operational `--config` for the `[[gold.expect]]`
+cases (literal expected rows per gold entry, see [references/config.md](references/config.md)) but runs build,
+cube, the gold SQL and Cube only against a dedicated fixture database the user has loaded, named by `--dsn-env`
+(default `SXC_EXPECT_DSN`), with explicit `--allow-fixture-database`; it refuses a fixture DSN that names an
+operational database and never runs fixture SQL. `common_mode` means gold and Cube agree with each other but not
+with rows written from the specification: report it as a shared defect, not as a pass of either side. Only
+`authored` cases with a `spec` are independent evidence; `captured` rows detect regressions only. Like the
+standalone stages it stays outside `report` and never widens operational V1-V5 coverage.
+
 Every stage is one command:
 
 ```text

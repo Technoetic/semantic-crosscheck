@@ -112,7 +112,7 @@ flowchart TB
 
 대시보드의 필터, SQL 보고서의 조인, SHACL의 데이터 규칙, OWL의 관계 정의가 조금씩 어긋날 수 있습니다. 조인 때문에 건수가 늘거나, NULL 처리 방식이 다르거나, 계층을 특정 깊이에서 잘라 버려도 각 계층의 자체 테스트는 통과할 수 있습니다.
 
-semantic-crosscheck는 같은 질문의 **서로 다른 표현을 비교**합니다. 불일치가 나오면 데이터·모델·기준 질의를 점검하고, 검사에 표시된 `config_ref`를 따라 설정을 고칩니다. 공통 설정이나 gold SQL 자체의 오류까지 자동으로 증명하는 것은 아니므로, 기준 질의를 별도로 작성하는 일이 중요합니다.
+semantic-crosscheck는 같은 질문의 **서로 다른 표현을 비교**합니다. 불일치가 나오면 데이터·모델·기준 질의를 점검하고, 검사에 표시된 `config_ref`를 따라 설정을 고칩니다. 공통 설정이나 gold SQL 자체의 오류까지 자동으로 증명하는 것은 아니므로, 기준 질의를 별도로 작성하는 일이 중요합니다. 0.8.0 이후(미출시) `expect`는 업무 명세에서 쓴 기대 행과 gold SQL·Cube를 작은 fixture에서 함께 비교해, 두 쪽이 공유하는 실수의 일부를 잡습니다.
 
 <a id="layers"></a>
 ### 네 계층의 역할
@@ -250,6 +250,7 @@ Windows PowerShell에서 실행 정책 때문에 `codex.ps1`이 거부되면 두
 | `SXC_CUBE_HOME` | `cube-install`, `doctor`, `cube`, `verify` | Cube 설치 위치 · 기본값은 사용자 캐시 |
 | `SXC_CUBE_DEBUG` | `cube`, `verify` | `1`이면 Cube 오류 전문을 `server.log`에 기록 · 행 값이 포함될 수 있어 로컬 디버깅에만 사용 |
 | `SXC_DEBUG` | 모든 단계 | `1`이면 예외 traceback 출력 · 로컬 디버깅에만 사용 |
+| `SXC_EXPECT_DSN` | `expect` | 0.8.0 이후(미출시): 사용자가 적재한 전용 fixture DB의 DSN · `--dsn-env`로 이름 변경 가능 · 운영 DSN 변수와 같은 DB를 가리키면 거부 |
 
 PowerShell에서는 `$env:SXC_PG_DSN = "..."` 형식으로 지정합니다.
 
@@ -422,10 +423,11 @@ python skills/semantic-crosscheck/scripts/sxc.py <stage> [--config PATH] [--out 
 | `cube-replay` | 고정 합성 데이터를 실제 Cube 원형·변형 모델과 독립 gold SQL로 비교 | `--mutation-operator NAME`, `--allow-scratch-schema`, `--seed N`, `--dsn-env NAME`, `--statement-timeout-ms N`, `--replay FILE` | `cube_replay/result.json`, `cube_replay/fixture.json` |
 | `tlp` | 참·거짓·NULL 분할의 행 중복과 COUNT/SUM 일관성 검사 | `--spec FILE`, `--dsn-env NAME`, `--seed N`, `--max-examples N`, `--statement-timeout-ms N`, `--replay FILE` | `tlp/result.json`, `tlp/fixture.json` |
 | `shacl-corpus` | 독립 기대 결과와 pySHACL·Apache Jena의 합성 보고서 비교 | `--jena-home DIR`, `--timeout-ms N` | `shacl_corpus/result.json` |
+| `expect` | 0.8.0 이후(미출시): 전용 fixture DB에서 gold SQL·Cube를 실행해 `[[gold.expect]]`의 문자 그대로 기대 행과 비교 | `--allow-fixture-database`, `--dsn-env NAME` | `expect/result.json`, `expect/build/`, `expect/cube/`, `expect/server.log` |
 
 **공통 옵션**
 
-- `--config PATH`: 명시하면 반드시 존재해야 합니다. 없으면 exit 2이며 단계를 실행하지 않습니다. 생략하면 `./crosscheck.toml`을 찾습니다. `doctor`·`cube-install`은 설정 없이도 실행합니다. 별도 합성 도구 `counterexample`은 설정을 읽지 않으며 `--config`를 거부합니다.
+- `--config PATH`: 명시하면 반드시 존재해야 합니다. 없으면 exit 2이며 단계를 실행하지 않습니다. 생략하면 `./crosscheck.toml`을 찾습니다. `doctor`·`cube-install`은 설정 없이도 실행합니다. 별도 합성 도구 `counterexample`은 설정을 읽지 않으며 `--config`를 거부합니다. `expect`는 운영 설정을 읽지만 fixture DB에만 접속합니다.
 - `--out DIR`: 기본 출력 위치는 설정 옆 `.sxc`입니다. 설정 없이 실행하면 `./.sxc`이며, 새 출력 디렉터리에는 내용 `*`의 `.gitignore`를 만듭니다.
 - `--quiet`: 요약 한 줄만 출력합니다. `sxc.py --version`은 버전을 표시합니다.
 
@@ -577,6 +579,7 @@ flowchart TD
 | build·reason·cube·verify / report | `data_revision:stable`, `data_revision:current` | 구성된 데이터 버전이 안정적이며 현재 근거와 일치; 조회 오류는 실패로 닫음 |
 | build·reason·cube·verify / report | `runtime_evidence:stable`, `runtime_evidence:current` | 선택한 실제 실행 환경 근거가 안정적이며 현재와 일치; 누락·변경·조회 실패 시 기존 PASS 재사용 차단 |
 | counterexample | `counterexample:search`, `counterexample:query`, `counterexample:recheck`, `counterexample:inputs`, `counterexample:artifact` | 합성 SQL 차이와 축소·재현 범위; 오류·미발견은 동등성 증명 불가, 재생 파일 크기 상한 초과 시 저장 거부 |
+| expect | `expect:<gold>[<i>]`, `expect:build`, `expect:cube`, `expect:fixture`, `expect:cases` | 0.8.0 이후(미출시): fixture에서 gold SQL과 Cube가 모두 기대 행과 일치; 서로 같은데 기대 행과 다르면 `common_mode`(authored)·`regression`(captured) 실패, fixture가 실행 중 바뀌면 통과 불가 |
 
 조기 중단의 `stage`, doctor의 `database`, demo의 `demo:load`, verify의 `v4:suite`, 범위를 나타내는 `scope:*`, 설치의 `cube_install:*`까지 포함한 전체 목록은 [설계 문서의 카탈로그](docs/design.md#6-check-catalogue)를 참고합니다.
 
@@ -651,6 +654,8 @@ Cube의 기본 오류 로그에는 오류 클래스·코드·대략적인 범주
 
 기본 환경에는 새 Python 의존성을 추가하지 않는다. 엔진 부재·시간 초과·잘못된 보고서·불안정한 입력을 통과로 처리하지 않으며, 합성 입력 행은 별도 fixture 파일에만 저장한다.
 
+**[문자 그대로 기대 행](commands/xc-expect.md) (0.8.0 이후(미출시)):** gold SQL과 설정이 같은 실수를 공유하면 둘은 일치하고 V1은 통과한다. `[[gold]]` 항목에 선택 `[[gold.expect]]` 사례(파라미터, 기대 행, 출처 `authored`/`captured`, 명세 위치 `spec`)를 두면, `expect`가 사용자가 미리 적재한 전용 fixture DB(`SXC_EXPECT_DSN`, 명시적 `--allow-fixture-database`)에서 build·cube를 돌리고 gold SQL과 Cube를 각각 실행해 기대 행과 비교한다. 둘이 서로 같은데 기대 행과 다르면 `common_mode`, 한쪽만 다르면 그쪽 실패다. 운영 설정을 읽지만 운영 DSN에는 접속하지 않고, 같은 DB를 가리키는 fixture DSN은 거부하며, fixture SQL을 실행하지 않는다. 명세에서 쓴 `authored` 행만 독립 근거이고 `captured` 행은 회귀 감지용이다. 결과는 `report`에 포함하지 않으며 운영 V1–V5 범위를 넓히지 않는다. 예제는 `examples/expect/`에 있다.
+
 ## ⚠️ 검증 한계와 not_proven
 
 **PASS는 이 데이터에서 수행한 검사들이 불일치를 찾지 못했다는 뜻입니다.** 모든 업무 규칙의 정확성이나 일반적인 모델의 무결성을 보증하지 않습니다.
@@ -669,7 +674,7 @@ Cube의 기본 오류 로그에는 오류 클래스·코드·대략적인 범주
 <details>
 <summary><b>지원 모델·질의·실행의 나머지 제한</b></summary>
 
-- 기준 gold SQL과 설정에 같은 오류가 있으면 일치할 수 있습니다. 생성 객체와 별도로 기준 질의를 작성합니다.
+- 기준 gold SQL과 설정에 같은 오류가 있으면 일치할 수 있습니다. 생성 객체와 별도로 기준 질의를 작성합니다. 0.8.0 이후(미출시) `expect`는 업무 명세에서 쓴 기대 행(`[[gold.expect]]`, `source = "authored"`)과 gold SQL·Cube를 fixture에서 함께 비교해 공유된 실수를 `common_mode`로 실패시킵니다. 다만 사례의 fixture 행과 파라미터가 다루는 범위만 확인하며, 기대 행이 명세를 잘못 옮기면 그 오류는 남습니다.
 - OWL은 열린 세계 의미론입니다. SQL과 의미가 맞는 지원 정의만 비교하며 범용 RDF/OWL 가져오기·동기화 서비스는 제공하지 않습니다.
 - gold 질의당 순회 파라미터는 하나입니다. 여러 파라미터는 `param_sets`를 사용합니다. `timeDimensions`는 `granularity` 대신 `dateRange`, `closure_join`은 정확히 하나의 계층이 필요합니다.
 - Cube 응답의 상한은 **50,000행**입니다. 상한에 도달하면 부분 비교로 통과시키지 않고 오류로 처리합니다.

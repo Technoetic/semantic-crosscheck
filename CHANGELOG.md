@@ -6,6 +6,18 @@ All notable changes to this project are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Literal expected-row oracle for limit L3 (gold SQL and configuration sharing one mistake): optional
+  `[[gold.expect]]` cases on a `[[gold]]` entry (`source` `authored` with a `spec` location, or `captured`;
+  `params`, `rows` with `{ null = true }` for NULL, `partial`) and a new `expect` stage. It reads the operational
+  configuration but runs build, cube, the gold SQL and Cube only on a dedicated fixture database the user loaded
+  (`--dsn-env`, default `SXC_EXPECT_DSN`, with explicit `--allow-fixture-database`), refuses a fixture DSN that names
+  an operational database and never runs fixture SQL. `expect:<gold>[<i>]` passes only when both sides equal the
+  expected rows; agreeing sides that differ from them fail as `common_mode` (authored) or `regression` (captured),
+  a disagreement as `gold_mismatch`, `cube_mismatch` or `both_mismatch`. Captured passes are regression evidence
+  only. The result stays out of `report` and operational V1-V5 coverage. Example: `examples/expect/`.
+
 ## [0.8.0] - 2026-10-23
 
 Release notes: [docs/releases/v0.8.0.md](docs/releases/v0.8.0.md).

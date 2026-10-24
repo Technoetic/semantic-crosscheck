@@ -14,10 +14,13 @@ gold SQL and `crosscheck.toml` avoid them too.
   configurable: a query that needs more rows must be narrowed (filters, parameters) rather than compared
   partially. V3 pair tests group by every key, so above 2,000 keys they compare a deterministic sample of
   2,000 keys instead; their detail and not proven line give the sample's 95% detection bound
-  (`d95_keys`), and a mismatch on fewer keys can be missed. Unreleased (after 0.8.0): raising
-  `verify.pair_key_budget` to at least the key count makes the baseline run compare every key in
-  chunks of 2,000 keys plus the NULL key group, each chunk as small as the sample; Cube reads every
-  chunk in its own session, so the chunks share no snapshot.
+  (`d95_keys`), and a mismatch on fewer keys can be missed; a sample never compares the NULL key group
+  (its equals filter leaves it out), which not proven says unreleased (after 0.8.0). Unreleased (after
+  0.8.0): raising `verify.pair_key_budget` to at least the key count makes the baseline run compare
+  every key in chunks of 2,000 keys plus the NULL key group, each chunk as small as the sample; every
+  Cube query reads its own snapshot, shared with no other query. Every key up to the budget is read in
+  one statement under `source.statement_timeout_ms` (a timeout is an `error`) and held in memory, and a
+  chunked test whose Cube answers leave out keys it asked for is `not_run` (`keys_not_answered`).
 - **A many-to-one join that is one-to-many in the data inflates totals.** Cube trusts a declared
   `many_to_one` (or `one_to_one`) relationship and sums without deduplication, so a repeated key in the
   joined table counts the measure rows once per match. V3 `additive` tests sum the groups by the class

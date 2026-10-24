@@ -474,6 +474,12 @@ def _not_run_action(c: Check) -> str:
         return "V4 needs suite items that pass on the unmutated model: fix the V1-V3 checks first, then rerun verify"
     if why == "no_binding":
         return f"{c.id} has no binding (every stratum is empty): check the params of {c.config_ref} or the data"
+    if why == "keys_not_answered":
+        d = c.detail
+        return (f"{c.id} was not judged (keys_not_answered): Cube's together answers held {d.get('answered_keys')} of "
+                f"the {d.get('compared_keys')} keys its chunks asked for, so the others were never compared; rerun "
+                f"verify while the source data is not changing, and if keys stay missing, check that Cube's equals "
+                f"filter on the key member of {c.config_ref} matches the key's type")
     return (f"{c.id} did not run ({why}): make its prerequisite pass (for a closure: build until closure:<h> passes, "
             "then cube), then rerun verify")
 

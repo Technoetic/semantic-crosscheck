@@ -3,7 +3,8 @@
   ChunkedBaselineTest  above shape_q.PAIR_KEY_CAP keys and within verify.pair_key_budget the baseline V3 run compares
                        every key: consecutive chunks of PAIR_KEY_CAP in the md5 order of one REPEATABLE READ key read,
                        then the NULL key group through a notSet filter; counts add up over the chunks, a mismatch in
-                       any chunk or in the NULL key group fails the test and a query that cannot run makes it an error
+                       any chunk or in the NULL key group fails the test, a query that cannot run makes it an error,
+                       and keys missing from the together answers (answered_keys) make it not_run, never a pass
   BudgetFallbackTest   above the budget the test keeps the sample and its d95 bound and says the budget was exceeded;
                        a mismatch on a key outside the sample is the false pass that a raised budget closes
   ReplaySampleTest     V4 replays a chunked test against its sample (the first chunk), never every chunk, and a survivor
@@ -15,6 +16,7 @@
                        first PAIR_KEY_CAP keys are the sample, without the NULL key
 """
 
+import re
 import tempfile
 import types
 import unittest
@@ -124,8 +126,8 @@ class ChunkedBaselineTest(unittest.TestCase):
         v, c, _t = baseline(self, 5000, conn, client)
         d = c.detail
         self.assertEqual(d.get("mode"), "chunked", d)
-        self.assertEqual((c.status, d["chunks"], d["compared_keys"], d["total_keys"], d["keys"]),
-                         ("pass", 2, CAP + 1, CAP + 1, CAP + 1))
+        self.assertEqual((c.status, d["chunks"], d["compared_keys"], d["answered_keys"], d["total_keys"], d["keys"]),
+                         ("pass", 2, CAP + 1, CAP + 1, CAP + 1, CAP + 1))
         self.assertFalse({"sampled_keys", "d95_keys", "d95_rate", "pair_key_budget"} & set(d))
         self.assertIsInstance(d["elapsed_ms"], int)
         chunks = [q["filters"][0]["values"] for q in client.filtered("equals")]
@@ -167,8 +169,11 @@ class ChunkedBaselineTest(unittest.TestCase):
         st, d = shape_q.run_test(KeysConn(every), KeyedClient(every, null="bad"), cfg, {}, pair_test(cfg))
         self.assertEqual((st, d["mismatched"]), ("fail", {A: 1}))
         every = keys(CAP + 1)
-        _v, c, _t = baseline(self, CAP, KeysConn(every), KeyedClient(every, null="bad"))
+        v, c, _t = baseline(self, CAP, KeysConn(every), KeyedClient(every, null="bad"))
         self.assertEqual((c.status, c.detail["sampled_keys"]), ("pass", CAP), "a sample cannot see the NULL key group")
+        (line,) = v.res.not_proven
+        self.assertIn("the NULL key group is not compared in a sample (its equals filter leaves it out), so a mismatch "
+                      "there is not detected", line, "and its not_proven line says so")
 
     def test_counts_add_up_over_the_chunks(self):
         every = keys(2 * CAP + 10)
@@ -179,7 +184,27 @@ class ChunkedBaselineTest(unittest.TestCase):
         self.assertEqual(d.get("mode"), "chunked", d)
         self.assertEqual((c.status, d["chunks"], d["mismatched"], d["duplicate_keys"], d["alone_only_keys"]),
                          ("fail", 3, {A: 3}, 1, {A: 2, B: 2}))
-        self.assertEqual((d["keys"], d["compared_keys"]), (2 * CAP + 8, 2 * CAP + 10))
+        self.assertEqual((d["keys"], d["answered_keys"], d["compared_keys"]), (2 * CAP + 8, 2 * CAP + 8, 2 * CAP + 10))
+        self.assertNotIn("every key", shape_q.chunk_note(d), "a failing test with unanswered keys claims no full cover")
+
+    def test_keys_left_out_of_the_together_answers_never_pass(self):
+        """A key Cube leaves out of a chunk's together answer is never compared by value, so a chunked test whose only
+        defect is such keys (no mismatch, no duplicate) is not_run (keys_not_answered), never a pass that claims every
+        key; its not_proven line counts the keys answered, and the details hold counts only."""
+        every = keys(2 * CAP + 10)
+        v, c, _t = baseline(self, 5000, KeysConn(every), KeyedClient(every, missing=[every[3], every[-2]]))
+        d = c.detail
+        self.assertEqual((c.status, d.get("reason"), d.get("mode")), ("not_run", "keys_not_answered", "chunked"), d)
+        self.assertEqual((d.get("answered_keys"), d["compared_keys"], d["total_keys"], d["mismatched"],
+                          d["duplicate_keys"]), (2 * CAP + 8, 2 * CAP + 10, 2 * CAP + 10, {}, 0))
+        (line,) = v.res.not_proven
+        self.assertNotIn("every key", line)
+        self.assertIn(f"held {2 * CAP + 8} of the {2 * CAP + 10} keys", line)
+        self.assertIn("keys_not_answered", stage_verify._next_action(v.res))
+        self.assertIsNone(re.search(r"P\d{5}", repr(d) + line + stage_verify._next_action(v.res)))
+        _v, c, _t = baseline(self, 5000, KeysConn(every), KeyedClient(every, missing=every))
+        self.assertEqual((c.status, c.detail.get("reason"), c.detail.get("answered_keys"), c.detail["keys"]),
+                         ("not_run", "keys_not_answered", 0, 0), "every chunk answering nothing is no comparison")
 
     def test_a_duplicate_key_alone_fails(self):
         every = keys(CAP + 7)
@@ -208,8 +233,9 @@ class ChunkedBaselineTest(unittest.TestCase):
         v, c, _t = baseline(self, 5000, KeysConn(every), KeyedClient(every))
         self.assertEqual(v.res.not_proven,
                          [f"v3:{PAIR}: compared every key ({CAP + 1}) in 2 chunks of at most {CAP} plus the NULL key "
-                          "group; the key set comes from one REPEATABLE READ snapshot at the start, and Cube reads each "
-                          "chunk in its own session (no snapshot shared across chunks or with SQL)"])
+                          "group; the key set comes from one REPEATABLE READ snapshot at the start, and each Cube query "
+                          "(the together query and every alone query of every chunk and of the NULL key group) reads its "
+                          "own snapshot, shared with no other query and not with SQL"])
         self.assertEqual(shape_q.chunk_note(c.detail), v.res.not_proven[0].split(": ", 1)[1])
 
 
@@ -228,9 +254,10 @@ class BudgetFallbackTest(unittest.TestCase):
 
     def test_above_the_budget_the_sample_and_its_bound_stay_and_the_budget_is_named(self):
         every = keys(CAP + 500)
-        client = KeyedClient(every)
-        v, c, _t = baseline(self, CAP + 499, KeysConn(every), client)
+        conn, client = KeysConn(every), KeyedClient(every)
+        v, c, _t = baseline(self, CAP + 499, conn, client)
         d = c.detail
+        self.assertEqual(conn.queries[1][1]["n"], CAP, "above the budget only the sample is read, never every key")
         self.assertEqual((c.status, d["sampled_keys"], d["total_keys"], d["d95_keys"], d.get("pair_key_budget")),
                          ("pass", CAP, CAP + 500, shape_q.d95_keys(CAP, CAP + 500), CAP + 499))
         self.assertNotIn("mode", d)

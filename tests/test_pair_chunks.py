@@ -254,9 +254,10 @@ class BudgetFallbackTest(unittest.TestCase):
 
     def test_above_the_budget_the_sample_and_its_bound_stay_and_the_budget_is_named(self):
         every = keys(CAP + 500)
-        client = KeyedClient(every)
-        v, c, _t = baseline(self, CAP + 499, KeysConn(every), client)
+        conn, client = KeysConn(every), KeyedClient(every)
+        v, c, _t = baseline(self, CAP + 499, conn, client)
         d = c.detail
+        self.assertEqual(conn.queries[1][1]["n"], CAP, "above the budget only the sample is read, never every key")
         self.assertEqual((c.status, d["sampled_keys"], d["total_keys"], d["d95_keys"], d.get("pair_key_budget")),
                          ("pass", CAP, CAP + 500, shape_q.d95_keys(CAP, CAP + 500), CAP + 499))
         self.assertNotIn("mode", d)

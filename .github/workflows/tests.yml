@@ -114,6 +114,43 @@ jobs:
               environment.write(f"SXC_JENA_HOME={home}\n")
           print("Apache Jena 6.2.0: archive checksum verified")
           EOF
+      # Test-time only: the W3C Software and Document License suite is read in place, never committed.
+      - name: Fetch the pinned W3C SHACL test suite
+        run: |
+          python - <<'EOF'
+          import hashlib
+          import io
+          import os
+          from pathlib import Path
+          import tarfile
+          import urllib.request
+
+          commit = "1dfcd9f30cab70ac02b049611eeba451fa1308e7"
+          url = f"https://codeload.github.com/w3c/data-shapes/legacy.tar.gz/{commit}"
+          # SHA-256 of this commit's GitHub source tarball, verified before pinning. Should GitHub ever
+          # regenerate the bytes, this fails closed; shacl-corpus separately checks the extracted content.
+          expected = "6213a0a58b9fd812b9659d9c0ceba67448f449fc4ebe22a459f1fe3e778c3646"
+          with urllib.request.urlopen(url, timeout=60) as response:
+              archive = response.read(32 * 1024 * 1024 + 1)
+          assert len(archive) <= 32 * 1024 * 1024, "W3C suite archive exceeds the download limit"
+          assert hashlib.sha256(archive).hexdigest() == expected, "W3C suite archive checksum mismatch"
+          destination = Path(os.environ["RUNNER_TEMP"]) / "sxc-w3c-data-shapes"
+          destination.mkdir()
+          with tarfile.open(fileobj=io.BytesIO(archive), mode="r:gz") as package:
+              members = []
+              for member in package.getmembers():
+                  parts = member.name.split("/", 1)
+                  if len(parts) != 2 or not (member.isfile() or member.isdir()):
+                      continue
+                  if parts[1] == "LICENSE.md" or parts[1].startswith("data-shapes-test-suite/"):
+                      member.name = parts[1]
+                      members.append(member)
+              package.extractall(destination, members=members, filter="data")
+          (destination / "PINNED_COMMIT").write_text(commit + "\n", encoding="utf-8")
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as environment:
+              environment.write(f"SXC_W3C_SHACL_SUITE={destination}\n")
+          print("W3C data-shapes test suite: archive checksum verified")
+          EOF
       - name: Install the pinned Cube adapter
         run: python skills/semantic-crosscheck/scripts/sxc.py cube-install
       # Fail here instead of letting the integration tests skip silently.
@@ -126,7 +163,7 @@ jobs:
           import subprocess
 
           import pgfixture
-          from semantic_crosscheck import cube_run, db
+          from semantic_crosscheck import cube_run, db, shacl_corpus
 
           os.environ["SXC_CI_PROBE_DSN"] = os.environ["SXC_TEST_ADMIN_DSN"]
           conn = db.connect("SXC_CI_PROBE_DSN")
@@ -141,6 +178,8 @@ jobs:
                                     "shacl.shacl", "version"], check=True, capture_output=True,
                                    text=True, timeout=30)
           assert "Apache Jena SHACL version 6.2.0" in version.stdout + version.stderr, "Jena cannot execute"
+          suite = shacl_corpus.load_w3c_suite(os.environ["SXC_W3C_SHACL_SUITE"])
+          assert suite.sha256 == shacl_corpus.W3C_SUITE_SHA256, "the W3C suite is not the pinned content"
           print("integration prerequisites: ok")
           EOF
       # The roles template exactly as the README runs it: psql, a superuser, four psql variables. The two roles

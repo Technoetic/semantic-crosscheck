@@ -36,7 +36,7 @@ python skills/semantic-crosscheck/scripts/sxc.py --version
 | `counterexample` | optional synthetic SQL mismatch search and reduction, or BOM metamorphic relations (and, with `--scenario bom_exhaustive`, the exact closure oracle over a bounded-exhaustive enumeration) for one closure SQL | `--reference-sql`, `--candidate-sql`, `--metamorphic-sql`, `--scenario`, `--seed`, `--max-examples`, `--max-shrink-steps`, `--dsn-env`, `--statement-timeout-ms`, `--constraints`, `--replay` | `counterexample/result.json`, `counterexample/fixture.json` |
 | `cube-replay` | optional actual original/mutant Cube replay against independent gold SQL on owned synthetic tables | required `--mutation-operator`, `--allow-scratch-schema`, `--seed` (7), `--dsn-env` (`SXC_CUBE_REPLAY_DSN`), `--statement-timeout-ms` (10000), `--replay` | `cube_replay/result.json`, successful bound `cube_replay/fixture.json` |
 | `tlp` | optional ternary-logic partition consistency of a synthetic relation, including exact COUNT or SUM | required `--spec FILE`, `--seed` (7), `--max-examples` (64), `--dsn-env` (`SXC_TLP_DSN`), `--statement-timeout-ms` (10000), `--replay` | `tlp/result.json`, `tlp/fixture.json` |
-| `shacl-corpus` | optional actual pySHACL and Apache Jena comparison against independent expected nonrecursive reports | `--jena-home` (`SXC_JENA_HOME`), `--timeout-ms` (30000 per case and engine) | `shacl_corpus/result.json` |
+| `shacl-corpus` | optional actual pySHACL and Apache Jena comparison against independent expected nonrecursive reports, or (after 0.8.0, unreleased) against the pinned W3C SHACL core suite's expected reports inside the sxc profile | `--jena-home` (`SXC_JENA_HOME`), `--timeout-ms` (30000 per case and engine), `--w3c-suite [DIR]` (bare: `SXC_W3C_SHACL_SUITE`), `--allow-unpinned-suite` | `shacl_corpus/result.json` |
 | `expect` | optional (after 0.8.0, unreleased) literal expected rows of `[[gold.expect]]` against the gold SQL and Cube on a dedicated fixture database | required `--allow-fixture-database`, `--dsn-env` (`SXC_EXPECT_DSN`) | `expect/result.json`, `expect/build/`, `expect/cube/`, `expect/server.log` |
 
 Common options:
@@ -229,7 +229,7 @@ parameters are ignored.
 | `demo` | `build(dirty, seed, scale) -> {"parts","edges","orders","stock","malformed","expected"}`, `load(conn, data)`, `reference(expected, variant, seed, scale)`, `TABLES`, `TableMismatch` |
 | `cube_replay` | `run(None, args, out) -> Result('cube_replay')`: actual model generation, named mutation, original/gold agreement and mutant/gold disagreement on owned synthetic schemas; hash-bound replay and scoped cleanup |
 | `tlp` | `run(None, args, out) -> Result('tlp')`: strict versioned trusted spec, bounded synthetic fixtures, materialized predicate partitions, exact multiset/aggregate comparisons and hash-bound replay |
-| `shacl_corpus` | `run(None, args, out) -> Result('shacl_corpus')`: fixed independent expected reports compared with actual pySHACL and Jena; bounded output/deadlines and owned process-tree cleanup |
+| `shacl_corpus` | `run(None, args, out) -> Result('shacl_corpus')`: fixed independent expected reports compared with actual pySHACL and Jena; bounded output/deadlines and owned process-tree cleanup. `load_w3c_suite(root)` reads W3C core manifests (bounded, inside the suite, digested) and classifies each entry against the profile; `run_w3c` runs both engines on in-profile cases |
 
 ## 5. Generated objects (names from `naming.py`)
 
@@ -283,6 +283,7 @@ configuration ids; `<member>` is a Cube member (`cube.member`); `<stratum>` is a
 | expect | `expect:fixture` | the fixture's source and closure tables hashed the same before and after the cases | `error` (`fixture_changed`, `fingerprint_failed`) |
 | expect | `expect:cases` | never passes | `not_run` (`no_cases`): no `[[gold.expect]]` case in the configuration |
 | shacl-corpus | `pyshacl:<case>`, `jena:<case>` | each actual engine independently matches the case's hand-written canonical constraint-report multiset | `fail` on a constraint, path, severity or semantic value mismatch; `error` on timeout, nonzero engine exit, malformed/missing report or cleanup failure; valid conforming empty reports are compared explicitly |
+| shacl-corpus | `w3c:<engine>:<case>` | with `--w3c-suite`: the engine (`pyshacl` or `jena`) matches the W3C suite's expected report for an approved core `sht:Validate` entry inside the sxc profile (canonical multiset; absent path/value compared, `sh:sourceShape` ignored) | `not_run` with `reason` for every entry outside the profile or an unpinned suite (`suite_not_pinned`, `unsupported_component`, `complex_path`, `non_iri_focus`, ...), so the stage never passes as a whole; `fail` on a mismatch; `error` as for the fixed corpus |
 | doctor | `python` | Python >= 3.11 | `fail` |
 | doctor | `pg8000` | pg8000 can be imported | `fail`, with the absolute pip command as the next action |
 | doctor | `dsn` | the check-role DSN variable (`source.dsn_env`, or `SXC_PG_DSN` without a configuration) is set | `fail`; the database checks after it are `not_run` (`no_dsn`) |
@@ -350,7 +351,13 @@ cases. Actual pySHACL and Jena must each match focus/path/component/severity/val
 blank-node names, source-shape labels and diagnostic messages are ignored. Missing reports are distinct
 from valid conforming empty reports. Both engines have bounded stdout/stderr, a per-case deadline and
 owned descendant cleanup. Jena is an external optional runtime; the verified Jena 6.2.0 test distribution
-uses a Java 21-compatible runtime, while HermiT's main Java 11 minimum is unchanged. Details and scope
+uses a Java 21-compatible runtime, while HermiT's main Java 11 minimum is unchanged. After 0.8.0
+(unreleased), `--w3c-suite` takes expected reports from the W3C SHACL core test suite instead, so they cannot
+share a mistake with sxc's exporter. Only approved entries whose shapes graph stays inside what
+`shapes.shapes_ttl()` emits run (sh:class and the three numeric bounds, Violation/Warning, IRI focus nodes,
+simple IRI paths); everything else is `not_run` with a reason id. The suite is pinned by a SHA-256 over the
+sorted relative paths and bytes of the files read; a different digest runs no engine unless
+`--allow-unpinned-suite`. It is read at test time, never vendored. Details and scope
 are in `docs/cube-replay.md`, `docs/tlp.md` and `docs/shacl-corpus.md`.
 
 **Literal expected rows (`expect`, after 0.8.0, unreleased).** When the gold SQL and the configuration share a

@@ -47,7 +47,7 @@ default.
 | `shacl-corpus` | [xc-shacl-corpus.md](../../../commands/xc-shacl-corpus.md) | `sxc.py shacl-corpus --jena-home /opt/apache-jena --timeout-ms 30000` |
 | `expect` | [xc-expect.md](../../../commands/xc-expect.md) | `sxc.py expect --config crosscheck.toml --allow-fixture-database` |
 
-The last three commands are optional standalone synthetic checks. They reject `--config`, ignore any
+`cube-replay`, `tlp` and `shacl-corpus` are optional standalone synthetic checks. They reject `--config`, ignore any
 working-directory configuration and preserve independent Result stages; their success does not change
 operational V1–V5 or global report coverage. `cube-replay` requires a dedicated throw-away connection
 and explicit `--allow-scratch-schema` for its owned synthetic schema lifecycle. TLP accepts trusted SQL

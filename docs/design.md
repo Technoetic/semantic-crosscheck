@@ -103,7 +103,7 @@ exit 3, so one run lists everything to fix.
   `<python>` and `<plugin>`, which `sxc.py` expands only when it prints, so a printed hint works from any
   directory while result files stay path-free (a `--home` directory the user typed is repeated as typed).
 - `res.not_proven` lists what the run could not prove (an empty stratum, an equivalent mutant, a shape compared
-  only in SQL, a vacuous defined class, a sampled pair test, a join path additivity does not apply to, a
+  only in SQL, a vacuous defined class, a sampled or chunked pair test, a join path additivity does not apply to, a
   component that is not installed). It does not
   change the status; `report` shows every line.
 - `res.next_safe_action` is one sentence the agent can follow.

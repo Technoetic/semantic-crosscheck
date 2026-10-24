@@ -31,7 +31,7 @@ COMMAND_DOC = {"doctor": "xc-doctor.md", "demo": "xc-demo.md", "build": "xc-buil
                "cube": "xc-cube.md", "verify": "xc-verify.md", "report": "xc-report.md", "cube-install": "xc-install.md",
                "counterexample": "xc-counterexample.md", "cube-replay": "xc-cube-replay.md",
                "tlp": "xc-tlp.md", "shacl-corpus": "xc-shacl-corpus.md"}
-OPTION = re.compile(r"(?<![\w-])--[a-z][a-z-]*")
+OPTION = re.compile(r"(?<![\w-])--[a-z][a-z0-9-]*")   # digits too: --w3c-suite
 UNESCAPED_PIPE = re.compile(r"(?<!\\)\|")
 TOML_SECTION = {"[source]": "source", "[hierarchies.<name>]": "hierarchies.h", "[cube]": "cube", "[verify]": "verify"}
 BASE = 'version = 1\n[source]\nschemas = ["s"]\n'

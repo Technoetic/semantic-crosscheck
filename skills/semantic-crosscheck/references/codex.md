@@ -75,7 +75,9 @@ actual validators against independent expected reports.
 - Auxiliary tests use `SXC_CUBE_REPLAY_DSN` and `SXC_TLP_DSN` for dedicated synthetic test connections.
   They never infer authorization to select operational DSNs. `SXC_JENA_HOME` selects an external Jena
   distribution for `shacl-corpus`; the tested Jena 6.2.0 distribution needs a Java 21-compatible runtime.
-  This optional engine does not change HermiT's Java 11 minimum.
+  This optional engine does not change HermiT's Java 11 minimum. `SXC_W3C_SHACL_SUITE` names a W3C
+  data-shapes checkout for `shacl-corpus --w3c-suite` (after 0.8.0, unreleased); it is read only when that
+  option is given, and an unpinned suite runs no engine.
 - `SXC_CUBE_DEBUG=1` and `SXC_DEBUG=1` are for the user's local debugging only: their output can hold row
   values, so do not set them on your own and never paste what they print.
 

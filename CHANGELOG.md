@@ -6,6 +6,17 @@ All notable changes to this project are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `shacl-corpus --w3c-suite [DIR]` (or `SXC_W3C_SHACL_SUITE` with a bare `--w3c-suite`) compares pySHACL and Apache Jena
+  with the expected reports of the W3C SHACL core test suite instead of the fixed corpus. Only approved `sht:Validate`
+  entries inside the sxc profile run (`sh:class` and the three numeric bounds, Violation/Warning, IRI focus nodes, simple
+  IRI paths); every other entry is `not_run` with a reason id, so the stage never passes as a whole. Check ids are
+  `w3c:<engine>:<case>`. The suite is pinned at w3c/data-shapes `1dfcd9f` by a digest over the files read; an unpinned
+  suite runs no engine unless `--allow-unpinned-suite`. On the pinned suite both engines match all 6 in-profile cases.
+- The integration CI job fetches the pinned suite tarball, verifies its SHA-256 and the content digest, and runs the
+  W3C subset; the suite is read at test time under the W3C Software and Document License and never vendored.
+
 ## [0.8.0] - 2026-10-23
 
 Release notes: [docs/releases/v0.8.0.md](docs/releases/v0.8.0.md).

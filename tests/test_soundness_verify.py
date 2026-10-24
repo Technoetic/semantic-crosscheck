@@ -6,7 +6,8 @@
   CubeVerifyTest    (database + Cube)  a database that refuses the mutant's connections makes the V4 check an error,
                                        never a kill; a closure that did not pass in build gates the closure mutants
                                        (no false survivor on a stale closure table); V3 pair tests above the key cap
-                                       compare a deterministic sample that Cube filters
+                                       compare a deterministic sample that Cube filters, and within
+                                       verify.pair_key_budget every key in chunks plus the NULL key group (notSet)
   TypedVerifyTest   (database + Cube)  text keys that look numeric stay distinct, timestamps with a time of day match
                                        Cube's rendering, and text that differs only in its spelling of a number fails
 
@@ -241,8 +242,10 @@ class CubeVerifyTest(unittest.TestCase):
         self.assertEqual(res.status, "not_run")
 
     def test_pair_tests_above_the_cap_compare_a_sample(self):
+        cfg = copy.deepcopy(self.cfg)
+        cfg.verify.pair_key_budget = 40           # the budget at the cap, like the default, so nothing is chunked
         with mock.patch.object(shape_q, "PAIR_KEY_CAP", 40):
-            res = self.verify(self.cfg, self.out("sampled"), ["v3"])
+            res = self.verify(cfg, self.out("sampled"), ["v3"])
         pairs = [c for c in res.checks if c.id.startswith("v3:pair:")]
         self.assertEqual(len(pairs), 4)
         for c in pairs:
@@ -253,6 +256,27 @@ class CubeVerifyTest(unittest.TestCase):
                     "the other keys were not compared")
             self.assertEqual(c.detail["d95_keys"], shape_q.d95_keys(40, c.detail["total_keys"]), c.id)
             prefix = f"{note}; a mismatch affecting at least {c.detail['d95_keys']} keys ("
+            line = next((line for line in res.not_proven if line.startswith(prefix)), "")
+            self.assertTrue(line, c.id)
+            self.assertIn("exceeds verify.pair_key_budget (40)", line)
+        self.assertEqual([c.id for c in res.checks if c.status not in ("pass",) and not c.id.startswith("scope:")], [])
+
+    def test_pair_tests_within_the_budget_compare_every_key_in_chunks(self):
+        cfg = copy.deepcopy(self.cfg)
+        cfg.verify.pair_key_budget = 10_000       # above every key count of the demo
+        with mock.patch.object(shape_q, "PAIR_KEY_CAP", 500):
+            res = self.verify(cfg, self.out("chunked"), ["v3"])
+        pairs = [c for c in res.checks if c.id.startswith("v3:pair:")]
+        self.assertEqual(len(pairs), 4)
+        for c in pairs:
+            d = c.detail
+            self.assertEqual((c.status, d.get("mode"), d["duplicate_keys"], d["mismatched"]), ("pass", "chunked", 0, {}),
+                             c.id)
+            self.assertGreater(d["total_keys"], 500, c.id)
+            self.assertEqual((d["compared_keys"], d["chunks"]), (d["total_keys"], -(-d["total_keys"] // 500)), c.id)
+            self.assertFalse({"sampled_keys", "d95_keys", "d95_rate"} & set(d), c.id)
+            self.assertEqual((d["null_key_group"]["mismatched"], d["null_key_group"]["duplicate_keys"]), ({}, 0), c.id)
+            prefix = f"{c.id}: compared every key ({d['total_keys']}) in {d['chunks']} chunks of at most 500 plus the NULL"
             self.assertTrue(any(line.startswith(prefix) for line in res.not_proven), c.id)
         self.assertEqual([c.id for c in res.checks if c.status not in ("pass",) and not c.id.startswith("scope:")], [])
 

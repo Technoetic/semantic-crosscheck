@@ -21,6 +21,7 @@ AGGS = ("sum", "count", "min", "max")
 DEFINED_KINDS = ("has_child", "has_parent", "contains_class", "class_with_child", "class_used_as_part")
 STRATA = ("top", "mid", "leaf", "leaf_parent", "deep", "shared", "empty")
 CUBE_VERSION = "1.8.3"           # the adapter's package-lock and native hashes are pinned to this release
+PAIR_KEY_CAP = 2000              # keys per V3 pair query (shape_q: the sample and chunk size); the least budget
 TABLES = ("version", "source", "entities", "hierarchies", "shapes", "measures", "ontology", "cube", "verify", "gold")
 _MEMBER = re.compile(r"^[a-z_][a-z0-9_]{0,62}\.[a-z_][a-z0-9_]{0,62}$")
 _ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
@@ -203,6 +204,7 @@ class Verify:
     mutant_bindings: int = 3       # bindings per stratum replayed against each mutant
     shacl_max_rows: int = 200000
     owl_max_individuals: int = 50000
+    pair_key_budget: int = PAIR_KEY_CAP   # keys a V3 pair test may compare in full, in chunks of PAIR_KEY_CAP
 
 
 @dataclass
@@ -331,6 +333,7 @@ def _load(path: str | Path) -> Config:
     _int("verify.mutant_bindings", verify.mutant_bindings, 1)
     _int("verify.shacl_max_rows", verify.shacl_max_rows, 1)
     _int("verify.owl_max_individuals", verify.owl_max_individuals, 1)
+    _int("verify.pair_key_budget", verify.pair_key_budget, PAIR_KEY_CAP)
     ops = verify.mutation_operators
     if ops != "default" and not (isinstance(ops, list) and all(isinstance(op, str) for op in ops)):
         _err("verify.mutation_operators", 'use "default" or a list of operator names')

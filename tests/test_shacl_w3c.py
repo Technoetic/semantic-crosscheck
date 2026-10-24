@@ -176,6 +176,7 @@ class W3CSuiteTests(unittest.TestCase):
         features = {case.id: case.features for case in suite.cases}
         self.assertIn('datatype', features['core/datatype'])
         self.assertIn('property', features['core/nested'])
+        self.assertEqual(features['core/imports'], ('owl_imports',))
         for case in suite.cases:
             with self.subTest(case=case.id):
                 self.assertIsNone(case.expected)

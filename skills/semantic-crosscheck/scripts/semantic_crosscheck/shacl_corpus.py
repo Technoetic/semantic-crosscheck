@@ -600,7 +600,7 @@ def _w3c_profile(graph):
         flag('unsupported_component', name)
     if (None, URIRef(OWL_IMPORTS), None) in graph:
         # Engines could follow an import; nothing outside the digested files may enter a case.
-        flag('unsupported_component', 'owl:imports')
+        flag('unsupported_component', 'owl_imports')
     shape_nodes = set()
     for name in used.keys() & _SHAPE_MARKS:
         shape_nodes |= used[name]
@@ -836,7 +836,7 @@ def run_w3c(suite, allow_unpinned, home, java, timeout):
         for case in suite.cases:
             reason = case.reason if runnable else 'suite_not_pinned'
             for engine in ('pyshacl', 'jena'):
-                check_id = 'w3c:' + engine + ':' + case.id
+                check_id = f'w3c:{engine}:{case.id}'
                 if reason:
                     features = {'features': list(case.features)} if case.features and runnable else {}
                     result.add(check_id, 'not_run', '', reason=reason, **features)

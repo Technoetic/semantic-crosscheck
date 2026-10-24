@@ -147,6 +147,11 @@ def parser() -> argparse.ArgumentParser:
     s = sub.add_parser("shacl-corpus", parents=[common], help="compare pySHACL and Apache Jena against independently expected nonrecursive synthetic reports")
     s.add_argument("--jena-home", default="", help="Apache Jena distribution directory (default: SXC_JENA_HOME)")
     s.add_argument("--timeout-ms", type=int, default=30000, help="per-engine-process deadline in milliseconds")
+    s.add_argument("--w3c-suite", nargs="?", const="", default=None, metavar="DIR",
+                   help="instead of the fixed corpus, run the W3C data-shapes core cases inside the sxc profile against "
+                        "their expected reports; DIR is a w3c/data-shapes checkout (without DIR: SXC_W3C_SHACL_SUITE)")
+    s.add_argument("--allow-unpinned-suite", action="store_true",
+                   help="with --w3c-suite: run a suite whose content digest differs from the pinned commit")
     return p
 
 

@@ -159,7 +159,9 @@ def parser() -> argparse.ArgumentParser:
     s.add_argument("--dsn-env", default="SXC_EXPECT_DSN", help="NAME of the environment variable holding the DSN of the dedicated "
                                                                "fixture database (never an operational one)")
     s.add_argument("--allow-fixture-database", action="store_true", help="explicitly permit building the configured views and "
-                                                                          "closure tables in that database's output schema")
+                                                                          "closure tables in that database's output schema, "
+                                                                          "and holding SHARE locks on the fixture's source and "
+                                                                          "closure tables while the cases run (writers wait)")
     return p
 
 

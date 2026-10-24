@@ -13,6 +13,7 @@ tests/test_expect_pg.py runs the stage against PostgreSQL and Cube.
 """
 
 import contextlib
+import hashlib
 import importlib
 import io
 import json
@@ -27,7 +28,7 @@ from unittest.mock import patch
 import pgfixture
 
 import sxc
-from semantic_crosscheck import config, report
+from semantic_crosscheck import config, ident, naming, report
 from semantic_crosscheck.result import EXIT_CONFIG, EXIT_ENV, Result, StageError
 
 try:
@@ -377,6 +378,7 @@ class GuardTest(unittest.TestCase):
                              args(allow_fixture_database=False))
         self.assertEqual(e.exit_code, EXIT_CONFIG)
         self.assertIn("--allow-fixture-database", str(e))
+        self.assertIn("SHARE locks on the fixture's source and closure tables", str(e))   # what the consent covers
 
     def test_an_unset_fixture_variable_is_an_environment_error(self):
         e = self.run_guarded(dict(OPERATIONAL), args())
@@ -443,8 +445,8 @@ def digest(fixture=PIN, tables="b" * 64):
 
 
 class FakeConn:
-    def __init__(self, log, lock_error=None):
-        self.log, self.lock_error = log, lock_error
+    def __init__(self, log, lock_error=None, closed=None):
+        self.log, self.lock_error, self.closed = log, lock_error, closed
 
     def run(self, sql, **_params):
         self.log.append(sql)
@@ -454,6 +456,8 @@ class FakeConn:
 
     def close(self):
         self.log.append("close")
+        if self.closed:
+            self.closed()
 
 
 class FakeClient:
@@ -508,7 +512,8 @@ class RunTest(unittest.TestCase):
 
         def fake_connect(_name):
             order.append("connect")
-            return FakeConn(sql, lock_error if order.count("connect") == 2 else None)
+            n = order.count("connect")   # 1: the stage's connection, 2: the session holding the SHARE locks
+            return FakeConn(sql, lock_error if n == 2 else None, lambda: order.append(f"close{n}"))
 
         def fake_gold_rows(_conn, _cfg, _gold, _params):
             order.append("gold")
@@ -537,6 +542,12 @@ class RunTest(unittest.TestCase):
         self.assertEqual(res.status, "pass", res.to_dict())
         self.assertEqual(order[:3], ["connect", "digest0", "build"], "the first digest must precede the build")
         self.assertLess(order.index("connect", 1), order.index("serve"))
+        # The locks are held while the cases run: the lock session closes after Cube served them and after the
+        # last digest, not after the first digest of the cases.
+        last_digest = max(i for i, step in enumerate(order) if step.startswith("digest"))
+        self.assertEqual([order[last_digest], order.count("close2")], ["digest1", 1])
+        self.assertGreater(order.index("close2"), order.index("serve"))
+        self.assertGreater(order.index("close2"), last_digest)
         fixture = checks["expect:fixture"].detail
         self.assertEqual((fixture["fixture_sha256"], fixture["locked"], fixture["operational_variables_compared"]),
                          (PIN, True, 2))
@@ -630,7 +641,10 @@ class RunTest(unittest.TestCase):
         res, checks, _order, _sql = self.stage(lock_error=ValueError("permission denied"))
         self.assertEqual(res.status, "pass")
         self.assertFalse(checks["expect:fixture"].detail["locked"])
-        self.assertTrue(any("could not be locked" in n for n in res.not_proven))
+        note = next(n for n in res.not_proven if "could not be locked" in n)
+        # Any expected error drops the locks, not only missing privileges: the note gives both causes as examples.
+        self.assertIn("for example a role without UPDATE, DELETE, TRUNCATE or MAINTAIN", note)
+        self.assertIn("a conflicting lock held past source.statement_timeout_ms", note)
 
     def test_common_mode_and_regression_first_check_the_fixture_and_the_rows(self):
         wrong = [dict(RUN_CUBE[0]), dict(RUN_CUBE[1], **{"has_component_closure.qty": "6"})]
@@ -639,16 +653,77 @@ class RunTest(unittest.TestCase):
         self.assertEqual(checks["expect:q01_explosion[0]"].detail["reason"], "common_mode")
         self.assertIn("first check that the fixture rows and the expected rows follow the cited specification",
                       res.next_safe_action)
+        # Captured rows need not cite a specification and come from a run: the first check is the fixture they were
+        # captured on.
         captured = BASE + GOLD + case_text(source='"captured"', spec=None)
         res, checks, _order, _sql = self.stage(text=captured, cube_rows=wrong, gold_rows=shared)
         self.assertEqual(checks["expect:q01_explosion[0]"].detail["reason"], "regression")
-        self.assertIn("first check that the fixture rows and the expected rows follow the cited specification",
-                      res.next_safe_action)
+        self.assertIn("first check that the loaded fixture is the one the rows were captured on (compare "
+                      "expect:fixture's fixture_sha256 with the case's pin, or pin it)", res.next_safe_action)
+        self.assertNotIn("cited specification", res.next_safe_action)
 
     def test_a_pass_of_captured_cases_only_says_so(self):
         res, _checks, _order, _sql = self.stage(text=BASE + GOLD + case_text(source='"captured"', spec=None))
         self.assertEqual(res.status, "pass")
         self.assertIn("every case is captured", res.next_safe_action)
+
+
+class FixtureDigestTest(unittest.TestCase):
+    """fixture_digest on a recording connection. A stored fixture_sha256 pin is compared across runs and databases, so
+    it must depend on the rows and the column types, not on the database's default collation or the session's
+    display settings: the digest orders the row text by COLLATE "C" and fixes the settings that change it."""
+
+    SETTINGS = ["SET LOCAL TimeZone = 'UTC'", "SET LOCAL DateStyle = 'ISO, YMD'", "SET LOCAL IntervalStyle = 'postgres'",
+                "SET LOCAL extra_float_digits = 1", "SET LOCAL bytea_output = 'hex'", "SET LOCAL lc_monetary = 'C'"]
+
+    def setUp(self):
+        self.assertIsNotNone(expect, "the expect stage (semantic_crosscheck.expect) is missing")
+
+    def digest(self, hierarchies=()):
+        sql = []
+
+        class Recording:
+            def run(self, statement, **_params):
+                sql.append(statement)
+                return [(3, "0" * 32)] if statement.startswith("SELECT count(*)") else []
+
+        cfg = load(BASE + GOLD + CASE)
+        return cfg, expect.fixture_digest(Recording(), cfg, hierarchies), sql
+
+    def test_the_settings_are_fixed_inside_the_digest_transaction(self):
+        _cfg, _out, sql = self.digest(["has_component"])
+        self.assertTrue(sql[0].startswith("BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY"), sql[0])
+        self.assertEqual(sql[-1], "ROLLBACK")   # SET LOCAL ends with the transaction: the session keeps its own
+        first = next(i for i, s in enumerate(sql) if s.startswith("SELECT"))
+        self.assertEqual([s for s in sql[:first] if s.startswith("SET LOCAL") and "statement_timeout" not in s],
+                         self.SETTINGS)
+        self.assertFalse(any(s.startswith("SET ") and not s.startswith("SET LOCAL") for s in sql))
+
+    def test_every_table_is_hashed_in_C_collation_order(self):
+        cfg, _out, sql = self.digest(["has_component"])
+        selects = [s for s in sql if s.startswith("SELECT")]
+        relations = sorted(["sxc_demo.bom_line", "sxc_demo.part", naming.closure_table(cfg, "has_component")])
+        self.assertEqual(len(selects), len(relations))
+        for statement, relation in zip(selects, relations):
+            with self.subTest(relation=relation):
+                self.assertEqual(statement, "SELECT count(*), md5(coalesce(string_agg(t::text, E'\\n' ORDER BY "
+                                            f"t::text COLLATE \"C\"), '')) FROM {ident.qualified(relation)} t")
+
+    def test_the_digests_are_version_2(self):
+        cfg, out, _sql = self.digest(["has_component"])
+
+        def part(relation):
+            return f"{relation}\0{3}\0{'0' * 32}\0".encode("utf-8")
+
+        sources = ["sxc_demo.bom_line", "sxc_demo.part"]
+        tables = sorted([*sources, naming.closure_table(cfg, "has_component")])
+        self.assertEqual(out["fixture_sha256"],
+                         hashlib.sha256(b"sxc-expect-fixture-v2\0" + b"".join(map(part, sources))).hexdigest())
+        self.assertEqual(out["tables_sha256"],
+                         hashlib.sha256(b"sxc-expect-tables-v2\0" + b"".join(map(part, tables))).hexdigest())
+        self.assertEqual(out["rows"], 9)
+        _cfg, before_build, _sql = self.digest()
+        self.assertEqual(before_build["fixture_sha256"], out["fixture_sha256"])   # the pin covers the source tables
 
 
 class CommandLineTest(unittest.TestCase):
@@ -661,6 +736,9 @@ class CommandLineTest(unittest.TestCase):
         ns = sxc.parser().parse_args(["expect", "--config", "x.toml", "--allow-fixture-database"])
         self.assertEqual((ns.dsn_env, ns.allow_fixture_database), ("SXC_EXPECT_DSN", True))
         self.assertFalse(sxc.parser().parse_args(["expect"]).allow_fixture_database)
+        stage = next(a for a in sxc.parser()._actions if a.dest == "stage").choices["expect"]
+        consent = next(a for a in stage._actions if "--allow-fixture-database" in a.option_strings)
+        self.assertIn("SHARE locks on the fixture's source and closure tables", consent.help)
 
     def test_refusal_writes_a_count_only_result_and_leaves_operational_results_alone(self):
         with config_dir(BASE + GOLD + CASE) as path:

@@ -12,12 +12,13 @@ Hierarchy closures are recursive and cannot be mocked, so both sides really run 
      the same server, or an operational variable that is not set, is not detected: expect:fixture counts the
      variables compared and not_proven names the unset ones, so the fixture must be a dedicated database.
   2. The fixture database is the user's: it already holds the source tables and the fixture rows. sxc executes no
-     fixture SQL and never connects to an operational DSN. The source tables are fingerprinted first (fixture_sha256);
-     a case that pins another fixture_sha256 is not_run (fixture_mismatch). A copy of the configuration whose DSN
-     variables all name the fixture variable then runs the normal build and cube stages into <out>/expect/ (build
-     writes its views and closure tables into the fixture database's output schema: what the consent flag allows;
-     they stay there, nothing is cleaned up), so the operational build/ and cube/ results are never touched.
-     expect:build and expect:cube summarise them.
+     fixture SQL and never connects to an operational DSN. The source tables are fingerprinted first (fixture_sha256,
+     row text in COLLATE "C" order under fixed session settings, so a pin depends on the rows and column types, not
+     on database defaults); a case that pins another fixture_sha256 is not_run (fixture_mismatch). A copy of the
+     configuration whose DSN variables all name the fixture variable then runs the normal build and cube stages into
+     <out>/expect/ (build writes its views and closure tables into the fixture database's output schema: what the
+     consent flag allows; they stay there, nothing is cleaned up), so the operational build/ and cube/ results are
+     never touched. expect:build and expect:cube summarise them.
   3. One Cube process serves the cases (log in expect/server.log; the inner cube stage starts its own for cube:meta).
      For every case the gold SQL (READ ONLY, the case's bound parameters) and the gold's cube_query each give rows
      that are compared with the expected rows (compare.compare_rows, typed by the model's member kinds): gold
@@ -32,10 +33,10 @@ Hierarchy closures are recursive and cannot be mocked, so both sides really run 
      serve the model (cube:meta); every not_run case gets a not_proven line.
   5. expect:fixture compares the source-table digest taken before the build with the digests of the source and built
      closure tables taken before and after the cases (row count and md5 computed in the database; only the hash
-     leaves it), while a second session holds SHARE locks on those tables (as cube_replay does) so that writers wait.
-     A change is an error and turns every passing case into not_run (fixture_changed). The digests show equality at
-     those points, not one shared snapshot, and cover no other table; gold and Cube read in separate sessions:
-     not_proven says so.
+     leaves it), while a second session holds SHARE locks on those tables when the role can take them (as cube_replay
+     does), so that writers wait; otherwise locked is false and not_proven says so. A change is an error and turns
+     every passing case into not_run (fixture_changed). The digests show equality at those points, not one shared
+     snapshot, and cover no other table; gold and Cube read in separate sessions: not_proven says so.
 Captured rows come from a run, not from a specification: a captured pass shows only that nothing changed since the
 capture, carries independent = false and is listed in not_proven. The result is reported separately: report never
 reads it, and no pass widens operational V1-V5 or report coverage. Results hold counts, ids and hashes only, never
@@ -56,7 +57,15 @@ from .result import EXIT_CONFIG, EXIT_ENV, Result, StageError
 _ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 _SEVERITY = ("error", "fail", "not_run")
 OPERATIONAL = ("source.dsn_env", "source.owner_dsn_env", "cube.dsn_env")
-DIGEST_SQL = "SELECT count(*), md5(coalesce(string_agg(t::text, E'\\n' ORDER BY t::text), '')) FROM {relation} t"
+DIGEST_SQL = ("SELECT count(*), md5(coalesce(string_agg(t::text, E'\\n' ORDER BY t::text COLLATE \"C\"), '')) "
+              "FROM {relation} t")
+# A case stores fixture_sha256 as a pin and compares it across runs and databases, so the digest must depend on the
+# rows and the column types, not on the database's defaults: the row text is ordered by COLLATE "C" (byte order, not
+# the database's default collation), and these settings, which change the text of timestamptz, date and time,
+# interval, float, bytea and money values, are fixed for the digest's transaction only.
+DIGEST_SETTINGS = ("SET LOCAL TimeZone = 'UTC'", "SET LOCAL DateStyle = 'ISO, YMD'",
+                   "SET LOCAL IntervalStyle = 'postgres'", "SET LOCAL extra_float_digits = 1",
+                   "SET LOCAL bytea_output = 'hex'", "SET LOCAL lc_monetary = 'C'")
 SCOPE_NOTE = ("expect ran the gold queries and the Cube model on the fixture database only; its result is reported "
               "separately and widens neither operational V1-V5 nor report coverage")
 DSN_NOTE = ("the fixture DSN was compared with the {n} operational DSN variable(s) set in this environment, by value "
@@ -68,8 +77,9 @@ FIXTURE_NOTE = ("expect:fixture shows the fixture's source tables equal before t
                 "source and built closure tables equal before and after the cases: equality at those points, not one "
                 "shared snapshot; it covers only the entity and built closure tables, not other tables the gold SQL "
                 "reads, and the gold SQL and Cube read the fixture in separate sessions")
-LOCK_NOTE = ("the fixture's tables could not be locked against writes during the cases (SHARE mode needs UPDATE, "
-             "DELETE, TRUNCATE or MAINTAIN on them), so only the digests show that they did not change")
+LOCK_NOTE = ("the fixture's tables could not be locked against writes during the cases (for example a role without "
+             "UPDATE, DELETE, TRUNCATE or MAINTAIN on them, or a conflicting lock held past "
+             "source.statement_timeout_ms), so only the digests show that they did not change")
 AUTHORED_NOTE = ("authored expected rows are independent of the gold SQL and the configuration only as far as they "
                  "were written from the cited specification; a case covers its fixture rows and parameters, not the "
                  "operational data")
@@ -108,7 +118,9 @@ def fixture_env(cfg, args) -> str:
     """The fixture DSN variable, after the guards that run before anything connects (StageError otherwise)."""
     if getattr(args, "allow_fixture_database", False) is not True:
         raise StageError("expect: --allow-fixture-database is required: the stage builds the configured views and "
-                         "closure tables in the output schema of the fixture database named by --dsn-env", EXIT_CONFIG)
+                         "closure tables in the output schema of the fixture database named by --dsn-env, and holds "
+                         "SHARE locks on the fixture's source and closure tables while the cases run, so writers to "
+                         "them wait", EXIT_CONFIG)
     name = getattr(args, "dsn_env", None)
     if not isinstance(name, str) or not _ENV_NAME.fullmatch(name):
         raise StageError("expect: --dsn-env must be the NAME of an environment variable holding the fixture DSN",
@@ -226,10 +238,14 @@ def fixture_relations(cfg, hierarchies=()) -> list[str]:
 def fixture_digest(conn, cfg, hierarchies=()) -> dict:
     """Digests of the fixture read in one REPEATABLE READ snapshot: fixture_sha256 over the row count and md5 of every
     source table (what a case pins), tables_sha256 over those and the closure tables of `hierarchies`, and the total
-    row count. Only hashes and counts leave the database."""
+    row count. The row text is ordered by COLLATE "C" under DIGEST_SETTINGS, so a pin depends on the rows and the
+    column types (and the database encoding the text is hashed in), not on the default collation or the session's
+    settings (v2; v1 depended on both). Only hashes and counts leave the database."""
     sources = {e.table for e in cfg.entities.values()}
-    fixture, tables, rows = hashlib.sha256(b"sxc-expect-fixture-v1\0"), hashlib.sha256(b"sxc-expect-tables-v1\0"), 0
+    fixture, tables, rows = hashlib.sha256(b"sxc-expect-fixture-v2\0"), hashlib.sha256(b"sxc-expect-tables-v2\0"), 0
     with db.read_only(conn, cfg.source.statement_timeout_ms, isolation="repeatable read"):
+        for setting in DIGEST_SETTINGS:
+            conn.run(setting)
         for relation in fixture_relations(cfg, hierarchies):
             n, md5 = conn.run(DIGEST_SQL.format(relation=ident.qualified(relation)))[0]
             rows += int(n)
@@ -244,8 +260,8 @@ def fixture_digest(conn, cfg, hierarchies=()) -> dict:
 def share_locks(env: str, cfg, relations):
     """SHARE locks on `relations`, held from a second session of the fixture DSN until the block ends (as cube_replay
     does): the gold SQL and Cube can still read them, a writer waits. Yields False when a lock could not be taken
-    (for example a role without UPDATE, DELETE, TRUNCATE or MAINTAIN on a table); the digests are then the only
-    check."""
+    (for example a role without UPDATE, DELETE, TRUNCATE or MAINTAIN on a table, or a conflicting lock held past
+    source.statement_timeout_ms); the digests are then the only check."""
     conn = db.connect(env)
     try:
         held = contextlib.ExitStack()
@@ -438,9 +454,10 @@ _ACTIONS = {
                    "fixture looks the same; pin fixture_sha256); only when both do, fix the gold SQL and the "
                    "configuration entry they share, otherwise correct the fixture or the rows, then rerun expect",
     "regression": "{id}: the gold SQL and Cube agree with each other but not with the captured rows of {ref}: first "
-                  "check that the fixture rows and the expected rows follow the cited specification (another fixture "
-                  "looks the same; pin fixture_sha256); only when both do, the gold SQL and Cube changed since the "
-                  "capture: fix the change, or confirm it is intended and capture the rows again, then rerun expect",
+                  "check that the loaded fixture is the one the rows were captured on (compare expect:fixture's "
+                  "fixture_sha256 with the case's pin, or pin it); only when it is, the gold SQL and Cube changed "
+                  "since the capture: fix the change, or confirm it is intended and capture the rows again, then "
+                  "rerun expect",
     "expected_duplicate_keys": "{id}: the expected rows of {ref} hold keys that are equal in the form of their Cube "
                                "type (for example 1 and \"1\"): make every key distinct, then rerun expect",
     "fixture_mismatch": "{id}: the fixture's source tables do not have the fixture_sha256 that {ref} pins: load the "

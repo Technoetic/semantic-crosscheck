@@ -229,7 +229,7 @@ parameters are ignored.
 | `demo` | `build(dirty, seed, scale) -> {"parts","edges","orders","stock","malformed","expected"}`, `load(conn, data)`, `reference(expected, variant, seed, scale)`, `TABLES`, `TableMismatch` |
 | `cube_replay` | `run(None, args, out) -> Result('cube_replay')`: actual model generation, named mutation, original/gold agreement and mutant/gold disagreement on owned synthetic schemas; hash-bound replay and scoped cleanup |
 | `tlp` | `run(None, args, out) -> Result('tlp')`: strict versioned trusted spec, bounded synthetic fixtures, materialized predicate partitions, exact multiset/aggregate comparisons and hash-bound replay |
-| `shacl_corpus` | `run(None, args, out) -> Result('shacl_corpus')`: fixed independent expected reports compared with actual pySHACL and Jena; bounded output/deadlines and owned process-tree cleanup. `load_w3c_suite(root)` reads W3C core manifests (bounded, inside the suite, digested) and classifies each entry against the profile; `run_w3c` runs both engines on in-profile cases |
+| `shacl_corpus` | `run(None, args, out) -> Result('shacl_corpus')`: fixed independent expected reports compared with actual pySHACL and Jena; bounded output/deadlines and owned process-tree cleanup. After 0.8.0 (unreleased), `load_w3c_suite(root)` reads W3C core manifests (bounded, inside the suite, digested) and classifies each entry against the profile; `run_w3c` runs both engines on in-profile cases |
 
 ## 5. Generated objects (names from `naming.py`)
 
@@ -354,11 +354,15 @@ from valid conforming empty reports. Both engines have bounded stdout/stderr, a 
 owned descendant cleanup. Jena is an external optional runtime; the verified Jena 6.2.0 test distribution
 uses a Java 21-compatible runtime, while HermiT's main Java 11 minimum is unchanged. After 0.8.0
 (unreleased), `--w3c-suite` takes expected reports from the W3C SHACL core test suite instead, so they cannot
-share a mistake with sxc's exporter. Only approved entries whose shapes graph stays inside what
-`shapes.shapes_ttl()` emits run (sh:class and the three numeric bounds, Violation/Warning, IRI focus nodes,
-simple IRI paths); everything else is `not_run` with a reason id. The suite is pinned by a SHA-256 over the
-sorted relative paths and bytes of the files read; a different digest runs no engine unless
-`--allow-unpinned-suite`. It is read at test time, never vendored. Details and scope
+share a mistake with the fixed corpus. Both engines validate the suite's own shapes and data graphs: the mode
+checks engine conformance on the components sxc emits, not sxc's exporter, so it complements the fixed corpus
+(run both) and says so in `not_proven`. Only approved entries inside the sxc profile run: the components and
+severities `shapes.shapes_ttl()` emits (sh:class and the three numeric bounds, one Violation or Warning
+severity) on IRI focus nodes, through sh:targetClass, sh:targetNode, implicit class targets or node-level
+shapes, with no path or one IRI path; everything else is `not_run` with a reason id. The suite is pinned by a
+SHA-256 over the sorted relative paths and bytes of the files read; a different digest runs no engine unless
+`--allow-unpinned-suite`, and then the `not_run` check `w3c:suite` keeps the stage from passing. It is read
+at test time, never vendored. Details and scope
 are in `docs/cube-replay.md`, `docs/tlp.md` and `docs/shacl-corpus.md`.
 
 **Literal expected rows (`expect`, after 0.8.0, unreleased).** When the gold SQL and the configuration share a

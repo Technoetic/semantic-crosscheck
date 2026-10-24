@@ -22,10 +22,12 @@ A runtime error, timeout, malformed report, missing report or mismatch cannot
 pass. The stage's `not_proven` explicitly limits the conclusion to this corpus;
 it does not change operational V1–V5 or global report coverage.
 
-The optional `--w3c-suite` mode (after 0.8.0, unreleased) replaces this fixed
-corpus with expected reports written by the W3C Data Shapes working group; see
-[W3C core subset](#w3c-core-subset). Without the option the fixed corpus runs
-exactly as described here, even when `SXC_W3C_SHACL_SUITE` is set.
+The optional `--w3c-suite` mode (after 0.8.0, unreleased) runs instead of this
+fixed corpus in that invocation, with expected reports written by the W3C Data
+Shapes working group. It validates the suite's own graphs and does not exercise
+sxc's exporter, so it complements the fixed corpus: run both, each with its own
+`--out`; see [W3C core subset](#w3c-core-subset). Without the option the fixed
+corpus runs exactly as described here, even when `SXC_W3C_SHACL_SUITE` is set.
 
 ## Corpus and independent expectations
 
@@ -87,7 +89,12 @@ Windows backslash paths and safely represent spaces.
 The fixed corpus's expected tuples and sxc's exporter are written by the same
 project, so they can share a mistake. This mode takes the expected reports from
 the [W3C SHACL test suite](https://w3c.github.io/data-shapes/data-shapes-test-suite/)
-instead and runs the core cases that stay inside what sxc emits.
+instead and checks both engines' conformance on the core cases inside the sxc
+profile, using the suite's own shapes and data graphs. sxc's exporter
+(`shapes.shapes_ttl()` and `shacl_check.build_graph`) is not exercised in this
+mode, so it complements the fixed corpus rather than replacing it: run both, each
+with its own `--out`, since both write `shacl_corpus/result.json`. The result's
+`not_proven` says so.
 
 ```console
 python skills/semantic-crosscheck/scripts/sxc.py shacl-corpus --w3c-suite /path/to/w3c-data-shapes --jena-home /opt/apache-jena
@@ -95,14 +102,15 @@ python skills/semantic-crosscheck/scripts/sxc.py shacl-corpus --w3c-suite /path/
 
 `DIR` is a checkout or extracted archive of
 [w3c/data-shapes](https://github.com/w3c/data-shapes) that contains
-`data-shapes-test-suite/tests/core/manifest.ttl` (optionally with a
-`PINNED_COMMIT` file naming its commit). `--w3c-suite` without `DIR` reads the
-directory from `SXC_W3C_SHACL_SUITE`; the variable alone never switches the
-mode. Engines, Jena location, timeouts, output caps and process cleanup are the
-fixed corpus's. A missing directory or core manifest is exit 3. A manifest that
-is missing, is not valid Turtle, is not an `mf:Manifest`, has a malformed entry
-list or includes a file outside the core Turtle suite is exit 2: its entries
-could not be enumerated.
+`data-shapes-test-suite/tests/core/manifest.ttl`. `--w3c-suite` without `DIR`
+reads the directory from `SXC_W3C_SHACL_SUITE`; the variable alone never switches
+the mode. Engines, Jena location, timeouts, output caps and process cleanup are
+the fixed corpus's. A bare `--w3c-suite` with `SXC_W3C_SHACL_SUITE` unset, or a
+missing directory or core manifest, is exit 3. A manifest that is missing, is
+not valid Turtle, is not an `mf:Manifest`, has a malformed entry list or
+includes a file outside the core Turtle suite is exit 2: its entries could not
+be enumerated. A suite that needs more than 1024 files, or a file over 1 MiB, is
+exit 2 too, and so is `--allow-unpinned-suite` without `--w3c-suite`.
 
 ### Manifests and checks
 
@@ -120,12 +128,13 @@ and shapes graph are one document still uses one file).
 
 ### Profile
 
-The profile is what `shapes.shapes_ttl()` emits and the fixed corpus uses:
+The profile follows sxc's exporter: the constraint components and severities
+`shapes.shapes_ttl()` emits, which the fixed corpus also uses, on IRI focus nodes:
 
 | Feature | Inside the profile |
 | --- | --- |
 | Constraints | `sh:class` (IRI), `sh:minExclusive`, `sh:minInclusive`, `sh:maxInclusive` (`xsd:decimal`, `xsd:integer`, `xsd:int` or `xsd:long` value) |
-| Severity | `sh:severity` `sh:Violation` or `sh:Warning` |
+| Severity | at most one `sh:severity`, `sh:Violation` or `sh:Warning` |
 | Shapes | node shapes with `sh:property`; property shapes with exactly one IRI `sh:path` and no nested `sh:property` |
 | Targets | `sh:targetClass`, `sh:targetNode` with IRI values, implicit class targets (a shape that is an `rdfs:Class`) |
 | Expected report | IRI focus nodes; IRI or literal values; terms not relative to the test document |
@@ -135,25 +144,34 @@ shape. The suite reaches the same components on IRI focus nodes through
 `sh:targetNode`, implicit class targets and node-level constraints, so those are
 inside the profile; node-level results have no `sh:resultPath`. `sh:datatype`,
 `sh:maxExclusive`, `sh:minCount` and `sh:maxCount` are outside it because sxc
-never emits them. SHACL vocabulary is checked across the whole shapes graph: an
-unused or ill-formed path node is outside the profile too. A case outside the
-profile is `not_run` with one reason, chosen in this order, and the SHACL term
-names that caused it in `features`:
+never emits them. An earlier plan for this mode also listed `sh:datatype`, value
+ranges and counts; that list was corrected to follow the exporter, so pinned
+core entries that use only those constraints (such as
+`core/property/maxExclusive-001`, `core/property/minCount-001` and
+`core/targets/targetClass-001`) are `not_run` (`unsupported_component`) rather
+than compared. The profile widens only when the exporter emits a constraint.
+SHACL vocabulary is checked across the whole shapes graph: an unused or
+ill-formed path node is outside the profile too. A separate data graph is parsed
+and may not use `owl:imports`; it is not otherwise profile-checked, since the
+engines take shapes only from the shapes graph. A case outside the profile is
+`not_run` with one reason, chosen in this order, and the SHACL term names that
+caused it in `features`:
 
 | Reason | Meaning |
 | --- | --- |
-| `suite_not_pinned` | the content digest differs from the pinned suite (below); nothing runs |
+| `suite_not_pinned` | the content digest differs from the pinned suite (below); nothing runs, or with `--allow-unpinned-suite` the `w3c:suite` check carries it |
+| `duplicate_entry` | the same entry is listed more than once, by one manifest or several, so which listing describes it is ambiguous |
 | `unsupported_entry_type`, `status_not_approved` | not an approved `sht:Validate` entry |
 | `missing_graph`, `outside_suite`, `non_turtle` | the data or shapes graph is absent, outside `tests/core/`, remote or not a `.ttl` file |
-| `malformed_graph` | the shapes graph is not valid Turtle |
+| `malformed_graph` | the shapes graph, or a separate data graph of an otherwise in-profile case, is not valid Turtle |
 | `sparql` | SHACL-SPARQL or SHACL-AF vocabulary (`sh:sparql`, `sh:declare`, `sh:rule`, ...) |
-| `complex_path` | a non-IRI `sh:path` or any path expression (`sh:oneOrMorePath`, `sh:inversePath`, ...) |
+| `complex_path` | a non-IRI `sh:path` (such as a sequence path written as an RDF list) or any path expression (`sh:oneOrMorePath`, `sh:inversePath`, ...) |
 | `closed_shape` | `sh:closed` or `sh:ignoredProperties` |
 | `unsupported_target` | `sh:targetSubjectsOf`, `sh:targetObjectsOf`, an `owl:Class` shape without `rdfs:Class` |
 | `non_iri_focus` | a literal or blank `sh:targetNode`, or a literal focus node in the expected report |
-| `unsupported_component` | any other SHACL term on a shape or in the graph, or `owl:imports` (feature `owl_imports`), which an engine could follow |
-| `unsupported_value` | an allowed key with a value outside the profile (non-numeric bound, `sh:Info` or custom severity, literal `sh:class`) |
-| `blank_node_term`, `relative_iri` | the expected report names a blank node or a document-relative IRI, which cannot be identified across graphs |
+| `unsupported_component` | any other SHACL term on a shape or in the graph, or `owl:imports` in the shapes graph or a separate data graph (feature `owl_imports`), which an engine could follow |
+| `unsupported_value` | an allowed key with a value outside the profile (non-numeric bound, `sh:Info` or custom severity, more than one severity, literal `sh:class`, non-IRI `sh:targetClass`, two `sh:path` values, a `sh:property` value without `sh:path`) |
+| `blank_node_term`, `relative_iri` | the expected report names a blank node or a document-relative IRI (also as a datatype, component or severity), which cannot be identified across graphs; a network-path reference (`//host/...`) resolves to another host and is not detected |
 | `malformed_expected` | the expected report is not exactly one consistent `sh:ValidationReport` |
 
 ### Expected reports and comparison
@@ -166,7 +184,10 @@ results and `sh:value` may be absent, and both are compared as present or absent
 node typing and messages. Duplicate results are kept. An engine report must
 satisfy the fixed corpus's strict parser rules otherwise; a blank node in it is
 an opaque term that no expected term equals, so it fails instead of being
-dropped. Numbers compare by exact value, as in the fixed corpus.
+dropped. Numbers compare by exact value, as in the fixed corpus. A pass is
+therefore weaker than the suite's full-compliance criterion, an isomorphic
+report: `sh:sourceShape`, messages and the datatype or lexical form of numeric
+values are not compared, and the result's `not_proven` says so.
 
 ### Pin, provenance and licence
 
@@ -177,12 +198,14 @@ and graph file the stage reads, each framed by its length: 121 files,
 `27d212e662936162ed5707f57ab927e1a6a33e7e487844c71d2e0b704e53725b`. The digest,
 not the commit label, decides whether the suite is pinned. Bytes are not
 normalized, so a checkout that rewrites line endings is not the pinned content.
-`result.inputs` records `w3c_suite_commit` (from `PINNED_COMMIT` when it holds
-a 40-hex commit, else empty), `w3c_suite_sha256`, `w3c_suite_files` and
-`w3c_suite_pinned`. A different digest makes every case `not_run`
-(`suite_not_pinned`) and no engine starts; `--allow-unpinned-suite` runs it
-anyway, adding a `not_proven` line that the results are not comparable with the
-recorded baseline.
+`result.inputs` records `w3c_suite_commit` (the pinned commit when the digest
+matches, else empty; no commit label in the checkout is trusted),
+`w3c_suite_sha256`, `w3c_suite_files` and `w3c_suite_pinned`. A different digest
+makes every case `not_run` (`suite_not_pinned`) and no engine starts.
+`--allow-unpinned-suite` runs it anyway, but adds a `w3c:suite` check that is
+`not_run` (`suite_not_pinned`), so the stage cannot pass, and a `not_proven` line
+that the expected reports are not verified as the W3C suite's and the results
+are not comparable with the recorded baseline.
 
 The suite's `LICENSE.md` licenses it under the
 [W3C Software and Document License](https://www.w3.org/Consortium/Legal/copyright-software).
@@ -197,9 +220,12 @@ CI fetches `https://codeload.github.com/w3c/data-shapes/legacy.tar.gz/<commit>`,
 checks its SHA-256
 (`6213a0a58b9fd812b9659d9c0ceba67448f449fc4ebe22a459f1fe3e778c3646`), extracts
 only `data-shapes-test-suite/` and `LICENSE.md` with tarfile's `data` filter,
-writes `PINNED_COMMIT`, exports `SXC_W3C_SHACL_SUITE` and checks the content
-digest before the tests. GitHub has regenerated archive bytes before; such a
-change fails the checksum step closed rather than running an unverified suite.
+exports `SXC_W3C_SHACL_SUITE` and checks the content digest before the tests.
+GitHub has regenerated archive bytes before; such a change fails the checksum
+step, and with it the integration job, closed rather than running an unverified
+suite. To re-pin, download the archive, check that `load_w3c_suite` on its
+extract still gives the content digest above, and only then replace the archive
+checksum in the workflow.
 
 ### Observed results
 
@@ -226,7 +252,8 @@ status on the pinned suite is therefore `not_run` (exit 1), never `pass`; read
 the per-case statuses. An engine that fails an in-profile case is a `fail`
 check. The gated integration test pins this exact outcome, the expected result
 counts and the reason counts, so a change in either direction fails it; it runs
-when `SXC_W3C_SHACL_SUITE`, `SXC_JENA_HOME` and `SXC_JAVA` are set:
+when `SXC_W3C_SHACL_SUITE` (an extract of the pinned tarball, or a checkout that
+keeps its line endings), `SXC_JENA_HOME` and `SXC_JAVA` are set:
 
 ```console
 python -m unittest discover -s tests -p "test_shacl_w3c.py" -v

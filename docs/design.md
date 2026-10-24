@@ -103,7 +103,7 @@ exit 3, so one run lists everything to fix.
   `<python>` and `<plugin>`, which `sxc.py` expands only when it prints, so a printed hint works from any
   directory while result files stay path-free (a `--home` directory the user typed is repeated as typed).
 - `res.not_proven` lists what the run could not prove (an empty stratum, an equivalent mutant, a shape compared
-  only in SQL, a vacuous defined class, a sampled pair test, a join path additivity does not apply to, a
+  only in SQL, a vacuous defined class, a sampled or chunked pair test, a join path additivity does not apply to, a
   component that is not installed). It does not
   change the status; `report` shows every line.
 - `res.next_safe_action` is one sentence the agent can follow.
@@ -230,7 +230,7 @@ parameters are ignored.
 | `cube_replay` | `run(None, args, out) -> Result('cube_replay')`: actual model generation, named mutation, original/gold agreement and mutant/gold disagreement on owned synthetic schemas; hash-bound replay and scoped cleanup |
 | `tlp` | `run(None, args, out) -> Result('tlp')`: strict versioned trusted spec, bounded synthetic fixtures, materialized predicate partitions, exact multiset/aggregate comparisons and hash-bound replay |
 | `expect` | after 0.8.0, unreleased: `run(cfg, args, out) -> Result('expect')`; `fixture_env(cfg, args)` (the guards before any connection) and `operational_variables(cfg) -> (compared, unset)`, `fixture_config(cfg, env)`, `compared_columns(gold, case)`, `judge(gold, case, gold_rows, cube_rows, types)`, `run_case(conn, client, cfg, gold, case, types)`, `fixture_relations(cfg, hierarchies)`, `fixture_digest(conn, cfg, hierarchies=()) -> {fixture_sha256, tables_sha256, rows}`, `share_locks(env, cfg, relations)` (context manager yielding whether the SHARE locks were taken) |
-| `shacl_corpus` | `run(None, args, out) -> Result('shacl_corpus')`: fixed independent expected reports compared with actual pySHACL and Jena; bounded output/deadlines and owned process-tree cleanup. `load_w3c_suite(root)` reads W3C core manifests (bounded, inside the suite, digested) and classifies each entry against the profile; `run_w3c` runs both engines on in-profile cases |
+| `shacl_corpus` | `run(None, args, out) -> Result('shacl_corpus')`: fixed independent expected reports compared with actual pySHACL and Jena; bounded output/deadlines and owned process-tree cleanup. After 0.8.0 (unreleased), `load_w3c_suite(root)` reads W3C core manifests (bounded, inside the suite, digested) and classifies each entry against the profile; `run_w3c` runs both engines on in-profile cases |
 
 ## 5. Generated objects (names from `naming.py`)
 
@@ -284,7 +284,8 @@ configuration ids; `<member>` is a Cube member (`cube.member`); `<stratum>` is a
 | expect | `expect:fixture` | after 0.8.0, unreleased: the fixture's source tables hashed the same before the build and after the cases, and its source and built closure tables the same before and after the cases (`fixture_sha256` of the source tables, `locked`, `operational_variables_compared`) | `error` (`fixture_changed`, `fingerprint_failed`); `not_run` (`no_case_ran`): every case was gated |
 | expect | `expect:cases` | after 0.8.0, unreleased: never passes | `not_run` (`no_cases`): no `[[gold.expect]]` case in the configuration |
 | shacl-corpus | `pyshacl:<case>`, `jena:<case>` | each actual engine independently matches the case's hand-written canonical constraint-report multiset | `fail` on a constraint, path, severity or semantic value mismatch; `error` on timeout, nonzero engine exit, malformed/missing report or cleanup failure; valid conforming empty reports are compared explicitly |
-| shacl-corpus | `w3c:<engine>:<case>` | with `--w3c-suite`: the engine (`pyshacl` or `jena`) matches the W3C suite's expected report for an approved core `sht:Validate` entry inside the sxc profile (canonical multiset; absent path/value compared, `sh:sourceShape` ignored) | `not_run` with `reason` for every entry outside the profile or an unpinned suite (`suite_not_pinned`, `unsupported_component`, `complex_path`, `non_iri_focus`, ...), so the stage never passes as a whole; `fail` on a mismatch; `error` as for the fixed corpus |
+| shacl-corpus | `w3c:<engine>:<case>` | after 0.8.0, unreleased; with `--w3c-suite`: the engine (`pyshacl` or `jena`) matches the W3C suite's expected report for an approved core `sht:Validate` entry inside the sxc profile (canonical multiset; absent path/value compared, `sh:sourceShape` ignored) | `not_run` with `reason` for every entry outside the profile, and for every entry of an unpinned suite without `--allow-unpinned-suite` (`suite_not_pinned`, `duplicate_entry`, `unsupported_component`, `complex_path`, `non_iri_focus`, ...); `fail` on a mismatch; `error` as for the fixed corpus |
+| shacl-corpus | `w3c:suite` | never passes (after 0.8.0, unreleased) | `not_run` (`suite_not_pinned`): an unpinned suite ran under `--allow-unpinned-suite`, so its expected reports are not verified as the W3C suite's and the stage cannot pass |
 | doctor | `python` | Python >= 3.11 | `fail` |
 | doctor | `pg8000` | pg8000 can be imported | `fail`, with the absolute pip command as the next action |
 | doctor | `dsn` | the check-role DSN variable (`source.dsn_env`, or `SXC_PG_DSN` without a configuration) is set | `fail`; the database checks after it are `not_run` (`no_dsn`) |
@@ -354,11 +355,15 @@ from valid conforming empty reports. Both engines have bounded stdout/stderr, a 
 owned descendant cleanup. Jena is an external optional runtime; the verified Jena 6.2.0 test distribution
 uses a Java 21-compatible runtime, while HermiT's main Java 11 minimum is unchanged. After 0.8.0
 (unreleased), `--w3c-suite` takes expected reports from the W3C SHACL core test suite instead, so they cannot
-share a mistake with sxc's exporter. Only approved entries whose shapes graph stays inside what
-`shapes.shapes_ttl()` emits run (sh:class and the three numeric bounds, Violation/Warning, IRI focus nodes,
-simple IRI paths); everything else is `not_run` with a reason id. The suite is pinned by a SHA-256 over the
-sorted relative paths and bytes of the files read; a different digest runs no engine unless
-`--allow-unpinned-suite`. It is read at test time, never vendored. Details and scope
+share a mistake with the fixed corpus. Both engines validate the suite's own shapes and data graphs: the mode
+checks engine conformance on the components sxc emits, not sxc's exporter, so it complements the fixed corpus
+(run both) and says so in `not_proven`. Only approved entries inside the sxc profile run: the components and
+severities `shapes.shapes_ttl()` emits (sh:class and the three numeric bounds, one Violation or Warning
+severity) on IRI focus nodes, through sh:targetClass, sh:targetNode, implicit class targets or node-level
+shapes, with no path or one IRI path; everything else is `not_run` with a reason id. The suite is pinned by a
+SHA-256 over the sorted relative paths and bytes of the files read; a different digest runs no engine unless
+`--allow-unpinned-suite`, and then the `not_run` check `w3c:suite` keeps the stage from passing. It is read
+at test time, never vendored. Details and scope
 are in `docs/cube-replay.md`, `docs/tlp.md` and `docs/shacl-corpus.md`.
 
 **Literal expected rows (`expect`, after 0.8.0, unreleased).** When the gold SQL and the configuration share a

@@ -21,15 +21,19 @@ All notable changes to this project are recorded here. The format follows
   and its d95 bound stay and not proven names the budget; a sampled not proven line now also says that
   a sample never compares the NULL key group. V4 still replays the 2,000-key sample (the first chunk).
   The default keeps the previous comparison.
-- Literal expected-row oracle for limit L3 (gold SQL and configuration sharing one mistake): optional
+- Literal expected-row oracle for a gold SQL and a configuration that share one mistake: optional
   `[[gold.expect]]` cases on a `[[gold]]` entry (`source` `authored` with a `spec` location, or `captured`;
-  `params`, `rows` with `{ null = true }` for NULL, `partial`) and a new `expect` stage. It reads the operational
-  configuration but runs build, cube, the gold SQL and Cube only on a dedicated fixture database the user loaded
-  (`--dsn-env`, default `SXC_EXPECT_DSN`, with explicit `--allow-fixture-database`), refuses a fixture DSN that names
-  an operational database and never runs fixture SQL. `expect:<gold>[<i>]` passes only when both sides equal the
-  expected rows; agreeing sides that differ from them fail as `common_mode` (authored) or `regression` (captured),
-  a disagreement as `gold_mismatch`, `cube_mismatch` or `both_mismatch`. Captured passes are regression evidence
-  only. The result stays out of `report` and operational V1-V5 coverage. Example: `examples/expect/`.
+  `params`, `rows` with `{ null = true }` for NULL, `partial`, an optional `fixture_sha256` pin) and a new `expect`
+  stage. It reads the operational configuration but runs build, cube, the gold SQL and Cube only on a dedicated
+  fixture database the user loaded (`--dsn-env`, default `SXC_EXPECT_DSN`, with explicit `--allow-fixture-database`)
+  and never runs fixture SQL. A fixture DSN is refused when it equals, or names the same host, port and database as, an operational DSN variable set in this environment; another name for the same server is not detected, so the fixture must be a dedicated database (not proven names the
+  unset ones). `expect:<gold>[<i>]` passes only when both sides equal the expected rows; agreeing sides that differ
+  from them fail as `common_mode` (authored) or `regression` (captured), a disagreement as `gold_mismatch`,
+  `cube_mismatch` or `both_mismatch`; a case whose pinned `fixture_sha256` differs is `not_run` (`fixture_mismatch`).
+  `expect:fixture` compares digests of the fixture taken before the build and around the cases while a second
+  session holds SHARE locks on its tables. Captured passes are regression evidence only. The result stays out of
+  `report` and operational V1-V5 coverage; editing a case changes `crosscheck.toml`, so `report` needs the
+  operational stages rerun. Example: `examples/expect/`.
 - `shacl-corpus --w3c-suite [DIR]` (or `SXC_W3C_SHACL_SUITE` with a bare `--w3c-suite`) compares pySHACL and Apache Jena
   with the expected reports of the W3C SHACL core test suite instead of the fixed corpus. Only approved `sht:Validate`
   entries inside the sxc profile run (`sh:class` and the three numeric bounds, Violation/Warning, IRI focus nodes, simple

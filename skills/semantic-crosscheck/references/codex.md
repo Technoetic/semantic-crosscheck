@@ -47,7 +47,7 @@ default.
 | `shacl-corpus` | [xc-shacl-corpus.md](../../../commands/xc-shacl-corpus.md) | `sxc.py shacl-corpus --jena-home /opt/apache-jena --timeout-ms 30000` |
 | `expect` | [xc-expect.md](../../../commands/xc-expect.md) | `sxc.py expect --config crosscheck.toml --allow-fixture-database` |
 
-The last three commands are optional standalone synthetic checks. They reject `--config`, ignore any
+`cube-replay`, `tlp` and `shacl-corpus` are optional standalone synthetic checks. They reject `--config`, ignore any
 working-directory configuration and preserve independent Result stages; their success does not change
 operational V1–V5 or global report coverage. `cube-replay` requires a dedicated throw-away connection
 and explicit `--allow-scratch-schema` for its owned synthetic schema lifecycle. TLP accepts trusted SQL
@@ -56,8 +56,10 @@ actual validators against independent expected reports.
 
 `expect` (after 0.8.0, not released yet) is different: it reads the operational `--config` for its
 `[[gold.expect]]` cases, but connects only to the dedicated fixture database named by `--dsn-env`
-(`SXC_EXPECT_DSN`), never to an operational DSN, and needs explicit `--allow-fixture-database`. Its result is
-also kept out of `report` and of operational V1–V5 coverage.
+(`SXC_EXPECT_DSN`), never to an operational DSN, and needs explicit `--allow-fixture-database`. Take both from the
+user for a database the user names as a dedicated fixture: the stage refuses a fixture DSN only when it equals, or
+names the same host, port and database as, an operational DSN variable set in this environment, and cannot detect
+another name for the same server. Its result is also kept out of `report` and of operational V1–V5 coverage.
 
 ## Arguments and execution
 
@@ -70,7 +72,7 @@ also kept out of `report` and of operational V1–V5 coverage.
 
 ## Sandbox and environment
 
-- The stages connect to PostgreSQL (and `cube` and `verify` start a local Cube process listening on
+- The stages connect to PostgreSQL (and `cube`, `verify` and `expect` start a local Cube process listening on
   127.0.0.1). When the Codex sandbox blocks network access, ask the user to allow it for these
   commands instead of working around the sandbox.
 - `cube-install` downloads from the npm registry and from the Cube GitHub release; it needs network
@@ -79,7 +81,7 @@ also kept out of `report` and of operational V1–V5 coverage.
   visible to the commands Codex runs. If a stage reports a missing variable, ask the user to provide it
   through the environment; never ask for a password in the chat or write one into a file.
 - Auxiliary tests use `SXC_CUBE_REPLAY_DSN` and `SXC_TLP_DSN` for dedicated synthetic test connections, and
-  `expect` uses `SXC_EXPECT_DSN` for the user's dedicated fixture database.
+  `expect` (after 0.8.0, unreleased) uses `SXC_EXPECT_DSN` for the user's dedicated fixture database.
   They never infer authorization to select operational DSNs. `SXC_JENA_HOME` selects an external Jena
   distribution for `shacl-corpus`; the tested Jena 6.2.0 distribution needs a Java 21-compatible runtime.
   This optional engine does not change HermiT's Java 11 minimum. `SXC_W3C_SHACL_SUITE` names a W3C

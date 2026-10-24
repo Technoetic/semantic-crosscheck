@@ -255,7 +255,7 @@ otherwise a shared mistake goes unnoticed.
 | `zero_if_null` | list of strings | `[]` | Gold columns the gold SQL coalesces to 0; a Cube NULL counts as 0 there. The only declared equivalence. |
 | `params` | table | `{}` | At most one swept parameter, as `[gold.params.<name>]` with exactly one of `strata` (list of `top`, `mid`, `leaf`, `leaf_parent`, `deep`, `shared`, `empty`; optional `hierarchy`), `values_of` (`"entity.column"`: every distinct non-null value) or `values` (explicit list). |
 | `param_sets` | list of tables | `[]` | Explicit bindings for multi-parameter queries, for example `[{ date_from = "2026-01-01", date_to = "2026-03-31" }]`. Not together with `params`. |
-| `expect` | list of tables | `[]` | Literal expected-row cases, as `[[gold.expect]]` (below). Only the `expect` stage reads them. |
+| `expect` | list of tables | `[]` | After 0.8.0, not released yet: literal expected-row cases, as `[[gold.expect]]` (below). Only the `expect` stage runs them; every stage validates them, and editing one changes `crosscheck.toml`, so `report` treats earlier operational results as stale until they are rerun. |
 
 Without `params` and `param_sets` a gold query has one binding, `all`. An empty stratum is reported as
 not proven, not as a failure.
@@ -265,7 +265,9 @@ not proven, not as a failure.
 After 0.8.0, not released yet. Literal expected rows of the gold query for a small fixture, in the form of dbt and
 SQLMesh unit tests: a third oracle for a gold SQL and a configuration that share one mistake. The `expect` stage runs
 the gold SQL and the Cube query on a dedicated fixture database (`SXC_EXPECT_DSN`, see
-[xc-expect](../../../commands/xc-expect.md)) and compares both with these rows; no other stage reads them.
+[xc-expect](../../../commands/xc-expect.md)) and compares both with these rows. No other stage runs them, but every
+stage validates them, and an edit, like any edit to `crosscheck.toml`, makes earlier operational results stale for
+`report` until they are rerun.
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
@@ -274,6 +276,7 @@ the gold SQL and the Cube query on a dedicated fixture database (`SXC_EXPECT_DSN
 | `spec` | string | `""` | Where in the business specification the rows come from (a document and section). Required for `authored`. |
 | `params` | table | `{}` | The gold query's parameter values for this case: exactly the names of `params`, or the names of an entry of `param_sets`; empty for a gold query without parameters. Values are scalars. |
 | `partial` | boolean | `False` | `true` compares only the columns the rows name; every row then names the same columns, every key column among them. |
+| `fixture_sha256` | string | `""` | Optional pin: the `fixture_sha256` that `expect:fixture` reported for the fixture the rows were written for (64 lowercase hexadecimal digits over the source tables' names, row counts and contents). On another fixture the case is `not_run` (`fixture_mismatch`). Pin only after checking the loaded rows against the specification. The digest is not salted, so the result can confirm guessed fixture rows: keep the fixture synthetic. |
 
 A malformed case is exit 2 naming `gold[<n>] <id> expect[<i>]` (and `rows[<r>]`); messages name keys and
 positions, never values.
@@ -282,11 +285,11 @@ positions, never values.
 
 | Variable | Used by | Meaning |
 |---|---|---|
-| `SXC_PG_DSN` | every database stage, Cube | Check role DSN (name configurable with `source.dsn_env`). |
+| `SXC_PG_DSN` | every database stage except `expect`, Cube | Check role DSN (name configurable with `source.dsn_env`). |
 | `SXC_PG_OWNER_DSN` | `demo` | Loader role DSN (name configurable with `source.owner_dsn_env`). |
 | `PGPASSWORD` | database stages, Cube | Password used when the DSN has none (`~/.pgpass` is not read). |
 | `SXC_JAVA` | `doctor`, `reason` | Absolute path of the `java` executable for HermiT, or a command name on `PATH`, when `java` itself is not on `PATH`. |
-| `SXC_CUBE_HOME` | `cube-install`, `doctor`, `cube`, `verify` | Install directory of the Cube adapter (default: a per-user cache); a relative value is resolved against the current directory. |
-| `SXC_CUBE_DEBUG` | `cube`, `verify` | `1` writes the full Cube error text to `server.log` for local debugging; the log can then hold row values. |
+| `SXC_CUBE_HOME` | `cube-install`, `doctor`, `cube`, `verify`, `expect` | Install directory of the Cube adapter (default: a per-user cache); a relative value is resolved against the current directory. |
+| `SXC_CUBE_DEBUG` | `cube`, `verify`, `expect` | `1` writes the full Cube error text to `server.log` for local debugging; the log can then hold row values. |
 | `SXC_DEBUG` | every stage | `1` prints the full traceback of an unexpected exception for local debugging. |
-| `SXC_EXPECT_DSN` | `expect` | DSN of the dedicated fixture database for `[[gold.expect]]` (name configurable with `--dsn-env`); refused when it names the database of `source.dsn_env`, `source.owner_dsn_env` or `cube.dsn_env`. |
+| `SXC_EXPECT_DSN` | `expect` | After 0.8.0, not released yet: DSN of the dedicated fixture database for `[[gold.expect]]` (name configurable with `--dsn-env`); refused when it equals, or names the same host, port and database as, an operational DSN variable set in this environment; another name for the same server is not detected, so the fixture must be a dedicated database (`source.dsn_env`, `source.owner_dsn_env` or `cube.dsn_env`). |

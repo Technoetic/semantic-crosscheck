@@ -1,9 +1,9 @@
 ---
-description: "Run the gold queries and Cube on a dedicated fixture database and compare both with the literal expected rows of [[gold.expect]] (not released yet)"
+description: "Run the gold queries and Cube on a dedicated fixture database and compare both with the literal expected rows of [[gold.expect]]"
 argument-hint: "--config crosscheck.toml --allow-fixture-database [--dsn-env SXC_EXPECT_DSN] [--out DIR] [--quiet]"
 ---
 
-Run the `expect` stage (after 0.8.0, not released yet). Pass user arguments as separate argv entries.
+Run the `expect` stage. Pass user arguments as separate argv entries.
 
 ```text
 python "${CLAUDE_PLUGIN_ROOT}/skills/semantic-crosscheck/scripts/sxc.py" expect --config crosscheck.toml --allow-fixture-database

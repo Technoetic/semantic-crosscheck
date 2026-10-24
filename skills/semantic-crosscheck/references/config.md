@@ -237,7 +237,7 @@ Defined classes compared with their SQL definition (`v5:defined:<name>`).
 | `mutant_bindings` | integer | `3` | Bindings per stratum replayed against each mutant. At least 1. |
 | `shacl_max_rows` | integer | `200000` | Upper bound on the rows exported to RDF for the SHACL comparison; at least 1. Above it each planned shape is `not_run` (`resource_limit`), with an explanation in `not_proven`; reason and report cannot pass. |
 | `owl_max_individuals` | integer | `50000` | Upper bound on the individuals (node keys and edge endpoints) given to HermiT; at least 1. Above it OWL consistency and V5 checks are `not_run` (`resource_limit`), with an explanation in `not_proven`; reason and report cannot pass. |
-| `pair_key_budget` | integer | `2000` | Unreleased (after 0.8.0). The largest distinct key count for which the baseline V3 run of a pair test compares every key, in chunks of 2,000 plus the NULL key group, instead of the 2,000-key sample; at least 2000, the default, which keeps the sample. The Cube queries grow with the number of chunks, and every key up to the budget is read in one statement under `source.statement_timeout_ms` (a timeout makes the test an `error`) and held in memory, so size it to the memory and time available; each Cube query reads its own snapshot (listed in `not_proven`) and V4 replays keep the sample. |
+| `pair_key_budget` | integer | `2000` | The largest distinct key count for which the baseline V3 run of a pair test compares every key, in chunks of 2,000 plus the NULL key group, instead of the 2,000-key sample; at least 2000, the default, which keeps the sample. The Cube queries grow with the number of chunks, and every key up to the budget is read in one statement under `source.statement_timeout_ms` (a timeout makes the test an `error`) and held in memory, so size it to the memory and time available; each Cube query reads its own snapshot (listed in `not_proven`) and V4 replays keep the sample. |
 
 ## `[[gold]]`
 
@@ -255,14 +255,14 @@ otherwise a shared mistake goes unnoticed.
 | `zero_if_null` | list of strings | `[]` | Gold columns the gold SQL coalesces to 0; a Cube NULL counts as 0 there. The only declared equivalence. |
 | `params` | table | `{}` | At most one swept parameter, as `[gold.params.<name>]` with exactly one of `strata` (list of `top`, `mid`, `leaf`, `leaf_parent`, `deep`, `shared`, `empty`; optional `hierarchy`), `values_of` (`"entity.column"`: every distinct non-null value) or `values` (explicit list). |
 | `param_sets` | list of tables | `[]` | Explicit bindings for multi-parameter queries, for example `[{ date_from = "2026-01-01", date_to = "2026-03-31" }]`. Not together with `params`. |
-| `expect` | list of tables | `[]` | After 0.8.0, not released yet: literal expected-row cases, as `[[gold.expect]]` (below). Only the `expect` stage runs them; every stage validates them, and editing one changes `crosscheck.toml`, so `report` treats earlier operational results as stale until they are rerun. |
+| `expect` | list of tables | `[]` | Literal expected-row cases, as `[[gold.expect]]` (below). Only the `expect` stage runs them; every stage validates them, and editing one changes `crosscheck.toml`, so `report` treats earlier operational results as stale until they are rerun. |
 
 Without `params` and `param_sets` a gold query has one binding, `all`. An empty stratum is reported as
 not proven, not as a failure.
 
 ### `[[gold.expect]]`
 
-After 0.8.0, not released yet. Literal expected rows of the gold query for a small fixture, in the form of dbt and
+Literal expected rows of the gold query for a small fixture, in the form of dbt and
 SQLMesh unit tests: a third oracle for a gold SQL and a configuration that share one mistake. The `expect` stage runs
 the gold SQL and the Cube query on a dedicated fixture database (`SXC_EXPECT_DSN`, see
 [xc-expect](../../../commands/xc-expect.md)) and compares both with these rows. No other stage runs them, but every
@@ -292,4 +292,4 @@ positions, never values.
 | `SXC_CUBE_HOME` | `cube-install`, `doctor`, `cube`, `verify`, `expect` | Install directory of the Cube adapter (default: a per-user cache); a relative value is resolved against the current directory. |
 | `SXC_CUBE_DEBUG` | `cube`, `verify`, `expect` | `1` writes the full Cube error text to `server.log` for local debugging; the log can then hold row values. |
 | `SXC_DEBUG` | every stage | `1` prints the full traceback of an unexpected exception for local debugging. |
-| `SXC_EXPECT_DSN` | `expect` | After 0.8.0, not released yet: DSN of the dedicated fixture database for `[[gold.expect]]` (name configurable with `--dsn-env`); refused when it equals, or names the same host, port and database as, an operational DSN variable (`source.dsn_env`, `source.owner_dsn_env` or `cube.dsn_env`) set in this environment; another name for the same server is not detected, so the fixture must be a dedicated database. |
+| `SXC_EXPECT_DSN` | `expect` | DSN of the dedicated fixture database for `[[gold.expect]]` (name configurable with `--dsn-env`); refused when it equals, or names the same host, port and database as, an operational DSN variable (`source.dsn_env`, `source.owner_dsn_env` or `cube.dsn_env`) set in this environment; another name for the same server is not detected, so the fixture must be a dedicated database. |

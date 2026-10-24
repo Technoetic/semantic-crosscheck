@@ -54,7 +54,7 @@ and explicit `--allow-scratch-schema` for its owned synthetic schema lifecycle. 
 in a strict versioned spec; read-only execution is not a SQL sandbox. The SHACL corpus checks both
 actual validators against independent expected reports.
 
-`expect` (after 0.8.0, not released yet) is different: it reads the operational `--config` for its
+`expect` is different: it reads the operational `--config` for its
 `[[gold.expect]]` cases, but connects only to the dedicated fixture database named by `--dsn-env`
 (`SXC_EXPECT_DSN`), never to an operational DSN, and needs explicit `--allow-fixture-database`. Take both from the
 user for a database the user names as a dedicated fixture: the stage refuses a fixture DSN only when it equals, or
@@ -81,11 +81,11 @@ another name for the same server. Its result is also kept out of `report` and of
   visible to the commands Codex runs. If a stage reports a missing variable, ask the user to provide it
   through the environment; never ask for a password in the chat or write one into a file.
 - Auxiliary tests use `SXC_CUBE_REPLAY_DSN` and `SXC_TLP_DSN` for dedicated synthetic test connections, and
-  `expect` (after 0.8.0, unreleased) uses `SXC_EXPECT_DSN` for the user's dedicated fixture database.
+  `expect` uses `SXC_EXPECT_DSN` for the user's dedicated fixture database.
   They never infer authorization to select operational DSNs. `SXC_JENA_HOME` selects an external Jena
   distribution for `shacl-corpus`; the tested Jena 6.2.0 distribution needs a Java 21-compatible runtime.
   This optional engine does not change HermiT's Java 11 minimum. `SXC_W3C_SHACL_SUITE` names a W3C
-  data-shapes checkout for `shacl-corpus --w3c-suite` (after 0.8.0, unreleased); it is read only when that
+  data-shapes checkout for `shacl-corpus --w3c-suite` (since 0.9.0); it is read only when that
   option is given, and an unpinned suite runs no engine unless the user asks for `--allow-unpinned-suite`
   (such a run cannot pass).
 - `SXC_CUBE_DEBUG=1` and `SXC_DEBUG=1` are for the user's local debugging only: their output can hold row

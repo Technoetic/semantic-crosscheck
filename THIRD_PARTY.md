@@ -10,7 +10,7 @@ semantic-crosscheck vendors no third-party code. Its dependencies are installed 
 - the Cube native module, downloaded by `cube-install` from the Cube GitHub release and accepted only
   when its size and SHA-256 match `native-sha256.json`;
 - optional Apache Jena SHACL, supplied as a separately installed distribution for `shacl-corpus`;
-- the optional W3C SHACL test suite for `shacl-corpus --w3c-suite` (after 0.8.0, unreleased), read at test time
+- the optional W3C SHACL test suite for `shacl-corpus --w3c-suite` (since 0.9.0), read at test time
   from a separately downloaded w3c/data-shapes checkout (below) and never copied into this repository;
 - the runtimes (Java for HermiT, Node.js for Cube, the PostgreSQL server).
 
@@ -130,7 +130,7 @@ runtime are not bundled with this repository. CI verifies the pinned archive's S
 
 | Data | Version | Licence | Used for |
 |---|---|---|---|
-| [W3C SHACL test suite](https://github.com/w3c/data-shapes) (`data-shapes-test-suite/tests/core`) | commit `1dfcd9f30cab70ac02b049611eeba451fa1308e7` | W3C Software and Document License | Expected reports for `shacl-corpus --w3c-suite` (test time only; after 0.8.0, unreleased) |
+| [W3C SHACL test suite](https://github.com/w3c/data-shapes) (`data-shapes-test-suite/tests/core`) | commit `1dfcd9f30cab70ac02b049611eeba451fa1308e7` | W3C Software and Document License | Expected reports for `shacl-corpus --w3c-suite` (test time only; since 0.9.0) |
 
 The suite is not redistributed: no file of it is in this repository or its release archives. The unit tests use
 original synthetic manifests in the suite's Turtle format, and CI downloads the pinned commit's source tarball,

@@ -40,7 +40,7 @@ python "${CLAUDE_PLUGIN_ROOT}/skills/semantic-crosscheck/scripts/sxc.py" verify 
   sample's detection bound (detail `d95_keys`, `d95_rate`): a mismatch affecting at least that many
   keys is detected with 95% probability if the mismatching keys are independent of the sample order;
   fewer can be missed. A sample never compares the NULL key group (keys that are NULL), which its equals
-  filter leaves out; unreleased (after 0.8.0), not proven says so. Unreleased (after 0.8.0): with
+  filter leaves out; since 0.9.0, not proven says so. Since 0.9.0, with
   `verify.pair_key_budget` (default 2000) raised to at least the key count, the pair test compares every
   key instead, in chunks of 2,000 keys from one read-only snapshot plus the NULL key group (detail
   `mode`, `chunks`, `compared_keys`, `answered_keys`, `total_keys`, `null_key_group`, `elapsed_ms`; no
@@ -101,7 +101,7 @@ that generated the model. Fix `crosscheck.toml` or the gold SQL file, never the 
   without a classified dimension row (`null_group_equal` false; `orphan_rows` counts the rows with no
   dimension row at all).
 - `v3:pair:<member>+<member>` fails: measures queried together differ from the same measures queried
-  alone, which is join fan-out (wrong grain or relationship). A chunked test (unreleased, after 0.8.0)
+  alone, which is join fan-out (wrong grain or relationship). A chunked test (since 0.9.0)
   adds up its counts over every chunk and the NULL key group (`null_key_group` holds the latter's own);
   when it is `error`, `chunks_compared` says how many chunks finished, and when it is `not_run`
   (`keys_not_answered`), `answered_keys` is below `compared_keys`: Cube's together answers left keys

@@ -22,7 +22,7 @@ A runtime error, timeout, malformed report, missing report or mismatch cannot
 pass. The stage's `not_proven` explicitly limits the conclusion to this corpus;
 it does not change operational V1–V5 or global report coverage.
 
-The optional `--w3c-suite` mode (after 0.8.0, unreleased) runs instead of this
+The optional `--w3c-suite` mode (since 0.9.0) runs instead of this
 fixed corpus in that invocation, with expected reports written by the W3C Data
 Shapes working group. It validates the suite's own graphs and does not exercise
 sxc's exporter, so it complements the fixed corpus: run both, each with its own
@@ -84,7 +84,7 @@ wrapper or production data is executed. File URIs avoid Jena 6.2's rejection of
 Windows backslash paths and safely represent spaces.
 
 <a id="w3c-core-subset"></a>
-## W3C core subset (`--w3c-suite`, after 0.8.0, unreleased)
+## W3C core subset (`--w3c-suite`, since 0.9.0)
 
 The fixed corpus's expected tuples and sxc's exporter are written by the same
 project, so they can share a mistake. This mode takes the expected reports from

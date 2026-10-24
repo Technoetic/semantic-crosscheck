@@ -2,8 +2,10 @@
 
 The test plays the user: it creates a throw-away database, loads examples/expect/fixture.sql into it itself (sxc
 never runs fixture SQL) and runs the example configuration, whose authored cases pass. A copy with one wrong expected
-quantity, which the gold SQL and Cube agree against, fails that case as common_mode. Neither run writes the
-operational build/ or cube/ results, and no result holds a fixture value. Skipped unless SXC_TEST_ADMIN_DSN names a
+quantity, which the gold SQL and Cube agree against, fails that case as common_mode. A copy whose gold SQL and
+hierarchy both read the wrong quantity column (line_no for qty_per), with the authored rows unchanged, is the shared
+mistake V1 accepts: gold and Cube agree and both cases fail as common_mode. No run writes the operational build/ or
+cube/ results, and no result holds a fixture value. Skipped unless SXC_TEST_ADMIN_DSN names a
 superuser connection, node is on PATH and the Cube adapter is installed (as tests/test_cube_stage.py).
 """
 
@@ -113,6 +115,27 @@ class ExpectPgTest(unittest.TestCase):
         self.assertFalse(case.detail["gold_equals_expected"] or case.detail["cube_equals_expected"])
         self.assertEqual(case.detail["cube_vs_expected"]["mismatched_columns"], {"qty": 1})
         self.assertEqual(checks["expect:q01_explosion[1]"].status, "pass")
+        self.assertTrue(checks["expect:fixture"].detail["locked"])
+
+    def test_a_mistake_the_gold_sql_and_the_configuration_share_is_common_mode(self):
+        text = (EXAMPLE / "crosscheck.toml").read_text(encoding="utf-8")
+        shared = text.replace('sql = "../../demo/gold/q01_explosion.sql"', 'sql = "q01_explosion.sql"')
+        shared = shared.replace('quantity = "qty_per"', 'quantity = "line_no"')
+        gold = DEMO_GOLD.read_text(encoding="utf-8")
+        self.assertEqual(gold.count("sum(qty_per)"), 1)
+        self.assertEqual(shared.count('quantity = "line_no"'), 1)
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "q01_explosion.sql").write_text(gold.replace("sum(qty_per)", "sum(line_no)"), encoding="utf-8")
+            path = Path(tmp) / "crosscheck.toml"
+            path.write_text(shared, encoding="utf-8")
+            res, checks = self.run_expect(config.load(path), Path(tmp) / "out")
+        self.assertEqual(checks["expect:build"].status, "pass", res.to_dict())
+        for cid in ("expect:q01_explosion[0]", "expect:q01_explosion[1]"):
+            case = checks[cid]
+            self.assertEqual((case.status, case.detail["reason"]), ("fail", "common_mode"), case.detail)
+            self.assertTrue(case.detail["gold_equals_cube"])   # what V1 sees: the two sides agree
+            self.assertFalse(case.detail["gold_equals_expected"] or case.detail["cube_equals_expected"])
+        self.assertEqual(checks["expect:fixture"].status, "pass")
 
 
 if __name__ == "__main__":

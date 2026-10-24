@@ -36,7 +36,8 @@ python skills/semantic-crosscheck/scripts/sxc.py --version
 | `counterexample` | optional synthetic SQL mismatch search and reduction, or BOM metamorphic relations (and, with `--scenario bom_exhaustive`, the exact closure oracle over a bounded-exhaustive enumeration) for one closure SQL | `--reference-sql`, `--candidate-sql`, `--metamorphic-sql`, `--scenario`, `--seed`, `--max-examples`, `--max-shrink-steps`, `--dsn-env`, `--statement-timeout-ms`, `--constraints`, `--replay` | `counterexample/result.json`, `counterexample/fixture.json` |
 | `cube-replay` | optional actual original/mutant Cube replay against independent gold SQL on owned synthetic tables | required `--mutation-operator`, `--allow-scratch-schema`, `--seed` (7), `--dsn-env` (`SXC_CUBE_REPLAY_DSN`), `--statement-timeout-ms` (10000), `--replay` | `cube_replay/result.json`, successful bound `cube_replay/fixture.json` |
 | `tlp` | optional ternary-logic partition consistency of a synthetic relation, including exact COUNT or SUM | required `--spec FILE`, `--seed` (7), `--max-examples` (64), `--dsn-env` (`SXC_TLP_DSN`), `--statement-timeout-ms` (10000), `--replay` | `tlp/result.json`, `tlp/fixture.json` |
-| `shacl-corpus` | optional actual pySHACL and Apache Jena comparison against independent expected nonrecursive reports | `--jena-home` (`SXC_JENA_HOME`), `--timeout-ms` (30000 per case and engine) | `shacl_corpus/result.json` |
+| `shacl-corpus` | optional actual pySHACL and Apache Jena comparison against independent expected nonrecursive reports, or (since 0.9.0) against the pinned W3C SHACL core suite's expected reports inside the sxc profile | `--jena-home` (`SXC_JENA_HOME`), `--timeout-ms` (30000 per case and engine), `--w3c-suite [DIR]` (bare: `SXC_W3C_SHACL_SUITE`), `--allow-unpinned-suite` | `shacl_corpus/result.json` |
+| `expect` | optional literal expected rows of `[[gold.expect]]` against the gold SQL and Cube on a dedicated fixture database | required `--allow-fixture-database`, `--dsn-env` (`SXC_EXPECT_DSN`) | `expect/result.json`, `expect/build/`, `expect/cube/`, `expect/server.log` |
 
 Common options:
 
@@ -45,7 +46,8 @@ Common options:
   exit 2. Without it, operational stages use `./crosscheck.toml`; `doctor` and `cube-install` may run without
   one, and other operational stages stop with exit 2 (`no crosscheck.toml in the current directory: pass
   --config PATH`). Standalone `counterexample`, `cube-replay`, `tlp` and `shacl-corpus` reject explicit
-  `--config` and never load a configuration from the working directory.
+  `--config` and never load a configuration from the working directory. `expect` needs
+  the operational configuration like `build`, but connects only to its fixture database.
 - `--out DIR` is the output directory. Default: `.sxc` next to the configuration, or `./.sxc` in the current
   directory when there is no configuration (`doctor` and `cube-install` without `--config`, or a standalone
   synthetic stage).
@@ -82,7 +84,7 @@ Exit codes:
 |---|---|---|
 | 0 | the stage status is `pass` | every check passed |
 | 1 | a check failed, errored or did not run | a `fail`, `error` or `not_run` check; a run narrowed by `--only`, `--gold` or `--hierarchy`; `report` with a missing or stale required stage; Ctrl-C; an unexpected exception |
-| 2 | configuration or usage error | a malformed `crosscheck.toml` entry, an explicit `--config` that does not exist, no `./crosscheck.toml` for a stage that needs one, an unknown `--require`, `--only`, `--gold` or `verify.mutation_operators` value, `--scale` below 1, a missing prerequisite result (`run sxc.py <stage> first`), `build/shapes.ttl` older than the shapes in the configuration, a configured table or column that does not exist, demo tables with other columns than the demo defines, a `--native-file` that does not exist, a `--home` directory that is neither empty nor an adapter install |
+| 2 | configuration or usage error | a malformed `crosscheck.toml` entry, an explicit `--config` that does not exist, no `./crosscheck.toml` for a stage that needs one, an unknown `--require`, `--only`, `--gold` or `verify.mutation_operators` value, `--scale` below 1, a missing prerequisite result (`run sxc.py <stage> first`), `build/shapes.ttl` older than the shapes in the configuration, a configured table or column that does not exist, demo tables with other columns than the demo defines, a `--native-file` that does not exist, a `--home` directory that is neither empty nor an adapter install, `expect` with cases but without `--allow-fixture-database`, with a `--dsn-env` that is not a variable name, or with a fixture DSN that equals, or names the same host, port and database as, an operational DSN variable set in this environment (another name for the same server is not detected) |
 | 3 | environment missing | a DSN variable that is not set or holds a malformed DSN, an unsupported `sslmode` or DSN parameter, an unreadable `sslrootcert`, a failed connection, PostgreSQL older than 17, pg8000 or the reason packages missing, Java missing (`reason`), Node.js missing or older than 22, the Cube adapter missing, incomplete or stale, Cube not starting, the check role unable to read a source table or to create in the output schema (`build`), an unsupported platform or a glibc too old (`cube-install`), Python older than 3.11 |
 
 `doctor` reports a missing DSN, a failed connection and an old server as failing checks (exit 1) instead of
@@ -101,7 +103,7 @@ exit 3, so one run lists everything to fix.
   `<python>` and `<plugin>`, which `sxc.py` expands only when it prints, so a printed hint works from any
   directory while result files stay path-free (a `--home` directory the user typed is repeated as typed).
 - `res.not_proven` lists what the run could not prove (an empty stratum, an equivalent mutant, a shape compared
-  only in SQL, a vacuous defined class, a sampled pair test, a join path additivity does not apply to, a
+  only in SQL, a vacuous defined class, a sampled or chunked pair test, a join path additivity does not apply to, a
   component that is not installed). It does not
   change the status; `report` shows every line.
 - `res.next_safe_action` is one sentence the agent can follow.
@@ -222,12 +224,13 @@ parameters are ignored.
 | `cube_client` | `CubeClient.load(query) -> list[dict]` (polls "Continue wait", explicit limit 50,000, never `renewQuery`, no proxies), `meta()` |
 | `compare` | `run_binding(conn, client, cfg, gold, params, cache=None, types=None)`, `compare_rows(gold, g_rows, c_rows, types=None)`, `member_kinds(model)`, `gold_kinds(gold, kinds)` |
 | `sweep` | `bindings(conn, cfg, gold)`, `strata_names(gold)`, `md5_order(column)` |
-| `shape_q` | `tests(cfg, model)`, `run_test(...)`, `pair_keys(conn, cfg, test)`, `sampled(test)`, `d95_keys(sampled, total)`, `sample_note(detail)`, `PAIR_KEY_CAP = 2000`, `join_path(cubes, measure_cube, dim_cube)`, `additive_path(steps)`, `null_group_sql(cfg, test)`, `not_applicable(cfg, model)` |
+| `shape_q` | `tests(cfg, model)`, `run_test(..., budget=None)` (the baseline V3 run passes `verify.pair_key_budget`), `pair_keys(conn, cfg, test, budget=None)`, `sampled(test)`, `d95_keys(sampled, total)`, `sample_note(detail)`, `chunk_note(detail)`, `PAIR_KEY_CAP = 2000` (defined in `config`), `join_path(cubes, measure_cube, dim_cube)`, `additive_path(steps)`, `null_group_sql(cfg, test)`, `not_applicable(cfg, model)` |
 | `mutate` | `OPERATORS`, `CLOSURE_OPERATORS`, `OUTCOMES`, `selected(cfg)`, `run_mutants(cfg, out, conn, model, suite, closure=None, sampled_items=())`, `verdict(status, item)`, `closure_status(cfg, out)` |
 | `demo` | `build(dirty, seed, scale) -> {"parts","edges","orders","stock","malformed","expected"}`, `load(conn, data)`, `reference(expected, variant, seed, scale)`, `TABLES`, `TableMismatch` |
 | `cube_replay` | `run(None, args, out) -> Result('cube_replay')`: actual model generation, named mutation, original/gold agreement and mutant/gold disagreement on owned synthetic schemas; hash-bound replay and scoped cleanup |
 | `tlp` | `run(None, args, out) -> Result('tlp')`: strict versioned trusted spec, bounded synthetic fixtures, materialized predicate partitions, exact multiset/aggregate comparisons and hash-bound replay |
-| `shacl_corpus` | `run(None, args, out) -> Result('shacl_corpus')`: fixed independent expected reports compared with actual pySHACL and Jena; bounded output/deadlines and owned process-tree cleanup |
+| `expect` | `run(cfg, args, out) -> Result('expect')`; `fixture_env(cfg, args)` (the guards before any connection) and `operational_variables(cfg) -> (compared, unset)`, `fixture_config(cfg, env)`, `compared_columns(gold, case)`, `judge(gold, case, gold_rows, cube_rows, types)`, `run_case(conn, client, cfg, gold, case, types)`, `fixture_relations(cfg, hierarchies)`, `fixture_digest(conn, cfg, hierarchies=()) -> {fixture_sha256, tables_sha256, rows}`, `share_locks(env, cfg, relations)` (context manager yielding whether the SHARE locks were taken) |
+| `shacl_corpus` | `run(None, args, out) -> Result('shacl_corpus')`: fixed independent expected reports compared with actual pySHACL and Jena; bounded output/deadlines and owned process-tree cleanup. Since 0.9.0, `load_w3c_suite(root)` reads W3C core manifests (bounded, inside the suite, digested) and classifies each entry against the profile; `run_w3c` runs both engines on in-profile cases |
 
 ## 5. Generated objects (names from `naming.py`)
 
@@ -276,7 +279,13 @@ configuration ids; `<member>` is a Cube member (`cube.member`); `<stratum>` is a
 | tlp | `tlp:consistency` | every bounded comparison has the same complete row multiset and exact COUNT or SUM after partitioning by predicate TRUE, FALSE and NULL | `fail` when a complete row or aggregate comparison disagrees; a pass proves internal partition consistency only |
 | tlp | `tlp:engine` | unavailable-engine check only | `not_run` when PostgreSQL cannot be reached |
 | tlp | `tlp:execution` | error check only | `error` for invalid/unsupported answers, timeout, unstable execution, changed spec/generator/replay inputs or artifact failure |
+| expect | `expect:<gold>[<i>]` | the gold SQL and the gold's Cube query, run on the fixture with case `<i>`'s parameters, both equal the case's expected rows | `fail` (`reason` `common_mode`: gold and Cube agree but differ from authored rows; `regression`: they agree but differ from captured rows; `gold_mismatch`, `cube_mismatch`, `both_mismatch`: they disagree); `error` (`side`, error type, SQLSTATE, HTTP status; `expected_duplicate_keys`: expected keys equal in their typed form); `not_run` with a `not_proven` line (`fixture_mismatch`, `closure_not_passed`, `cube_not_passed`, `gold_members_not_passed`, `fixture_changed`, `fingerprint_failed`, `fixture_unreadable`) |
+| expect | `expect:build`, `expect:cube` | the fixture's closure checks passed in the inner build; `cube:meta` passed in the inner cube stage | the worst closure status (`fail`, `error`); the `cube:meta` status (`error` when it is missing) |
+| expect | `expect:fixture` | the fixture's source tables hashed the same before the build and after the cases, and its source and built closure tables the same before and after the cases (`fixture_sha256` of the source tables, `locked`, `operational_variables_compared`) | `error` (`fixture_changed`, `fingerprint_failed`); `not_run` (`no_case_ran`): every case was gated |
+| expect | `expect:cases` | never passes | `not_run` (`no_cases`): no `[[gold.expect]]` case in the configuration |
 | shacl-corpus | `pyshacl:<case>`, `jena:<case>` | each actual engine independently matches the case's hand-written canonical constraint-report multiset | `fail` on a constraint, path, severity or semantic value mismatch; `error` on timeout, nonzero engine exit, malformed/missing report or cleanup failure; valid conforming empty reports are compared explicitly |
+| shacl-corpus | `w3c:<engine>:<case>` | since 0.9.0, with `--w3c-suite`: the engine (`pyshacl` or `jena`) matches the W3C suite's expected report for an approved core `sht:Validate` entry inside the sxc profile (canonical multiset; absent path/value compared, `sh:sourceShape` ignored) | `not_run` with `reason` for every entry outside the profile, and for every entry of an unpinned suite without `--allow-unpinned-suite` (`suite_not_pinned`, `duplicate_entry`, `unsupported_component`, `complex_path`, `non_iri_focus`, ...); `fail` on a mismatch; `error` as for the fixed corpus |
+| shacl-corpus | `w3c:suite` | never passes | `not_run` (`suite_not_pinned`): an unpinned suite ran under `--allow-unpinned-suite`, so its expected reports are not verified as the W3C suite's and the stage cannot pass |
 | doctor | `python` | Python >= 3.11 | `fail` |
 | doctor | `pg8000` | pg8000 can be imported | `fail`, with the absolute pip command as the next action |
 | doctor | `dsn` | the check-role DSN variable (`source.dsn_env`, or `SXC_PG_DSN` without a configuration) is set | `fail`; the database checks after it are `not_run` (`no_dsn`) |
@@ -308,7 +317,7 @@ configuration ids; `<member>` is a Cube member (`cube.member`); `<stratum>` is a
 | verify | `v2:<gold>:<stratum>` | every binding of the stratum matches exactly; an empty stratum passes (`empty_stratum`) and is listed in `not_proven` | as `v1:<gold>`, without `no_binding` |
 | verify | `v3:total:<member>` | the Cube total equals SQL computed from the configuration (or the closure table) | `fail`; `error`; `not_run` (`closure_not_passed`) |
 | verify | `v3:additive:<member>:<member>` | the groups of the measure by the ontology class column of a cube joined through many_to_one / one_to_one steps only, the NULL group included, add up to its total, and the NULL group equals independent SQL over the measure source (`null_group_equal`: an anti-join, or the matched rows without a class when Cube roots the query at the dimension's cube) | as `v3:total:<member>`; a join path with a one_to_many or unknown step gets no check, only a `not_proven` line (not applicable) |
-| verify | `v3:pair:<member>+<member>` | the two measures queried together equal the same measures queried alone, per key | as `v3:total:<member>` |
+| verify | `v3:pair:<member>+<member>` | the two measures queried together equal the same measures queried alone, per key | as `v3:total:<member>`; since 0.9.0 also `not_run` (`keys_not_answered`): a chunked test whose Cube answers left out keys it asked for |
 | verify | `v3:closure_oracle:<h>` | raw edges independently recomputed in Python match every stored closure pair's exact quantity, logical path count and minimum/maximum depth in one read-only REPEATABLE READ snapshot | `fail` on differences, error-mode cycles or an exceeded configured depth; `error` on query failure or an internal oracle defect (`scc_removal_left_cycle`); `not_run` for a failed build gate, unsupported keys/quantities or exceeded resource bounds. In `on_cycle = report` mode the oracle removes the edges inside strongly connected components itself and records `cycle_handling`, `dropped_cycle_edges` and `cycle_nodes` (informational, never compared with build's statistics); a pass that removed edges is listed in `not_proven` |
 | verify | `v4:<operator>:<target>` | the mutant was killed: a suite item failed against it (`killed_by`) | `fail` (it survived); `error` (`suite_error`, `startup`, `cube`, `write`, `model_mismatch`, `witness`); `not_run` (`closure_not_passed`, `suite_incomplete`). Equivalent and not applicable mutants get no check, only a `not_proven` line |
 | verify | `v4:suite` | never passes | `not_run` (`no_passing_suite_item`): no suite item passes on the unmutated model |
@@ -344,8 +353,82 @@ cases. Actual pySHACL and Jena must each match focus/path/component/severity/val
 blank-node names, source-shape labels and diagnostic messages are ignored. Missing reports are distinct
 from valid conforming empty reports. Both engines have bounded stdout/stderr, a per-case deadline and
 owned descendant cleanup. Jena is an external optional runtime; the verified Jena 6.2.0 test distribution
-uses a Java 21-compatible runtime, while HermiT's main Java 11 minimum is unchanged. Details and scope
+uses a Java 21-compatible runtime, while HermiT's main Java 11 minimum is unchanged. Since
+0.9.0, `--w3c-suite` takes expected reports from the W3C SHACL core test suite instead, so they cannot
+share a mistake with the fixed corpus. Both engines validate the suite's own shapes and data graphs: the mode
+checks engine conformance on the components sxc emits, not sxc's exporter, so it complements the fixed corpus
+(run both) and says so in `not_proven`. Only approved entries inside the sxc profile run: the components and
+severities `shapes.shapes_ttl()` emits (sh:class and the three numeric bounds, one Violation or Warning
+severity) on IRI focus nodes, through sh:targetClass, sh:targetNode, implicit class targets or node-level
+shapes, with no path or one IRI path; everything else is `not_run` with a reason id. The suite is pinned by a
+SHA-256 over the sorted relative paths and bytes of the files read; a different digest runs no engine unless
+`--allow-unpinned-suite`, and then the `not_run` check `w3c:suite` keeps the stage from passing. It is read
+at test time, never vendored. Details and scope
 are in `docs/cube-replay.md`, `docs/tlp.md` and `docs/shacl-corpus.md`.
+
+**Literal expected rows (`expect`).** When the gold SQL and the configuration share a
+mistake they agree and V1 passes. `[[gold.expect]]` cases add rows a person wrote from the business
+specification for a small fixture, the literal expected-row form of dbt and SQLMesh unit tests; closures are
+recursive and cannot be mocked, so both sides really run. `expect` is the first stage that runs the operational
+gold entries and model on other data, so it keeps the standalone rule: it is reported separately, `report` never
+reads it, and no pass widens operational V1–V5 or report coverage.
+
+- Guards before anything connects: a configuration without cases is `expect:cases` `not_run`; otherwise
+  `--allow-fixture-database` is required (exit 2), the `--dsn-env` value must be a variable name (exit 2) and the
+  variable (`SXC_EXPECT_DSN`) must be set (exit 3). The fixture DSN is refused (exit 2, no value printed) when it
+  is, equals, or names the same host, port and database as, an operational DSN variable (`source.dsn_env`,
+  `source.owner_dsn_env`, `cube.dsn_env`) set in this environment. Another name for the same server is not
+  detected, so the fixture must be a dedicated database: `expect:fixture` records `operational_variables_compared`,
+  and `not_proven` says what was compared and names the variables that were not set.
+- The user loads the fixture (the source tables and a few rows, for example `examples/expect/fixture.sql`); sxc
+  never runs fixture SQL and creates no scratch schema. The fixture's source tables are fingerprinted first
+  (`fixture_sha256`); a case whose optional `fixture_sha256` pin differs is `not_run` (`fixture_mismatch`). A copy of
+  the configuration whose DSN variables all name the fixture variable (data revision and runtime probes off) runs
+  `stage_build.run` and `stage_cube.run` into `<out>/expect/`: build writes its views and closure tables into the
+  fixture database's output schema (what the consent permits), where they stay until the next run rebuilds them, and
+  the operational `build/` and `cube/` results are never touched. All cases of all gold entries share the one fixture
+  database. `expect:build` mirrors the closure checks (shape results are counted, not gated) and `expect:cube` the
+  `cube:meta` check with its Cube version and planner.
+- The inner cube stage starts Cube for `cube:meta`; one more Cube process then serves the cases. For each case the gold SQL (READ ONLY, bound parameters) and the
+  gold's `cube_query` run with the case's `params`; a Cube row without a requested member is an error. Each side is
+  compared with the expected rows by `compare.compare_rows`, typed by the model's member kinds: gold strictly (its
+  SQL coalesces the `zero_if_null` columns itself, and a column it does not return never matches a NULL), Cube
+  with the declared `zero_if_null` equivalence, and gold with Cube as in V1. A partial case compares only the
+  columns its rows name.
+- `expect:<gold>[<i>]` passes only when both sides equal the expected rows. It fails with `reason`
+  `common_mode` when gold and Cube agree with each other but not with the rows of an authored case, `regression`
+  when they agree but not with captured rows (only authored rows with a `spec` decide `common_mode`), and
+  `gold_mismatch`, `cube_mismatch` or `both_mismatch` when they disagree; `gold_equals_expected`,
+  `cube_equals_expected` and `gold_equals_cube` say which side matched. Counts follow `compare_rows` per pair
+  (`gold_vs_expected`, `cube_vs_expected`, `gold_vs_cube`). A side that cannot run is `error` (type, SQLSTATE or
+  HTTP status); so are expected rows whose keys are equal in their typed form (`expected_duplicate_keys`). A case is
+  `not_run` when a closure it uses did not pass (`closure:<h>` or `closure_apply:<h>`; `closure_not_passed`), Cube
+  did not serve the model (`cube_not_passed`) or its members did not pass `cube:gold_members:<gold>`
+  (`gold_members_not_passed`); every `not_run` case gets a `not_proven` line. The next action for `common_mode`
+  starts with checking that the fixture rows and the expected rows follow the cited specification: a wrongly loaded
+  fixture gives the same verdict, and changing the gold SQL and the configuration to match it would create the shared
+  mistake this stage looks for. Captured rows need not cite a specification and come from a run, so the next action
+  for `regression` starts with checking that the loaded fixture is the one the rows were captured on (compare
+  `expect:fixture`'s `fixture_sha256` with the case's pin, or pin it).
+- `expect:fixture` hashes the row count and an in-database md5 of every source table before the build, and of every
+  source and built closure table before and after the cases, each digest in one REPEATABLE READ snapshot. While the
+  cases run, a second session holds SHARE locks on those tables (as `cube-replay` does), so a writer waits; locks
+  that cannot be taken (for example a role without UPDATE, DELETE, TRUNCATE or MAINTAIN, or a conflicting lock held
+  past `source.statement_timeout_ms`) are recorded (`locked: false`) and disclosed in `not_proven`. A changed digest
+  (`fixture_changed`) or a failed fingerprint (`fingerprint_failed`) is an error and turns every passing case into
+  `not_run`. The digests show equality at those points, not one shared snapshot, cover only the entity and built
+  closure tables, and the gold SQL and Cube read in separate sessions; `not_proven` says so. `fixture_sha256` covers
+  the source tables only and is not salted, so the result can confirm guessed fixture rows: keep the fixture
+  synthetic. A case stores it as a pin compared across runs and databases, so each digest orders the row text by
+  `COLLATE "C"` and fixes `TimeZone`, `DateStyle`, `IntervalStyle`, `extra_float_digits`, `bytea_output` and
+  `lc_monetary` with `SET LOCAL` in its transaction: a pin depends on the source tables' names, their rows and the
+  order and types of their columns (and on the database encoding for text outside ASCII), not on the database's
+  default collation or the session's settings. The digest format is versioned (`sxc-expect-fixture-v2`).
+- Captured passes carry `independent: false` and a `not_proven` line: their rows come from a run, not from a
+  specification, and a pass of captured cases only says so in its next action. Authored rows are independent only as
+  far as they follow the cited specification. Results hold counts, ids and the fixture hash, never rows, parameter
+  values or DSNs. The cases live in the operational `crosscheck.toml`: editing one changes `config_sha256`, so
+  `report` treats earlier operational results as stale until they are rerun.
 
 **Independent closure oracle.** V3 also reads raw edge lines and the closure table in a single
 read-only REPEATABLE READ transaction, before starting Cube. A reverse-topological Python fold
@@ -443,8 +526,42 @@ and filtered with an `equals` filter in each of its queries; the detail gains `s
 hypergeometric sampling, computed exactly on integers), and `d95_rate` = D / N; for n = 2,000 the bound is 6 at
 N = 5,000, 29 at N = 20,000, 149 at N = 100,000 and 1,496 at N = 1,000,000. The `not_proven` line keeps its prefix
 and adds that a mismatch affecting at least D keys (r%) is detected with 95% probability, assuming the mismatching
-keys are independent of the fixed md5 sample order, and that fewer mismatching keys may be missed. The bound is a
-statement about the sample, not a verdict: the check's status is unchanged.
+keys are independent of the fixed md5 sample order, and that fewer mismatching keys may be missed. Since 0.9.0
+it also says that the NULL key group is not compared in a sample: the `equals` filter leaves it out, so
+the bound covers the non-NULL keys only. A sample does not yet check that Cube answered every sampled key: a
+key missing from the together answer is still counted as compared and in the d95 bound; only the chunked
+comparison below refuses it (`keys_not_answered`). The bound is a statement about the sample, not a verdict: the check's status
+is unchanged.
+
+**Chunked pair tests** (since 0.9.0). `verify.pair_key_budget` (default 2000, at least the cap) is the
+largest key count the baseline V3 run compares in full; the default keeps the sample above the cap. A pair test with
+more keys than the cap and no more than the budget reads the key count and every non-NULL key, in the same md5 order,
+in one `REPEATABLE READ` snapshot (the keys in one statement under `source.statement_timeout_ms`, a timeout making the
+test an `error`, and held in memory for the baseline run), splits them into consecutive chunks of 2,000 keys (the last
+chunk holds the rest)
+and runs the same `equals`-filtered together and alone queries per chunk, so the cost grows linearly with the keys
+(ceil(N / 2,000) times that of the sample) instead of with their square. The NULL key group, which the unfiltered
+queries of at most 2,000 keys include and an `equals` filter leaves out, is then compared with a `notSet` filter
+(together on the grouped member, alone on each alone dimension). Mismatched keys, duplicate keys and alone-only keys
+add up over the chunks and the NULL key group; the test passes only when every chunk and the NULL key group pass and
+the together answers held every key the chunks asked for (`answered_keys`, counted in the canonical form of the
+grouped member, equal to `compared_keys`). A key missing there is never compared by value, so without a mismatch or a
+duplicate key the test is then `not_run` (`keys_not_answered`), never a pass. A query that cannot run in any chunk
+makes it an `error` whose detail says `mode`, `chunks` and `chunks_compared` (the chunks that finished; all of them
+when the NULL key group failed). The detail of a finished comparison gains `mode = "chunked"`, `chunks`,
+`compared_keys` (the keys the chunks asked for), `answered_keys`, `total_keys`, `null_key_group` (the NULL key group's
+own `keys`, `mismatched`, `duplicate_keys` and `alone_only_keys`, which the top-level counts include) and `elapsed_ms`
+(from the key read to the last answer), and carries no `sampled_keys`, `d95_keys` or `d95_rate`. The alone queries
+are filtered to the chunk's keys, so the chunked `alone_only_keys` count keys of the key table only, and
+`duplicate_keys` counts duplicates within one chunk (two keys equal in canonical form in different chunks are each
+compared with their own alone value). Its `not_proven` line says that every key was compared in C chunks plus the
+NULL key group (or, when the answers held fewer, how many of the keys asked for they held), that the key set comes
+from one `REPEATABLE READ` snapshot at the start, and that each Cube query (the together query and every alone query
+of every chunk and of the NULL key group) reads its own snapshot, shared with no other query and not with SQL: the
+longer the run, the longer that unshared window. Above the budget the sample and its bound stay, the
+detail gains `pair_key_budget`, and the `not_proven` line adds that the key count exceeds the budget. V4 replays a
+chunked test against its sample, the first chunk of the same key read, never every chunk: the item enters the suite
+on its chunked V3 status, and the `sample_blind_possible` marking and the V4 `not_proven` line are unchanged.
 
 **V3 additivity over join paths.** Predefined joins inflate totals when a row matches several rows of the
 joined cube ("Aggregation Consistency Errors in Semantic Layers and How to Avoid Them", HILDA 2023,

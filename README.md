@@ -7,7 +7,7 @@
 **설정 하나에서 네 계층을 만들고, 서로의 결과를 교차 검증합니다.**<br/>
 계층마다 그럴듯한 설명을 넘어, **검사 ID · 건수 · 종료 코드로 일치 여부를 확인합니다.**
 
-[![Release](https://img.shields.io/badge/Release-v0.8.0-0D9488?style=for-the-badge)](docs/releases/v0.8.0.md)
+[![Release](https://img.shields.io/badge/Release-v0.9.0-0D9488?style=for-the-badge)](docs/releases/v0.9.0.md)
 [![CI](https://img.shields.io/github/actions/workflow/status/Technoetic/semantic-crosscheck/tests.yml?branch=main&style=for-the-badge&label=CI&logo=github)](https://github.com/Technoetic/semantic-crosscheck/actions/workflows/tests.yml)
 [![MIT](https://img.shields.io/badge/License-MIT-8B5CF6?style=for-the-badge)](LICENSE)
 [![Claude Code](https://img.shields.io/badge/Claude_Code-Plugin-191919?style=for-the-badge&logo=anthropic&logoColor=white)](#claude-code)
@@ -112,7 +112,7 @@ flowchart TB
 
 대시보드의 필터, SQL 보고서의 조인, SHACL의 데이터 규칙, OWL의 관계 정의가 조금씩 어긋날 수 있습니다. 조인 때문에 건수가 늘거나, NULL 처리 방식이 다르거나, 계층을 특정 깊이에서 잘라 버려도 각 계층의 자체 테스트는 통과할 수 있습니다.
 
-semantic-crosscheck는 같은 질문의 **서로 다른 표현을 비교**합니다. 불일치가 나오면 데이터·모델·기준 질의를 점검하고, 검사에 표시된 `config_ref`를 따라 설정을 고칩니다. 공통 설정이나 gold SQL 자체의 오류까지 자동으로 증명하는 것은 아니므로, 기준 질의를 별도로 작성하는 일이 중요합니다.
+semantic-crosscheck는 같은 질문의 **서로 다른 표현을 비교**합니다. 불일치가 나오면 데이터·모델·기준 질의를 점검하고, 검사에 표시된 `config_ref`를 따라 설정을 고칩니다. 공통 설정이나 gold SQL 자체의 오류까지 자동으로 증명하는 것은 아니므로, 기준 질의를 별도로 작성하는 일이 중요합니다. `expect`는 업무 명세에서 쓴 기대 행과 gold SQL·Cube를 작은 fixture에서 함께 비교해, 두 쪽이 공유하는 실수의 일부를 잡습니다.
 
 <a id="layers"></a>
 ### 네 계층의 역할
@@ -212,7 +212,7 @@ Cube는 항상 Tesseract SQL 플래너(`CUBEJS_TESSERACT_SQL_PLANNER=true`)로 �
 릴리스 태그를 고정해 등록합니다.
 
 ```text
-codex plugin marketplace add Technoetic/semantic-crosscheck --ref v0.8.0
+codex plugin marketplace add Technoetic/semantic-crosscheck --ref v0.9.0
 codex plugin add semantic-crosscheck@semantic-crosscheck-local
 ```
 
@@ -229,7 +229,7 @@ Windows PowerShell에서 실행 정책 때문에 `codex.ps1`이 거부되면 두
    python -m pip install -r "<plugin root>/requirements/reason.txt"
    ```
 
-   `<plugin root>` 예: `~/.claude/plugins/cache/semantic-crosscheck/semantic-crosscheck/0.8.0` 또는 `~/.codex/plugins/cache/semantic-crosscheck-local/semantic-crosscheck/0.8.0`. 패키지가 없으면 `/xc-doctor`가 실제 경로에 맞는 설치 명령을 안내합니다.
+   `<plugin root>` 예: `~/.claude/plugins/cache/semantic-crosscheck/semantic-crosscheck/0.9.0` 또는 `~/.codex/plugins/cache/semantic-crosscheck-local/semantic-crosscheck/0.9.0`. 패키지가 없으면 `/xc-doctor`가 실제 경로에 맞는 설치 명령을 안내합니다.
 2. psql을 사용하는 superuser가 `docs/setup-roles.sql`로 **loader·check 역할**을 만듭니다.
 3. Java를 `PATH`에 추가하거나 `SXC_JAVA`를 지정합니다.
 4. Node.js와 npm을 준비하고 `/xc-install` 또는 `sxc.py cube-install`로 **Cube 어댑터**를 한 번 설치합니다.
@@ -243,13 +243,14 @@ Windows PowerShell에서 실행 정책 때문에 `codex.ps1`이 거부되면 두
 
 | 변수 | 사용하는 단계 | 의미 |
 |---|---|---|
-| `SXC_PG_DSN` | DB 단계·Cube | 검사 역할 DSN: `postgresql://user@host:port/database[?sslmode=...]` · `source.dsn_env`로 이름 변경 가능 |
+| `SXC_PG_DSN` | DB 단계(`expect` 제외)·Cube | 검사 역할 DSN: `postgresql://user@host:port/database[?sslmode=...]` · `source.dsn_env`로 이름 변경 가능 |
 | `SXC_PG_OWNER_DSN` | `demo` | 가상 데이터를 적재하는 loader 역할 DSN · `source.owner_dsn_env`로 이름 변경 가능 |
 | `PGPASSWORD` | DB 단계·Cube | 암호가 없는 DSN의 암호 · pg8000은 `~/.pgpass`를 읽지 않음 |
 | `SXC_JAVA` | `doctor`, `reason` | Java 실행 파일의 절대 경로 또는 `PATH`의 명령 이름 |
-| `SXC_CUBE_HOME` | `cube-install`, `doctor`, `cube`, `verify` | Cube 설치 위치 · 기본값은 사용자 캐시 |
-| `SXC_CUBE_DEBUG` | `cube`, `verify` | `1`이면 Cube 오류 전문을 `server.log`에 기록 · 행 값이 포함될 수 있어 로컬 디버깅에만 사용 |
+| `SXC_CUBE_HOME` | `cube-install`, `doctor`, `cube`, `verify`, `expect` | Cube 설치 위치 · 기본값은 사용자 캐시 |
+| `SXC_CUBE_DEBUG` | `cube`, `verify`, `expect` | `1`이면 Cube 오류 전문을 `server.log`에 기록 · 행 값이 포함될 수 있어 로컬 디버깅에만 사용 |
 | `SXC_DEBUG` | 모든 단계 | `1`이면 예외 traceback 출력 · 로컬 디버깅에만 사용 |
+| `SXC_EXPECT_DSN` | `expect` | 사용자가 적재한 전용 fixture DB의 DSN · `--dsn-env`로 이름 변경 가능 · 이 환경에 설정된 운영 DSN 변수와 값이 같거나 같은 호스트·포트·DB를 가리키면 거부. 같은 서버를 다른 이름으로 가리키면 알아내지 못하므로 전용 DB를 사용 |
 
 PowerShell에서는 `$env:SXC_PG_DSN = "..."` 형식으로 지정합니다.
 
@@ -421,11 +422,12 @@ python skills/semantic-crosscheck/scripts/sxc.py <stage> [--config PATH] [--out 
 | `counterexample` | 합성 데이터에서 SQL의 차이·BOM 변환 관계를 검사하고 축소·재현 | `--reference-sql FILE`, `--candidate-sql FILE`, `--metamorphic-sql FILE`, `--mutation-operator NAME`, `--gold-sql FILE`, `--scenario nulls`, `--seed N`, `--max-examples N`, `--max-shrink-steps N`, `--shrink-strategy structured`, `--witness-schema FILE`, `--solver-timeout-ms N`, `--dsn-env NAME`, `--statement-timeout-ms N`, `--constraints FILE`, `--replay FILE` | `counterexample/result.json`, `counterexample/fixture.json` |
 | `cube-replay` | 고정 합성 데이터를 실제 Cube 원형·변형 모델과 독립 gold SQL로 비교 | `--mutation-operator NAME`, `--allow-scratch-schema`, `--seed N`, `--dsn-env NAME`, `--statement-timeout-ms N`, `--replay FILE` | `cube_replay/result.json`, `cube_replay/fixture.json` |
 | `tlp` | 참·거짓·NULL 분할의 행 중복과 COUNT/SUM 일관성 검사 | `--spec FILE`, `--dsn-env NAME`, `--seed N`, `--max-examples N`, `--statement-timeout-ms N`, `--replay FILE` | `tlp/result.json`, `tlp/fixture.json` |
-| `shacl-corpus` | 독립 기대 결과와 pySHACL·Apache Jena의 합성 보고서 비교 | `--jena-home DIR`, `--timeout-ms N` | `shacl_corpus/result.json` |
+| `shacl-corpus` | 독립 기대 결과와 pySHACL·Apache Jena의 합성 보고서 비교. 0.9.0부터는 W3C SHACL 시험 모음 core의 프로필 안 사례도 W3C 기대 보고서와 비교 | `--jena-home DIR`, `--timeout-ms N`, `--w3c-suite [DIR]`, `--allow-unpinned-suite` | `shacl_corpus/result.json` |
+| `expect` | 전용 fixture DB에서 gold SQL·Cube를 실행해 `[[gold.expect]]`의 문자 그대로 기대 행과 비교 | `--allow-fixture-database`, `--dsn-env NAME` | `expect/result.json`, `expect/build/`, `expect/cube/`, `expect/server.log` |
 
 **공통 옵션**
 
-- `--config PATH`: 명시하면 반드시 존재해야 합니다. 없으면 exit 2이며 단계를 실행하지 않습니다. 생략하면 `./crosscheck.toml`을 찾습니다. `doctor`·`cube-install`은 설정 없이도 실행합니다. 별도 합성 도구 `counterexample`은 설정을 읽지 않으며 `--config`를 거부합니다.
+- `--config PATH`: 명시하면 반드시 존재해야 합니다. 없으면 exit 2이며 단계를 실행하지 않습니다. 생략하면 `./crosscheck.toml`을 찾습니다. `doctor`·`cube-install`은 설정 없이도 실행합니다. 별도 합성 도구 `counterexample`은 설정을 읽지 않으며 `--config`를 거부합니다. `expect`는 운영 설정을 읽지만 fixture DB에만 접속합니다.
 - `--out DIR`: 기본 출력 위치는 설정 옆 `.sxc`입니다. 설정 없이 실행하면 `./.sxc`이며, 새 출력 디렉터리에는 내용 `*`의 `.gitignore`를 만듭니다.
 - `--quiet`: 요약 한 줄만 출력합니다. `sxc.py --version`은 버전을 표시합니다.
 
@@ -577,6 +579,7 @@ flowchart TD
 | build·reason·cube·verify / report | `data_revision:stable`, `data_revision:current` | 구성된 데이터 버전이 안정적이며 현재 근거와 일치; 조회 오류는 실패로 닫음 |
 | build·reason·cube·verify / report | `runtime_evidence:stable`, `runtime_evidence:current` | 선택한 실제 실행 환경 근거가 안정적이며 현재와 일치; 누락·변경·조회 실패 시 기존 PASS 재사용 차단 |
 | counterexample | `counterexample:search`, `counterexample:query`, `counterexample:recheck`, `counterexample:inputs`, `counterexample:artifact` | 합성 SQL 차이와 축소·재현 범위; 오류·미발견은 동등성 증명 불가, 재생 파일 크기 상한 초과 시 저장 거부 |
+| expect | `expect:<gold>[<i>]`, `expect:build`, `expect:cube`, `expect:fixture`, `expect:cases` | fixture에서 gold SQL과 Cube가 모두 기대 행과 일치; 서로 같은데 기대 행과 다르면 `common_mode`(authored)·`regression`(captured) 실패, build 전과 사례 전후에 잰 fixture 테이블 해시가 다르면 통과 불가(그 시점들의 비교일 뿐 한 시점의 같은 데이터를 보장하지는 않음) |
 
 조기 중단의 `stage`, doctor의 `database`, demo의 `demo:load`, verify의 `v4:suite`, 범위를 나타내는 `scope:*`, 설치의 `cube_install:*`까지 포함한 전체 목록은 [설계 문서의 카탈로그](docs/design.md#6-check-catalogue)를 참고합니다.
 
@@ -648,8 +651,12 @@ Cube의 기본 오류 로그에는 오류 클래스·코드·대략적인 범주
 - **[실제 Cube 재생](docs/cube-replay.md):** 기존 9개 변이 템플릿의 고정 합성 데이터를 별도 시험 DB의 전용 스키마에 넣고, 실제 생성·변형 모델을 Cube로 실행한다. 독립 gold SQL과 원형은 일치하고 변형은 달라야 통과한다. `SXC_CUBE_REPLAY_DSN`과 명시적 `--allow-scratch-schema`가 필요하며, 이 실행이 만든 스키마만 정리한다.
 - **[SQL TLP 검사](docs/tlp.md):** 검토한 비재귀 SQL을 참·거짓·NULL로 나누고 `UNION ALL`로 합쳐 행의 중복과 COUNT/SUM을 비교한다. 전용 `SXC_TLP_DSN`을 사용하며, 빈 집합·NULL·정확한 소수·입력 변경·재생을 검사한다. 질의의 업무적 정답이나 범용 동등성 증명은 아니다.
 - **[독립 SHACL 코퍼스](docs/shacl-corpus.md):** 기존 class/bounds 범위의 고정 예제와 독립 기대 보고서를 pySHACL·Apache Jena에 각각 대조한다. 선택 설치한 `SXC_JENA_HOME`이 필요하다. 실제 확인한 Jena 6.2.0은 Java 21 실행 환경을 사용하며, 기본 HermiT 요구 환경은 그대로다.
+  - **W3C core 부분집합(0.9.0부터):** `--w3c-suite [DIR]`(DIR 없이 쓰면 `SXC_W3C_SHACL_SUITE`)는 고정 예제 대신 W3C SHACL 시험 모음 core 사례를 W3C 작업반이 쓴 기대 보고서와 엔진별로 비교한다. sxc가 내보내는 제약과 심각도(`sh:class`와 세 숫자 범위, Violation·Warning 심각도 하나)를 IRI focus node에 경로 없이 또는 IRI 경로 하나로 쓰는 프로필 안의 사례만 실행하고, `sh:datatype`·개수·복합/재귀 경로·SPARQL·`sh:closed` 같은 프로필 밖 사례는 이유와 함께 `not_run`이며 통과로 세지 않는다. 엔진이 프로필 안 사례를 틀리면 `fail`이다. 이 방식은 시험 모음에 들어 있는 shapes·data 그래프를 그대로 검증하므로 sxc의 내보내기(exporter)는 시험하지 않는다. 고정 예제를 대신하지 않고 보완하므로 둘 다 실행한다(결과 파일이 같으니 `--out`을 따로 준다).
+  - 고정 커밋(w3c/data-shapes `1dfcd9f`)은 읽은 파일의 경로와 내용으로 계산한 SHA-256 해시로 확인하며, 다르면 엔진을 실행하지 않는다. `--allow-unpinned-suite`를 주면 실행하지만 `w3c:suite` 검사가 `not_run`이라 단계는 통과하지 못한다. 고정 커밋에서는 98개 중 6개 사례가 프로필 안이고 두 엔진 모두 통과했다(2026-10-24, pySHACL 0.40.1·Apache Jena 6.2.0). 나머지 92개는 `not_run`이라 단계 전체 상태는 `not_run`이다. 프로필 안 W3C 사례 중 `sh:minInclusive`를 쓰는 것은 없어 그 범위는 고정 예제로만 확인한다. 시험 모음은 W3C Software and Document License로 시험 때만 읽고 저장소에 넣지 않는다.
 
 기본 환경에는 새 Python 의존성을 추가하지 않는다. 엔진 부재·시간 초과·잘못된 보고서·불안정한 입력을 통과로 처리하지 않으며, 합성 입력 행은 별도 fixture 파일에만 저장한다.
+
+**[문자 그대로 기대 행](commands/xc-expect.md):** gold SQL과 설정이 같은 실수를 공유하면 둘은 일치하고 V1은 통과한다. `[[gold]]` 항목에 선택 `[[gold.expect]]` 사례(파라미터, 기대 행, 출처 `authored`/`captured`, 명세 위치 `spec`, 선택 `fixture_sha256` 고정값)를 두면, `expect`가 사용자가 미리 적재한 전용 fixture DB(`SXC_EXPECT_DSN`, 명시적 `--allow-fixture-database`)에서 build·cube를 돌리고 gold SQL과 Cube를 각각 실행해 기대 행과 비교한다. 둘이 서로 같은데 기대 행과 다르면 `common_mode`(authored)·`regression`(captured), 한쪽만 다르면 `gold_mismatch`·`cube_mismatch`, 서로 다르게 틀리면 `both_mismatch`로 실패한다. `common_mode`이면 gold SQL과 설정을 고치기 전에 fixture 행과 기대 행이 명세를 따르는지부터 확인한다. fixture를 잘못 적재해도 같은 결과가 나오기 때문이다. `regression`이면 먼저 지금 적재한 fixture가 행을 캡처한 그 fixture인지 확인한다(`expect:fixture`의 `fixture_sha256`을 사례의 고정값과 비교하거나, 고정값을 둔다). 고정값은 원본 테이블의 이름·행·열 순서와 자료형으로 정해지며(비ASCII 텍스트는 DB 인코딩에도 좌우됨), DB의 기본 정렬 규칙이나 세션 설정(시간대 등)에는 좌우되지 않는다. 운영 설정을 읽지만 운영 DSN에는 접속하지 않는다. fixture DSN이 이 환경에 설정된 운영 DSN 변수와 값이 같거나 같은 호스트·포트·DB를 가리키면 거부하지만, 같은 서버를 다른 이름으로 가리키면 알아내지 못하므로 fixture는 전용 DB여야 한다. fixture SQL은 실행하지 않고 임시 스키마도 만들지 않는다. build가 만든 뷰와 closure 테이블은 fixture DB의 출력 스키마에 남고 다음 실행 때 다시 만들어지며, 모든 사례가 하나의 fixture DB를 함께 쓴다. 명세에서 쓴 `authored` 행만 독립 근거이고 `captured` 행은 회귀 감지용이다. 결과는 `report`에 포함하지 않으며 운영 V1–V5 범위를 넓히지 않는다. 사례를 고치면 `crosscheck.toml`이 바뀌므로 `report` 전에 운영 단계를 다시 실행한다. 예제는 `examples/expect/`에 있다.
 
 ## ⚠️ 검증 한계와 not_proven
 
@@ -661,7 +668,7 @@ Cube의 기본 오류 로그에는 오류 클래스·코드·대략적인 범주
 | 동등 변이 | 현재 데이터에서 모델을 바꿔도 결과가 같아 V4로 구분 불가 |
 | SQL에서만 비교한 규칙 | `sql_violation` 제약. 한 shape에 class와 범위가 함께 있는 제약은 `sh:class` 속성 shape와, 같은 열 값을 리터럴로 담은 값 술어(`<entity>.<column>/value`)의 범위 속성 shape 두 개로 SHACL과 비교함(0.5.0까지는 SQL에서만 비교). 같은 열에 서로 다른 RDF 값 유형이 필요한 shapes(class와 범위, 서로 다른 class)는 값 그룹별 데이터 그래프로 나눠 SHACL과 비교함 |
 | 비어 있는 정의 클래스 | OWL과 SQL 양쪽 모두 멤버가 없어 비교가 공허하게 성립 |
-| V3 지표 쌍의 표본 | 2,000키를 넘으면 재현 가능한 2,000키 표본으로 비교. not_proven에 95% 탐지 한계(`d95_keys`)를 함께 적으며, 그보다 적은 키에만 있는 불일치는 놓칠 수 있음 |
+| V3 지표 쌍의 표본 | 2,000키를 넘으면 재현 가능한 2,000키 표본으로 비교. not_proven에 95% 탐지 한계(`d95_keys`)를 함께 적으며, 그보다 적은 키에만 있는 불일치는 놓칠 수 있음. 표본은 키가 NULL인 행(NULL 키 그룹)을 비교하지 않으므로 그곳에만 있는 불일치는 찾지 못함(0.9.0부터 not_proven에도 적음). 0.9.0부터 `verify.pair_key_budget`(기본 2000)을 키 수 이상으로 올리면 V4 재생이 아닌 V3 검사 실행이 모든 키를 2,000키 조각과 NULL 키 그룹으로 나눠 비교함. 조각 비교에서 요청한 키가 Cube 응답에 빠지면 그 키는 비교되지 않았으므로 통과가 아니라 `not_run`(`keys_not_answered`)임. 표본 비교(예산 초과·V4 재생)는 Cube가 요청한 키에 모두 답했는지 아직 확인하지 않아, 답이 빠진 키도 비교한 키 수와 d95 계산에 들어감. 키 집합은 시작 시점의 REPEATABLE READ 스냅샷 하나에서 읽지만 Cube 질의는 하나하나 각자의 스냅샷을 읽어 다른 질의·SQL과 스냅샷을 공유하지 않으며, 이 사실을 not_proven에 적음. 예산 안의 키는 질의 하나로 모두 읽어 메모리에 담으므로 `source.statement_timeout_ms`를 넘으면 오류가 됨. 예산을 넘으면 표본으로 비교하고 not_proven에 예산 초과를 적음. V4 재생은 계속 2,000키 표본(첫 조각)을 씀 |
 | 독립 폐포 검산의 범위 | 자료형·원본 50,000줄·폐포 100,000쌍·10,000노드·계산 예산의 상한. 순환 보고 모드는 강연결요소 안의 연결을 지운 뒤 비교함(0.5.0까지는 `not_run`). 지원하지 않는 범위는 `not_run`이며 표본 통과로 대체하지 않음 |
 | 합성 SQL·OWL 예제 | 지정한 SQL의 차이와 합성 그래프의 논리만 검사. 실제 Cube 변이와의 대응·실제 열 자료형·업무 규칙 전체의 정확성은 별도 확인 필요 |
 | 선택 구성 요소·단계 | 설치되지 않았거나 선택 단계가 실행되지 않음 |
@@ -669,7 +676,7 @@ Cube의 기본 오류 로그에는 오류 클래스·코드·대략적인 범주
 <details>
 <summary><b>지원 모델·질의·실행의 나머지 제한</b></summary>
 
-- 기준 gold SQL과 설정에 같은 오류가 있으면 일치할 수 있습니다. 생성 객체와 별도로 기준 질의를 작성합니다.
+- 기준 gold SQL과 설정에 같은 오류가 있으면 일치할 수 있습니다. 생성 객체와 별도로 기준 질의를 작성합니다. `expect`는 업무 명세에서 쓴 기대 행(`[[gold.expect]]`, `source = "authored"`)과 gold SQL·Cube를 fixture에서 함께 비교해 공유된 실수를 `common_mode`로 실패시킵니다. 다만 사례가 쓰는 fixture DB의 행과 사례의 파라미터가 다루는 범위만 확인하며, 기대 행이 명세를 잘못 옮기면 그 오류는 남습니다.
 - OWL은 열린 세계 의미론입니다. SQL과 의미가 맞는 지원 정의만 비교하며 범용 RDF/OWL 가져오기·동기화 서비스는 제공하지 않습니다.
 - gold 질의당 순회 파라미터는 하나입니다. 여러 파라미터는 `param_sets`를 사용합니다. `timeDimensions`는 `granularity` 대신 `dateRange`, `closure_join`은 정확히 하나의 계층이 필요합니다.
 - Cube 응답의 상한은 **50,000행**입니다. 상한에 도달하면 부분 비교로 통과시키지 않고 오류로 처리합니다.
@@ -685,16 +692,16 @@ Cube의 기본 오류 로그에는 오류 클래스·코드·대략적인 범주
 <a id="development"></a>
 ## 🧪 검증 근거와 개발
 
-| v0.8.0의 확인 근거 | 범위 |
+| v0.9.0의 확인 근거 | 범위 |
 |---|---|
-| [릴리스 검증 JSON](https://github.com/Technoetic/semantic-crosscheck/releases/download/v0.8.0/verification.json) | 공개 시 실제 소스 커밋, 원시 CI 로그의 테스트·제외, 독립 검증, archive SHA-256 기록 |
+| [릴리스 검증 JSON](https://github.com/Technoetic/semantic-crosscheck/releases/download/v0.9.0/verification.json) | 공개 시 실제 소스 커밋, 원시 CI 로그의 테스트·제외, 독립 검증, archive SHA-256 기록 |
 | [GitHub Actions](https://github.com/Technoetic/semantic-crosscheck/actions/workflows/tests.yml) | 6개 OS/Python 단위 작업 + PostgreSQL·HermiT·Cube 통합 + 보안 검사 = 8개 작업 |
 | 엄격한 통합 runner | 미실행 검사·빈 suite·실패·오류가 있으면 CI 실패 |
 | 실제 runtime 선택 모드 | 완전 실행 환경의 성공·설정 변경·근거 누락 시 PASS 차단을 실행하는 통합 CI |
-| 릴리스 전 로컬 소스 검증 | Windows·PostgreSQL 17.5·Java 21·Cube 1.8.3에서 979개·제외 0·실패/오류 0 · 소스 커밋 `c03050a`의 전체 테스트 실행이며 최종 공개 커밋의 CI와 구분 |
-| 릴리스 배포 파일 | [소스 ZIP](https://github.com/Technoetic/semantic-crosscheck/releases/download/v0.8.0/semantic-crosscheck-0.8.0.zip) · [SHA256SUMS](https://github.com/Technoetic/semantic-crosscheck/releases/download/v0.8.0/SHA256SUMS) |
+| 릴리스 전 로컬 소스 검증 | Windows x64·PostgreSQL 17.5·Java 21(Temurin 21.0.12.1)·Cube 1.8.3·Apache Jena 6.2.0·z3-solver 4.15.3.0·W3C data-shapes 고정 커밋 `1dfcd9f`에서 모든 실제 엔진을 켜고 1,075개 실행·통과 1,075·제외 0·실패/오류 0(1,254초) · 릴리스 전 수정까지 들어간 릴리스 브랜치 커밋 `b6dbaa7`의 전체 테스트 실행(이후 커밋은 문서·메타데이터만)이며 최종 공개 커밋의 CI와 구분 |
+| 릴리스 배포 파일 | [소스 ZIP](https://github.com/Technoetic/semantic-crosscheck/releases/download/v0.9.0/semantic-crosscheck-0.9.0.zip) · [SHA256SUMS](https://github.com/Technoetic/semantic-crosscheck/releases/download/v0.9.0/SHA256SUMS) |
 
-최종 공개 커밋·CI 작업 URL·실제 집계는 릴리스와 함께 제공하는 **v0.8.0 검증 JSON**에서 확인합니다. 원시 CI 로그에서 읽은 집계만 공개 커밋의 근거로 사용하며, 이전 로컬 검증과 전체 엔진 통합 CI를 구분합니다.
+최종 공개 커밋·CI 작업 URL·실제 집계는 릴리스와 함께 제공하는 **v0.9.0 검증 JSON**에서 확인합니다. 원시 CI 로그에서 읽은 집계만 공개 커밋의 근거로 사용하며, 이전 로컬 검증과 전체 엔진 통합 CI를 구분합니다.
 
 ```bash
 python -m unittest discover -s tests -v
@@ -749,13 +756,13 @@ CI는 전체 이력을 가진 clone의 작업 트리·이력을 일반 패턴과
 
 **MIT** · [LICENSE](LICENSE). 런타임 의존성을 저장소에 포함하지 않으며 의존성 라이선스는 [THIRD_PARTY.md](THIRD_PARTY.md)에 정리했습니다.
 
-[설계 문서](docs/design.md) · [설정 레퍼런스](skills/semantic-crosscheck/references/config.md) · [문제와 함정](skills/semantic-crosscheck/references/pitfalls.md) · [변경 이력](CHANGELOG.md) · [v0.8.0 릴리스 노트](docs/releases/v0.8.0.md)
+[설계 문서](docs/design.md) · [설정 레퍼런스](skills/semantic-crosscheck/references/config.md) · [문제와 함정](skills/semantic-crosscheck/references/pitfalls.md) · [변경 이력](CHANGELOG.md) · [v0.9.0 릴리스 노트](docs/releases/v0.9.0.md)
 
 <div align="center">
 
 **한 계층의 설명을 믿기 전에, 다른 계층의 답과 대조합니다.**
 
-[빠른 시작으로 이동 ↑](#quick-start-with-the-demo) · [GitHub 릴리스](https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.8.0)
+[빠른 시작으로 이동 ↑](#quick-start-with-the-demo) · [GitHub 릴리스](https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.9.0)
 
 </div>
 
@@ -763,4 +770,4 @@ CI는 전체 이력을 가진 clone의 작업 트리·이력을 일반 패턴과
 
 설정 하나로 PostgreSQL의 계층·규칙, SHACL, OWL·HermiT, Cube 모델을 만들고 서로와 gold SQL을 비교합니다. `not_run`은 통과가 아니며, 전체 판정은 `report`와 `not_proven`을 함께 읽습니다. 원본 조회와 생성 스키마 기록을 분리하고, 데모 적재는 별도의 loader 역할을 사용합니다.
 
-요구 환경은 **Python 3.11 이상 · PostgreSQL 17 이상 · Java 11 이상 · Node.js 22 이상**입니다. Linux Cube에는 **glibc 2.34** 이상(x64), 2.30 이상(arm64)이 필요합니다. Codex 설치 태그는 **v0.8.0**, 라이선스는 MIT입니다.
+요구 환경은 **Python 3.11 이상 · PostgreSQL 17 이상 · Java 11 이상 · Node.js 22 이상**입니다. Linux Cube에는 **glibc 2.34** 이상(x64), 2.30 이상(arm64)이 필요합니다. Codex 설치 태그는 **v0.9.0**, 라이선스는 MIT입니다.

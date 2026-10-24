@@ -63,6 +63,7 @@ CONFIG_SECTIONS = {
     "[cube]": config.Cube,
     "[verify]": config.Verify,
     "[[gold]]": config.Gold,
+    "[[gold.expect]]": config.Expect,
 }
 
 
@@ -182,7 +183,7 @@ def config_doc_tables() -> dict:
             sections.setdefault(heading, {})
         elif in_table and line.startswith("|"):
             cells = [c.strip() for c in line.strip().strip("|").split("|")]
-            m = re.fullmatch(r"`([a-z_]+)`", cells[0])
+            m = re.fullmatch(r"`([a-z_][a-z0-9_]*)`", cells[0])   # keys may hold digits (fixture_sha256)
             if m:
                 sections[heading][m.group(1)] = cells[2]
         else:

@@ -10,7 +10,9 @@ that it still catches what it should.
 - Integration tests need a throw-away PostgreSQL 17 server and a superuser DSN in `SXC_TEST_ADMIN_DSN`
   (they create and drop databases and the roles `xc_owner` and `xc_check`). OWL tests need Java 11 or later
   (`SXC_JAVA` or `java` on `PATH`); Cube tests need an adapter installed with `sxc.py cube-install`
-  (`SXC_CUBE_HOME` when it is not in the default location). Tests skip what they cannot run.
+  (`SXC_CUBE_HOME` when it is not in the default location). The actual Jena SHACL tests need an Apache Jena
+  distribution in `SXC_JENA_HOME` and a Java 21 runtime in `SXC_JAVA`; the pinned W3C suite test also needs
+  `SXC_W3C_SHACL_SUITE` (see `docs/shacl-corpus.md`). Tests skip what they cannot run.
 
 ## Rules for changes
 

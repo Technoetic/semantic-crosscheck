@@ -4,14 +4,26 @@ The production exporter builds the graphs and shapes. Expected report tuples are
 hand-written below, never computed by that exporter or either validator. Both
 engines must independently match every expected constraint, including its value.
 Check IDs are pyshacl:<case> and jena:<case>, one per engine and corpus case.
+
+The opt-in W3C mode (--w3c-suite) takes the expected reports from the W3C data-shapes
+core test suite instead: third-party expectations that sxc's corpus cannot share a
+mistake with. Both engines validate the suite's own shapes and data graphs, so this
+mode checks engine conformance on the components sxc emits but never runs sxc's
+exporter; it complements the fixed corpus rather than replacing it. Only cases inside
+the sxc profile run; everything else is not_run with a reason. Check IDs are
+w3c:<engine>:<case>, the case being the suite-relative test name, plus w3c:suite
+(never passes) when an unpinned suite runs. The suite is read, never copied into
+this repository.
 """
 from collections import Counter
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
+import hashlib
 import importlib.util
 import logging
 import os
 from pathlib import Path
+import re
 import signal
 import subprocess
 import sys
@@ -19,6 +31,7 @@ import tempfile
 import threading
 import time
 from types import SimpleNamespace
+import urllib.parse
 import warnings
 
 from . import config, owl, shacl_check, shapes
@@ -29,6 +42,56 @@ SH = 'http://www.w3.org/ns/shacl#'
 XSD = 'http://www.w3.org/2001/XMLSchema#'
 NS = 'https://example.org/sxc-corpus#'
 MAX_OUTPUT_BYTES = 262144
+
+MF = 'http://www.w3.org/2001/sw/DataAccess/tests/test-manifest#'
+SHT = 'http://www.w3.org/ns/shacl-test#'
+RDFS_CLASS = 'http://www.w3.org/2000/01/rdf-schema#Class'
+OWL_CLASS = 'http://www.w3.org/2002/07/owl#Class'
+# w3c/data-shapes at this commit (2026-10-09). The digest covers the sorted suite-relative paths and bytes of
+# every core manifest and graph file load_w3c_suite reads; it alone decides "pinned", and only a pinned suite
+# is recorded with this commit (no commit label in the checkout is trusted).
+W3C_SUITE_COMMIT = '1dfcd9f30cab70ac02b049611eeba451fa1308e7'
+W3C_SUITE_SHA256 = '27d212e662936162ed5707f57ab927e1a6a33e7e487844c71d2e0b704e53725b'
+W3C_TESTS = 'data-shapes-test-suite/tests/'
+W3C_CORE = W3C_TESTS + 'core/'
+MAX_SUITE_FILES = 1024
+MAX_SUITE_FILE_BYTES = 1048576
+# Suite files are parsed against this synthetic base, so resolved IRIs never carry a local path and a
+# document-relative term in an expected report is recognisable (relative_iri): any IRI on this host, including
+# '</x>' or '../' above the base. A network-path reference ('//host/x') leaves the host and is not detectable.
+_HOST = 'http://sxc.invalid/'
+_BASE = _HOST + 'w3c-suite/'
+_ABSENT = ('absent',)
+# The sxc profile follows the exporter: the constraint components and severities shapes.shapes_ttl() emits,
+# sh:class and the three numeric BOUNDS with one sh:severity Violation or Warning. shapes_ttl() puts them on
+# property shapes with one IRI sh:path reached by sh:property from a sh:targetClass node shape; the suite reaches
+# the same components on IRI focus nodes through sh:targetNode, implicit class targets (a shape that is an
+# rdfs:Class) and node-level constraints, which count as inside the profile. sh:datatype, sh:maxExclusive,
+# sh:minCount and sh:maxCount stay outside because the exporter never emits them.
+_CONSTRAINTS = ('class', 'minExclusive', 'minInclusive', 'maxInclusive')
+_NODE_KEYS = frozenset(('targetClass', 'targetNode', 'property', 'severity') + _CONSTRAINTS)
+_PROPERTY_KEYS = frozenset(('path', 'targetClass', 'targetNode', 'severity') + _CONSTRAINTS)
+_NUMERIC = frozenset(XSD + name for name in ('decimal', 'integer', 'int', 'long'))
+_SEVERITIES = frozenset(SH + name for name in ('Violation', 'Warning'))
+_SPARQL = frozenset(('sparql', 'select', 'ask', 'construct', 'update', 'declare', 'prefixes', 'target',
+                     'parameter', 'validator', 'nodeValidator', 'propertyValidator', 'rule', 'js', 'jsLibrary'))
+# SHACL 1.0 section 2.1: a node is a shape when it has a target, a parameter or sh:path (shape characteristics
+# are included so nothing a shape declares escapes the profile), or is the value of a shape-expecting parameter.
+_SHAPE_MARKS = frozenset((
+    'targetClass', 'targetNode', 'targetSubjectsOf', 'targetObjectsOf', 'target', 'path', 'class', 'datatype',
+    'nodeKind', 'minCount', 'maxCount', 'minExclusive', 'minInclusive', 'maxExclusive', 'maxInclusive', 'minLength',
+    'maxLength', 'pattern', 'flags', 'languageIn', 'uniqueLang', 'equals', 'disjoint', 'lessThan',
+    'lessThanOrEquals', 'not', 'and', 'or', 'xone', 'node', 'property', 'qualifiedValueShape', 'qualifiedMinCount',
+    'qualifiedMaxCount', 'qualifiedValueShapesDisjoint', 'closed', 'ignoredProperties', 'hasValue', 'in', 'sparql',
+    'severity', 'deactivated', 'message', 'name', 'description', 'order', 'group', 'defaultValue'))
+_PATHS = frozenset(('inversePath', 'alternativePath', 'zeroOrMorePath', 'oneOrMorePath', 'zeroOrOnePath'))
+# A test file is data, shapes and manifest at once: its expected report's vocabulary is not a shape feature.
+_REPORT_TERMS = frozenset(('conforms', 'result', 'focusNode', 'resultPath', 'resultSeverity',
+                           'sourceConstraintComponent', 'sourceShape', 'value', 'resultMessage', 'detail'))
+_PROFILE_ORDER = ('sparql', 'complex_path', 'closed_shape', 'unsupported_target', 'non_iri_focus',
+                  'unsupported_component', 'unsupported_value')
+OWL_IMPORTS = 'http://www.w3.org/2002/07/owl#imports'
+_SAFE_ID = re.compile(r'[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*')
 
 
 class CorpusError(Exception):
@@ -50,6 +113,24 @@ class Case:
     data: str
     shapes: str
     expected: Report
+
+
+@dataclass(frozen=True)
+class W3CCase:
+    """One suite entry: reason '' means inside the profile with an expected report; data/shapes are suite paths."""
+    id: str
+    reason: str = ''
+    features: tuple = ()
+    expected: Report | None = None
+    data: str = ''
+    shapes: str = ''
+
+
+@dataclass(frozen=True)
+class W3CSuite:
+    cases: tuple
+    files: dict     # suite-relative path -> bytes read, the exact content the engines receive
+    sha256: str
 
 
 def _number(text):
@@ -82,6 +163,47 @@ def _term(value):
     return ('literal', str(value), datatype, (value.language or '').lower())
 
 
+def _quiet_graph(data, public_id=None):
+    """Parse Turtle text or bytes. rdflib reports malformed literal text in warnings/log records; suppress
+    that diagnostic channel (it would echo values), then callers explicitly reject ill-typed literals."""
+    import rdflib
+    logger = logging.getLogger('rdflib.term')
+    parse_thread = threading.get_ident()
+    quiet = lambda record: record.thread != parse_thread
+    logger.addFilter(quiet)
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore')
+            return rdflib.Graph().parse(data=data, format='turtle', publicID=public_id)
+    finally:
+        logger.removeFilter(quiet)
+
+
+def _report_graph(text):
+    if not isinstance(text, str) or not text or len(text.encode('utf-8')) > MAX_OUTPUT_BYTES:
+        raise CorpusError('missing_report')
+    return _quiet_graph(text)
+
+
+def _conforms(graph, root, reason):
+    from rdflib import Literal, URIRef
+    conforms = list(graph.objects(root, URIRef(SH + 'conforms')))
+    if (len(conforms) != 1 or not isinstance(conforms[0], Literal)
+            or conforms[0].datatype != URIRef(XSD + 'boolean')
+            or conforms[0].ill_typed
+            or str(conforms[0]) not in ('true', 'false', '1', '0')):
+        raise CorpusError(reason)
+    return str(conforms[0]) in ('true', '1')
+
+
+def _report_root(graph):
+    import rdflib
+    roots = set(graph.subjects(rdflib.RDF.type, rdflib.URIRef(SH + 'ValidationReport')))
+    if len(roots) != 1:
+        raise CorpusError('malformed_report')
+    return next(iter(roots))
+
+
 def parse_report(text):
     """Strict SHACL report parser; a missing report is never an empty success.
 
@@ -90,34 +212,12 @@ def parse_report(text):
     The fixed corpus requires all five fields and excludes recursive paths.
     """
     import rdflib
-    from rdflib import URIRef, Literal
+    from rdflib import URIRef
     try:
-        if not isinstance(text, str) or not text or len(text.encode('utf-8')) > MAX_OUTPUT_BYTES:
-            raise CorpusError('missing_report')
-        # rdflib reports malformed literal text in warnings/log records. Suppress
-        # that diagnostic channel, then explicitly reject ill-typed literals.
-        logger = logging.getLogger('rdflib.term')
-        parse_thread = threading.get_ident()
-        quiet = lambda record: record.thread != parse_thread
-        logger.addFilter(quiet)
-        try:
-            with warnings.catch_warnings():
-                warnings.simplefilter('ignore')
-                graph = rdflib.Graph().parse(data=text, format='turtle')
-        finally:
-            logger.removeFilter(quiet)
+        graph = _report_graph(text)
         sh = lambda name: URIRef(SH + name)
-        roots = set(graph.subjects(rdflib.RDF.type, sh('ValidationReport')))
-        if len(roots) != 1:
-            raise CorpusError('malformed_report')
-        root = next(iter(roots))
-        conforms = list(graph.objects(root, sh('conforms')))
-        if (len(conforms) != 1 or not isinstance(conforms[0], Literal)
-                or conforms[0].datatype != URIRef(XSD + 'boolean')
-                or conforms[0].ill_typed
-                or str(conforms[0]) not in ('true', 'false', '1', '0')):
-            raise CorpusError('malformed_report')
-        valid = str(conforms[0]) in ('true', '1')
+        root = _report_root(graph)
+        valid = _conforms(graph, root, 'malformed_report')
         nodes = set(graph.objects(root, sh('result')))
         if nodes != set(graph.subjects(rdflib.RDF.type, sh('ValidationResult'))):
             raise CorpusError('malformed_report')
@@ -141,6 +241,85 @@ def parse_report(text):
         raise
     except Exception:
         raise CorpusError('malformed_report') from None
+
+
+def _fields(graph, node, reason):
+    """(focus, path, component, severity, value) of one result: focus, component and severity exactly once;
+    sh:resultPath (absent for node shapes) and sh:value (absent for some components) at most once."""
+    from rdflib import URIRef
+    out = []
+    for prop, optional in (('focusNode', False), ('resultPath', True), ('sourceConstraintComponent', False),
+                           ('resultSeverity', False), ('value', True)):
+        values = list(graph.objects(node, URIRef(SH + prop)))
+        if len(values) > 1 or (not values and not optional):
+            raise CorpusError(reason)
+        out.append(values[0] if values else None)
+    if not all(isinstance(v, URIRef) for v in out[2:4]):
+        raise CorpusError(reason)
+    return out
+
+
+def parse_w3c_report(text):
+    """An engine report for a W3C case, as strict as parse_report except that the path and value may be absent.
+
+    Terms keep their kind: a blank node canonicalizes to ('blank',), which no expected term can equal, so an
+    engine reporting an unidentifiable node fails instead of being dropped from the comparison.
+    """
+    import rdflib
+    from rdflib import BNode, URIRef
+    try:
+        graph = _report_graph(text)
+        root = _report_root(graph)
+        valid = _conforms(graph, root, 'malformed_report')
+        nodes = set(graph.objects(root, URIRef(SH + 'result')))
+        if nodes != set(graph.subjects(rdflib.RDF.type, URIRef(SH + 'ValidationResult'))):
+            raise CorpusError('malformed_report')
+        term = lambda v: _ABSENT if v is None else ('blank',) if isinstance(v, BNode) else _term(v)
+        results = []
+        for node in nodes:
+            focus, path, component, severity, value = _fields(graph, node, 'malformed_report')
+            results.append((term(focus), term(path), str(component), str(severity), term(value)))
+        if valid != (not results):
+            raise CorpusError('malformed_report')
+        return Report(valid, tuple(sorted(results)))
+    except CorpusError:
+        raise
+    except Exception:
+        raise CorpusError('malformed_report') from None
+
+
+def _w3c_expected(graph, node):
+    """The expected report of an entry (mf:result), canonicalized like parse_w3c_report.
+
+    sh:sourceShape is optional in the suite and ignored, as are result node typing and messages. A term the
+    comparison cannot identify across graphs is refused with a reason instead of being compared.
+    """
+    from rdflib import BNode, Literal, RDF, URIRef
+    if (node, RDF.type, URIRef(SH + 'ValidationReport')) not in graph:
+        raise CorpusError('malformed_expected')
+    valid = _conforms(graph, node, 'malformed_expected')
+    results = []
+    for result in set(graph.objects(node, URIRef(SH + 'result'))):
+        focus, path, component, severity, value = _fields(graph, result, 'malformed_expected')
+        if any(isinstance(v, BNode) for v in (focus, path, value)):
+            raise CorpusError('blank_node_term')
+        if isinstance(focus, Literal):
+            raise CorpusError('non_iri_focus')
+        if isinstance(path, Literal):
+            raise CorpusError('malformed_expected')
+        # The engines resolve a relative reference against their private copy, never against _HOST.
+        on_host = lambda v: isinstance(v, URIRef) and str(v).startswith(_HOST)
+        if any(on_host(v.datatype if isinstance(v, Literal) else v)
+               for v in (focus, path, component, severity, value)):
+            raise CorpusError('relative_iri')
+        try:
+            results.append((_term(focus), _ABSENT if path is None else _term(path), str(component), str(severity),
+                            _ABSENT if value is None else _term(value)))
+        except CorpusError:
+            raise CorpusError('malformed_expected') from None
+    if valid != (not results):
+        raise CorpusError('malformed_expected')
+    return Report(valid, tuple(sorted(results)))
 
 
 def compare_reports(expected, actual):
@@ -219,17 +398,27 @@ def _capture(argv, timeout_ms):
             raise CorpusError('cleanup_failed') from None
 
 
+def _decoded(raw, parse):
+    try:
+        return parse(raw.decode('utf-8'))
+    except UnicodeError:
+        raise CorpusError('malformed_report') from None
+
+
+def validate_pyshacl_files(data, shape_graph, timeout_ms, parse=parse_report):
+    """pySHACL on existing Turtle files; the W3C mode passes one file twice when data and shapes coincide."""
+    raw = _capture([sys.executable, str(Path(__file__).with_name('_shacl_worker.py')), str(data), str(shape_graph)],
+                   timeout_ms)
+    return _decoded(raw, parse)
+
+
 def validate_pyshacl(data, shape_graph, timeout_ms):
     with tempfile.TemporaryDirectory(prefix='sxc-shacl-python-') as temporary:
         root = Path(temporary)
         dp, sp = root / 'data.ttl', root / 'shapes.ttl'
         dp.write_text(data, encoding='utf-8')
         sp.write_text(shape_graph, encoding='utf-8')
-        raw = _capture([sys.executable, str(Path(__file__).with_name('_shacl_worker.py')), str(dp), str(sp)], timeout_ms)
-    try:
-        return parse_report(raw.decode('utf-8'))
-    except UnicodeError:
-        raise CorpusError('malformed_report') from None
+        return validate_pyshacl_files(dp, sp, timeout_ms)
 
 
 def _jena_command(home, java, data, shape_graph):
@@ -237,12 +426,9 @@ def _jena_command(home, java, data, shape_graph):
             '--shapes', Path(shape_graph).resolve().as_uri(), '--data', Path(data).resolve().as_uri()]
 
 
-def validate_jena(home, java, data, shape_graph, timeout_ms):
+def validate_jena(home, java, data, shape_graph, timeout_ms, parse=parse_report):
     raw = _capture(_jena_command(home, java, data, shape_graph), timeout_ms)
-    try:
-        return parse_report(raw.decode('utf-8'))
-    except UnicodeError:
-        raise CorpusError('malformed_report') from None
+    return _decoded(raw, parse)
 
 
 def _components(args):
@@ -264,7 +450,17 @@ def run(cfg, args, out):
     timeout = getattr(args, 'timeout_ms', 30000)
     if type(timeout) is not int or not 1 <= timeout <= 600000:
         raise StageError('--timeout-ms must be an integer from 1 to 600000', EXIT_CONFIG)
+    # The W3C mode is opt-in by the option only: SXC_W3C_SHACL_SUITE alone never replaces the fixed corpus.
+    suite = getattr(args, 'w3c_suite', None)
+    allow_unpinned = getattr(args, 'allow_unpinned_suite', False) is True
+    if suite is None and allow_unpinned:
+        raise StageError('--allow-unpinned-suite applies only with --w3c-suite', EXIT_CONFIG)
     home, java = _components(args)
+    if suite is not None:
+        suite = suite or os.environ.get('SXC_W3C_SHACL_SUITE')
+        if not suite:
+            raise StageError('--w3c-suite needs DIR or SXC_W3C_SHACL_SUITE naming a w3c/data-shapes checkout', EXIT_ENV)
+        return run_w3c(load_w3c_suite(suite), allow_unpinned, home, java, timeout)
     result = Result('shacl_corpus')
     result.not_proven.append('Synthetic nonrecursive SHACL corpus only; it does not prove production data, '
                              'SQL equivalence, arbitrary or recursive SHACL, or operational V1-V5 coverage.')
@@ -355,3 +551,337 @@ def corpus():
         cases.append(_case('collision_' + name.replace(':', '_'), members, [[1, 9], [2, 1], [3, None]],
                            {'part': [1], 'stock': [9]}, expected_groups[name]))
     return tuple(cases)
+
+
+# ---- W3C data-shapes core subset ------------------------------------------------------------------
+def suite_digest(files):
+    """SHA-256 over the sorted suite-relative paths and bytes, each framed by its length."""
+    digest = hashlib.sha256()
+    for rel in sorted(files):
+        data = files[rel]
+        digest.update(rel.encode('utf-8') + b'\0' + str(len(data)).encode('ascii') + b'\0' + data)
+    return digest.hexdigest()
+
+
+def _rdf_list(graph, head, limit=4096):
+    """Members of an RDF collection; a branching, cyclic or overlong list raises ValueError."""
+    from rdflib import RDF
+    items, node, seen = [], head, set()
+    while node != RDF.nil:
+        firsts, rests = list(graph.objects(node, RDF.first)), list(graph.objects(node, RDF.rest))
+        if len(firsts) != 1 or len(rests) != 1 or node in seen or len(items) >= limit:
+            raise ValueError('malformed list')
+        seen.add(node)
+        items.append(firsts[0])
+        node = rests[0]
+    return items
+
+
+def _w3c_profile(graph):
+    """(reason, features) for a shapes graph: ('', ()) inside the sxc profile, else the first reason of
+    _PROFILE_ORDER found and the sorted SHACL local names that caused it.
+
+    SHACL vocabulary is checked graph-wide (an unused or ill-formed path node is still outside the profile),
+    shape keys and values per shape. Data triples are not shapes; the expected report's terms are allowed.
+    rdflib terms never equal plain strings, so IRI values are compared through str().
+    """
+    from rdflib import Literal, RDF, URIRef
+    sh = lambda name: URIRef(SH + name)
+    local = lambda p: str(p)[len(SH):] if isinstance(p, URIRef) and str(p).startswith(SH) else None
+    found = {}
+    flag = lambda reason, feature: found.setdefault(reason, set()).add(feature)
+    used = {}
+    for s, p, _o in graph:
+        name = local(p)
+        if name is not None:
+            used.setdefault(name, set()).add(s)
+    for name in used.keys() & _SPARQL:
+        flag('sparql', name)
+    if any(not isinstance(o, URIRef) for o in graph.objects(None, sh('path'))):
+        flag('complex_path', 'path')
+    for name in used.keys() & _PATHS:
+        flag('complex_path', name)
+    for name in ('closed', 'ignoredProperties'):
+        if name in used:
+            flag('closed_shape', name)
+    for name in ('targetSubjectsOf', 'targetObjectsOf'):
+        if name in used:
+            flag('unsupported_target', name)
+    for name in used.keys() - _NODE_KEYS - _PROPERTY_KEYS - _REPORT_TERMS:
+        flag('unsupported_component', name)
+    if (None, URIRef(OWL_IMPORTS), None) in graph:
+        # Engines could follow an import; nothing outside the digested files may enter a case.
+        flag('unsupported_component', 'owl_imports')
+    shape_nodes = set()
+    for name in used.keys() & _SHAPE_MARKS:
+        shape_nodes |= used[name]
+    for kind in ('NodeShape', 'PropertyShape'):
+        shape_nodes |= set(graph.subjects(RDF.type, sh(kind)))
+    for name in ('node', 'property', 'not', 'qualifiedValueShape'):
+        shape_nodes |= set(graph.objects(None, sh(name)))
+    for name in ('and', 'or', 'xone'):
+        for head in graph.objects(None, sh(name)):
+            try:
+                shape_nodes |= set(_rdf_list(graph, head))
+            except ValueError:
+                flag('unsupported_component', name)
+    for shape in shape_nodes:
+        if isinstance(shape, Literal):
+            flag('unsupported_value', 'shape')
+            continue
+        types = set(graph.objects(shape, RDF.type))
+        if URIRef(OWL_CLASS) in types and URIRef(RDFS_CLASS) not in types:
+            flag('unsupported_target', 'owlClass')
+        paths = list(graph.objects(shape, sh('path')))
+        names = {local(p) for p in graph.predicates(shape) if local(p) is not None}
+        for name in names - (_PROPERTY_KEYS if paths else _NODE_KEYS):
+            flag('unsupported_component', name)
+        if len(paths) > 1:
+            flag('unsupported_value', 'path')
+        if any(not isinstance(node, URIRef) for node in graph.objects(shape, sh('targetNode'))):
+            flag('non_iri_focus', 'targetNode')
+        for name in ('targetClass', 'class'):
+            if any(not isinstance(value, URIRef) for value in graph.objects(shape, sh(name))):
+                flag('unsupported_value', name)
+        for name in _CONSTRAINTS[1:]:
+            for bound in graph.objects(shape, sh(name)):
+                if not (isinstance(bound, Literal) and str(bound.datatype) in _NUMERIC and not bound.ill_typed):
+                    flag('unsupported_value', name)
+        # shapes_ttl() writes exactly one severity; SHACL leaves several on one shape undefined.
+        severities = list(graph.objects(shape, sh('severity')))
+        if len(severities) > 1 or any(not (isinstance(v, URIRef) and str(v) in _SEVERITIES) for v in severities):
+            flag('unsupported_value', 'severity')
+        if any(not list(graph.objects(value, sh('path'))) for value in graph.objects(shape, sh('property'))):
+            flag('unsupported_value', 'property')
+    for reason in _PROFILE_ORDER:
+        if reason in found:
+            return reason, tuple(sorted(found[reason]))
+    return '', ()
+
+
+class _SuiteFiles:
+    """Bounded reads of suite-relative paths under data-shapes-test-suite/tests/core/, each read once."""
+
+    def __init__(self, root):
+        self.root, self.real, self.data, self.graphs = Path(root), Path(root).resolve(), {}, {}
+
+    @staticmethod
+    def relative(iri):
+        """The suite-relative path an IRI resolved against _BASE names, or None outside the core suite."""
+        from rdflib import URIRef
+        text = str(iri)
+        if not isinstance(iri, URIRef) or not text.startswith(_BASE):
+            return None
+        parts = urllib.parse.urlsplit(text)
+        if parts.query or parts.fragment:
+            return None
+        rel = urllib.parse.unquote(text[len(_BASE):])
+        segments = rel.split('/')
+        if not rel.startswith(W3C_CORE) or any(s in ('', '.', '..') or any(c in s for c in '\\:\0') for s in segments):
+            return None
+        return rel
+
+    def read(self, rel):
+        """Bytes of rel, None when it is not a regular file inside the suite root."""
+        if rel in self.data:
+            return self.data[rel]
+        path = self.root.joinpath(*rel.split('/'))
+        try:
+            if not path.is_file() or not path.resolve().is_relative_to(self.real):
+                return None
+            if len(self.data) >= MAX_SUITE_FILES or path.stat().st_size > MAX_SUITE_FILE_BYTES:
+                raise StageError('the W3C suite exceeds the file count or file size limit', EXIT_CONFIG)
+            data = path.read_bytes()
+        except OSError:
+            return None
+        if len(data) > MAX_SUITE_FILE_BYTES:
+            raise StageError('the W3C suite exceeds the file count or file size limit', EXIT_CONFIG)
+        self.data[rel] = data
+        return data
+
+    def graph(self, rel):
+        """The parsed Turtle of a read file (document IRI _BASE + rel), None when it is not valid Turtle."""
+        if rel not in self.graphs:
+            try:
+                self.graphs[rel] = _quiet_graph(self.data[rel], _BASE + urllib.parse.quote(rel))
+            except Exception:
+                self.graphs[rel] = None
+        return self.graphs[rel]
+
+
+def _case_id(entry, rel, index):
+    """The suite-relative test name (core/node/class-001), or a stable positional id for an unusable IRI."""
+    from rdflib import URIRef
+    text = str(entry)
+    if isinstance(entry, URIRef) and text.startswith(_BASE + W3C_TESTS):
+        name = urllib.parse.unquote(text[len(_BASE + W3C_TESTS):])
+        if _SAFE_ID.fullmatch(name):
+            return name
+    base = rel[len(W3C_TESTS):].removesuffix('.ttl')
+    if not _SAFE_ID.fullmatch(base):
+        base = 'entry-' + hashlib.sha256(rel.encode('utf-8')).hexdigest()[:12]
+    return f'{base}/entry-{index}'
+
+
+def _w3c_entry(files, graph, entry, case_id):
+    """Classify one manifest entry. Its graph files are read whatever its type or status, so the suite digest
+    does not depend on the profile rules."""
+    from rdflib import RDF, URIRef
+    mf, sht = (lambda name: URIRef(MF + name)), (lambda name: URIRef(SHT + name))
+    graph_reason, rels = '', []
+    actions = list(graph.objects(entry, mf('action')))
+    for prop in ('dataGraph', 'shapesGraph'):
+        values = list(graph.objects(actions[0], sht(prop))) if len(actions) == 1 else []
+        if len(values) != 1:
+            graph_reason = graph_reason or 'missing_graph'
+            continue
+        rel = files.relative(values[0])
+        if rel is None:
+            graph_reason = graph_reason or 'outside_suite'
+        elif not rel.endswith('.ttl'):
+            graph_reason = graph_reason or 'non_turtle'
+        elif files.read(rel) is None:
+            graph_reason = graph_reason or 'missing_graph'
+        rels.append(rel)
+    if sht('Validate') not in set(graph.objects(entry, RDF.type)):
+        return W3CCase(case_id, 'unsupported_entry_type')
+    # Only approved entries count; sht:proposed, sht:rejected or a missing status are not run.
+    if set(graph.objects(entry, mf('status'))) != {sht('approved')}:
+        return W3CCase(case_id, 'status_not_approved')
+    if graph_reason:
+        return W3CCase(case_id, graph_reason)
+    data, shape_file = rels
+    shapes_graph = files.graph(shape_file)
+    if shapes_graph is None:
+        return W3CCase(case_id, 'malformed_graph')
+    reason, features = _w3c_profile(shapes_graph)
+    if reason:
+        return W3CCase(case_id, reason, features)
+    if data != shape_file:
+        # Engines take shapes only from the shapes graph, but they load the data graph too: it must parse and
+        # must not import anything outside the digested files.
+        data_graph = files.graph(data)
+        if data_graph is None:
+            return W3CCase(case_id, 'malformed_graph')
+        if (None, URIRef(OWL_IMPORTS), None) in data_graph:
+            return W3CCase(case_id, 'unsupported_component', ('owl_imports',))
+    results = list(graph.objects(entry, mf('result')))
+    try:
+        if len(results) != 1:
+            raise CorpusError('malformed_expected')
+        expected = _w3c_expected(graph, results[0])
+    except CorpusError as problem:
+        return W3CCase(case_id, problem.reason)
+    return W3CCase(case_id, '', (), expected, data, shape_file)
+
+
+def load_w3c_suite(root):
+    """Read the core manifests of a w3c/data-shapes checkout (mf:include recursion) and classify every entry.
+
+    root holds data-shapes-test-suite/. A missing, escaping, non-Turtle or non-manifest include makes the suite
+    unusable (StageError): its entries could not be enumerated. An entry listed more than once is not_run
+    (duplicate_entry): which listing describes it is ambiguous.
+    """
+    from rdflib import RDF, URIRef
+    files = _SuiteFiles(root)
+    top = W3C_CORE + 'manifest.ttl'
+    if files.read(top) is None:
+        raise StageError('--w3c-suite must name a w3c/data-shapes checkout containing '
+                         'data-shapes-test-suite/tests/core/manifest.ttl', EXIT_ENV)
+    cases, visited = {}, set()
+
+    def manifest(rel, depth):
+        if rel in visited:
+            return
+        visited.add(rel)
+        if depth > 32 or files.read(rel) is None or files.graph(rel) is None:
+            raise StageError('a W3C suite manifest is missing, too deeply nested or not valid Turtle', EXIT_CONFIG)
+        graph, me = files.graph(rel), URIRef(_BASE + urllib.parse.quote(rel))
+        if (me, RDF.type, URIRef(MF + 'Manifest')) not in graph:
+            raise StageError('an included W3C suite file is not a test manifest', EXIT_CONFIG)
+        targets = [files.relative(iri) for iri in graph.objects(me, URIRef(MF + 'include'))]
+        if any(target is None or not target.endswith('.ttl') for target in targets):
+            raise StageError('a W3C suite manifest includes a file outside the core Turtle suite', EXIT_CONFIG)
+        index = 0
+        for head in graph.objects(me, URIRef(MF + 'entries')):
+            try:
+                entries = _rdf_list(graph, head)
+            except ValueError:
+                raise StageError('a W3C suite manifest has a malformed entry list', EXIT_CONFIG) from None
+            for entry in entries:
+                index += 1
+                case_id = _case_id(entry, rel, index)
+                # Classified (and its files read) either way, so the digest does not depend on listing order.
+                case = _w3c_entry(files, graph, entry, case_id)
+                cases[case_id] = W3CCase(case_id, 'duplicate_entry') if case_id in cases else case
+        for target in sorted(targets):
+            manifest(target, depth + 1)
+
+    manifest(top, 0)
+    return W3CSuite(tuple(cases[key] for key in sorted(cases)), dict(files.data), suite_digest(files.data))
+
+
+def run_w3c(suite, allow_unpinned, home, java, timeout):
+    """Run both engines on every in-profile case of a loaded suite, exactly as the fixed corpus runs them.
+
+    Engines read private copies of the digested bytes (same relative layout, so a case whose data and shapes
+    are one document still is). An unpinned suite runs nothing unless explicitly allowed, and an allowed one
+    adds w3c:suite as not_run, so it can never pass.
+    """
+    pinned = suite.sha256 == W3C_SUITE_SHA256
+    runnable = pinned or allow_unpinned
+    result = Result('shacl_corpus')
+    result.inputs = {'w3c_suite_commit': W3C_SUITE_COMMIT if pinned else '', 'w3c_suite_sha256': suite.sha256,
+                     'w3c_suite_files': len(suite.files), 'w3c_suite_pinned': pinned}
+    inside = sum(1 for case in suite.cases if not case.reason)
+    result.not_proven.append(
+        f'W3C SHACL core subset inside the sxc profile only ({inside} of {len(suite.cases)} entries; the rest are '
+        "not_run): both engines validate the suite's own shapes and data graphs, so this mode does not exercise "
+        "sxc's exporter (run the fixed corpus too), and it does not prove production data, SQL equivalence, "
+        'other SHACL features, recursive SHACL, SHACL-SPARQL or operational V1-V5 coverage.')
+    result.not_proven.append(
+        'A W3C pass compares the canonical (focus, path, component, severity, value) multiset only: sh:sourceShape, '
+        'result messages and the datatype or lexical form of numeric values are not compared, so it is not W3C '
+        'full compliance.')
+    if not pinned:
+        result.not_proven.append('The W3C suite content digest differs from the pinned commit, so its expected '
+                                 'reports are not verified as the W3C suite\'s; '
+                                 + ('results are not comparable with the recorded baseline and the stage cannot '
+                                    'pass (w3c:suite).' if allow_unpinned
+                                    else 'no case was run (--allow-unpinned-suite runs it anyway).'))
+    with tempfile.TemporaryDirectory(prefix='sxc-shacl-w3c-') as temporary:
+        copy = Path(temporary).resolve()
+        if runnable:
+            for rel, data in suite.files.items():
+                path = copy.joinpath(*rel.split('/'))
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(data)
+        for case in suite.cases:
+            reason = case.reason if runnable else 'suite_not_pinned'
+            for engine in ('pyshacl', 'jena'):
+                check_id = f'w3c:{engine}:{case.id}'
+                if reason:
+                    features = {'features': list(case.features)} if case.features and runnable else {}
+                    result.add(check_id, 'not_run', '', reason=reason, **features)
+                    continue
+                dp, sp = copy.joinpath(*case.data.split('/')), copy.joinpath(*case.shapes.split('/'))
+                try:
+                    actual = (validate_pyshacl_files(dp, sp, timeout, parse=parse_w3c_report) if engine == 'pyshacl'
+                              else validate_jena(home, java, dp, sp, timeout, parse=parse_w3c_report))
+                    detail = compare_reports(case.expected, actual)
+                    result.add(check_id, 'pass' if detail['matches'] else 'fail', '', **detail)
+                except CorpusError as problem:
+                    result.add(check_id, 'error', '', reason=problem.reason)
+                except Exception:
+                    result.add(check_id, 'error', '', reason='validation_failed')
+    if not pinned and allow_unpinned:
+        # The expected reports of an unpinned suite are not verified as the W3C suite's: never a pass.
+        result.add('w3c:suite', 'not_run', '', reason='suite_not_pinned')
+    states = {check.status for check in result.checks}
+    result.next_safe_action = (
+        'Resolve engine errors, then rerun the W3C subset.' if 'error' in states else
+        'Investigate the engine that disagrees with the W3C expected report before relying on that feature.'
+        if 'fail' in states else
+        'Rerun on the pinned W3C suite before relying on these results.' if not pinned else
+        'Out-of-profile W3C cases are not_run, not passed; review the profile before applying conclusions.')
+    return result

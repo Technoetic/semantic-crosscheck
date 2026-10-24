@@ -18,11 +18,13 @@ One Cube process (cube_run.serve on <out>/cube, log in verify/server.log) serves
   v2:<gold>:<stratum>   every binding of the stratum matches exactly (rows_compared counts gold rows); an empty
                         stratum passes vacuously and is listed as not proven
   v3:<test>             the shape_q tests derived from the model; a pair test over more keys than
-                        shape_q.PAIR_KEY_CAP compares a deterministic sample and says so in not_proven, with the
-                        sample's detection bound (and so does V4, whose suite replays the same sample; a survivor of
-                        a suite with such a sampled item is marked sample_blind_possible); the measure / class-column
-                        pairs Cube can join that get no additive test (a join path with a one_to_many step) are
-                        listed in not_proven (shape_q.not_applicable)
+                        shape_q.PAIR_KEY_CAP but not more than verify.pair_key_budget compares every key in chunks
+                        plus the NULL key group and says in not_proven that the chunks share no snapshot; above the
+                        budget it compares a deterministic sample and says so in not_proven, with the sample's
+                        detection bound and the budget. V4 replays such a test against its sample (the first chunk),
+                        says so too, and marks a survivor of a suite with such an item sample_blind_possible; the
+                        measure / class-column pairs Cube can join that get no additive test (a join path with a
+                        one_to_many step) are listed in not_proven (shape_q.not_applicable)
 Gold and Cube values are compared in the form of the Cube member type of each mapped column (compare.member_kinds of
 the model): text exactly, numbers as exact decimals, dates and timestamps in UTC, booleans as booleans.
 
@@ -389,11 +391,13 @@ class _Verify:
         if gate:
             self._gated(cid, gate)
             return
-        st, detail = shape_q.run_test(conn, client, self.cfg, self.model, t)
+        st, detail = shape_q.run_test(conn, client, self.cfg, self.model, t, budget=self.cfg.verify.pair_key_budget)
         self.baseline[cid] = st
         self.res.add(cid, st, t.get("config_ref", ""), **detail)
         if "sampled_keys" in detail:
             self.res.not_proven.append(f"{cid}: {shape_q.sample_note(detail)}")
+        elif detail.get("mode") == "chunked" and st != "error":
+            self.res.not_proven.append(f"{cid}: {shape_q.chunk_note(detail)}")
 
     def v4(self, conn):
         items = [(iid, fn) for iid, _cid, fn in self.items if self.baseline.get(iid) == "pass"]
@@ -470,6 +474,12 @@ def _not_run_action(c: Check) -> str:
         return "V4 needs suite items that pass on the unmutated model: fix the V1-V3 checks first, then rerun verify"
     if why == "no_binding":
         return f"{c.id} has no binding (every stratum is empty): check the params of {c.config_ref} or the data"
+    if why == "keys_not_answered":
+        d = c.detail
+        return (f"{c.id} was not judged (keys_not_answered): Cube's together answers held {d.get('answered_keys')} of "
+                f"the {d.get('compared_keys')} keys its chunks asked for, so the others were never compared; rerun "
+                f"verify while the source data is not changing, and if keys stay missing, check that Cube's equals "
+                f"filter on the key member of {c.config_ref} matches the key's type")
     return (f"{c.id} did not run ({why}): make its prerequisite pass (for a closure: build until closure:<h> passes, "
             "then cube), then rerun verify")
 

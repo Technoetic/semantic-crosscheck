@@ -8,7 +8,7 @@ Validation runs before any stage does work. An invalid entry stops the run with 
 message that names the entry where it can, for example `crosscheck.toml [measures.on_hand]: ...`.
 Unknown option keys are rejected at the top level (only the tables below exist) and in `[source]`,
 `[entities.*]`, `[hierarchies.*]`, `[[shapes]]`, `[measures.*]`, `[ontology]`, `[[ontology.defined]]`,
-`[cube]`, `[verify]`, `[[gold]]` and `[gold.params.*]`. User-defined keys in mappings such as
+`[cube]`, `[verify]`, `[[gold]]`, `[gold.params.*]` and `[[gold.expect]]`. User-defined keys in mappings such as
 `ontology.classes`, measure filters, `gold.map` and parameter bindings remain supported; they are not option
 names. The file is read as UTF-8, with or without a byte order mark.
 
@@ -237,6 +237,7 @@ Defined classes compared with their SQL definition (`v5:defined:<name>`).
 | `mutant_bindings` | integer | `3` | Bindings per stratum replayed against each mutant. At least 1. |
 | `shacl_max_rows` | integer | `200000` | Upper bound on the rows exported to RDF for the SHACL comparison; at least 1. Above it each planned shape is `not_run` (`resource_limit`), with an explanation in `not_proven`; reason and report cannot pass. |
 | `owl_max_individuals` | integer | `50000` | Upper bound on the individuals (node keys and edge endpoints) given to HermiT; at least 1. Above it OWL consistency and V5 checks are `not_run` (`resource_limit`), with an explanation in `not_proven`; reason and report cannot pass. |
+| `pair_key_budget` | integer | `2000` | The largest distinct key count for which the baseline V3 run of a pair test compares every key, in chunks of 2,000 plus the NULL key group, instead of the 2,000-key sample; at least 2000, the default, which keeps the sample. The Cube queries grow with the number of chunks, and every key up to the budget is read in one statement under `source.statement_timeout_ms` (a timeout makes the test an `error`) and held in memory, so size it to the memory and time available; each Cube query reads its own snapshot (listed in `not_proven`) and V4 replays keep the sample. |
 
 ## `[[gold]]`
 
@@ -254,18 +255,41 @@ otherwise a shared mistake goes unnoticed.
 | `zero_if_null` | list of strings | `[]` | Gold columns the gold SQL coalesces to 0; a Cube NULL counts as 0 there. The only declared equivalence. |
 | `params` | table | `{}` | At most one swept parameter, as `[gold.params.<name>]` with exactly one of `strata` (list of `top`, `mid`, `leaf`, `leaf_parent`, `deep`, `shared`, `empty`; optional `hierarchy`), `values_of` (`"entity.column"`: every distinct non-null value) or `values` (explicit list). |
 | `param_sets` | list of tables | `[]` | Explicit bindings for multi-parameter queries, for example `[{ date_from = "2026-01-01", date_to = "2026-03-31" }]`. Not together with `params`. |
+| `expect` | list of tables | `[]` | Literal expected-row cases, as `[[gold.expect]]` (below). Only the `expect` stage runs them; every stage validates them, and editing one changes `crosscheck.toml`, so `report` treats earlier operational results as stale until they are rerun. |
 
 Without `params` and `param_sets` a gold query has one binding, `all`. An empty stratum is reported as
 not proven, not as a failure.
+
+### `[[gold.expect]]`
+
+Literal expected rows of the gold query for a small fixture, in the form of dbt and
+SQLMesh unit tests: a third oracle for a gold SQL and a configuration that share one mistake. The `expect` stage runs
+the gold SQL and the Cube query on a dedicated fixture database (`SXC_EXPECT_DSN`, see
+[xc-expect](../../../commands/xc-expect.md)) and compares both with these rows. No other stage runs them, but every
+stage validates them, and an edit, like any edit to `crosscheck.toml`, makes earlier operational results stale for
+`report` until they are rerun.
+
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `source` | string | required | `"authored"`: the rows were written from the business specification named by `spec`, the only independent evidence. `"captured"`: the rows were taken from an earlier run; they detect regressions only, never count as independent and are listed in `not_proven`. |
+| `rows` | list of tables | required | The expected output rows, keyed by gold columns (the keys of `map`); `rows = []` expects no rows. Every row lists every gold column unless `partial = true`. Values are strings, numbers, booleans, dates or times; TOML has no NULL, so a NULL cell is written `{ null = true }`, which a `zero_if_null` column cannot expect. Write exact decimals as integers or strings (`"2.50"`). Keys must be unique. Rows are compared like V1: by key, in the form of each column's Cube type, order ignored. |
+| `spec` | string | `""` | Where in the business specification the rows come from (a document and section). Required for `authored`. |
+| `params` | table | `{}` | The gold query's parameter values for this case: exactly the names of `params`, or the names of an entry of `param_sets`; empty for a gold query without parameters. Values are scalars. |
+| `partial` | boolean | `False` | `true` compares only the columns the rows name; every row then names the same columns, every key column among them. |
+| `fixture_sha256` | string | `""` | Optional pin: the `fixture_sha256` that `expect:fixture` reported for the fixture the rows were written for (64 lowercase hexadecimal digits over the source tables' names, row counts and contents). On another fixture the case is `not_run` (`fixture_mismatch`). The pin depends on the source tables' names, their rows and the order and types of their columns (and on the database encoding for text outside ASCII), not on the database's default collation or the session's settings: the digest orders the row text by `COLLATE "C"` and fixes `TimeZone`, `DateStyle`, `IntervalStyle`, `extra_float_digits`, `bytea_output` and `lc_monetary` while it reads. Pin only after checking the loaded rows against the specification. The digest is not salted, so the result can confirm guessed fixture rows: keep the fixture synthetic. |
+
+A malformed case is exit 2 naming `gold[<n>] <id> expect[<i>]` (and `rows[<r>]`); messages name keys and
+positions, never values.
 
 ## Environment variables
 
 | Variable | Used by | Meaning |
 |---|---|---|
-| `SXC_PG_DSN` | every database stage, Cube | Check role DSN (name configurable with `source.dsn_env`). |
+| `SXC_PG_DSN` | every database stage except `expect`, Cube | Check role DSN (name configurable with `source.dsn_env`). |
 | `SXC_PG_OWNER_DSN` | `demo` | Loader role DSN (name configurable with `source.owner_dsn_env`). |
 | `PGPASSWORD` | database stages, Cube | Password used when the DSN has none (`~/.pgpass` is not read). |
 | `SXC_JAVA` | `doctor`, `reason` | Absolute path of the `java` executable for HermiT, or a command name on `PATH`, when `java` itself is not on `PATH`. |
-| `SXC_CUBE_HOME` | `cube-install`, `doctor`, `cube`, `verify` | Install directory of the Cube adapter (default: a per-user cache); a relative value is resolved against the current directory. |
-| `SXC_CUBE_DEBUG` | `cube`, `verify` | `1` writes the full Cube error text to `server.log` for local debugging; the log can then hold row values. |
+| `SXC_CUBE_HOME` | `cube-install`, `doctor`, `cube`, `verify`, `expect` | Install directory of the Cube adapter (default: a per-user cache); a relative value is resolved against the current directory. |
+| `SXC_CUBE_DEBUG` | `cube`, `verify`, `expect` | `1` writes the full Cube error text to `server.log` for local debugging; the log can then hold row values. |
 | `SXC_DEBUG` | every stage | `1` prints the full traceback of an unexpected exception for local debugging. |
+| `SXC_EXPECT_DSN` | `expect` | DSN of the dedicated fixture database for `[[gold.expect]]` (name configurable with `--dsn-env`); refused when it equals, or names the same host, port and database as, an operational DSN variable (`source.dsn_env`, `source.owner_dsn_env` or `cube.dsn_env`) set in this environment; another name for the same server is not detected, so the fixture must be a dedicated database. |

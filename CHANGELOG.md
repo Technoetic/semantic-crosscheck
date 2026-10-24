@@ -6,6 +6,58 @@ All notable changes to this project are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-10-24
+
+Release notes: [docs/releases/v0.9.0.md](docs/releases/v0.9.0.md).
+
+### Added
+
+- `verify.pair_key_budget` (default 2000, at least 2000): a V3 pair test with more keys than the
+  2,000-key cap and no more than the budget compares every key in the baseline run. The key count and
+  every non-NULL key are read in md5 order in one REPEATABLE READ snapshot (one statement; every key is
+  held in memory) and compared in consecutive chunks of 2,000 keys through the existing filtered
+  queries, plus the NULL key group through a `notSet` filter, which the sample left out. A mismatch in
+  any chunk or in the NULL key group fails the test, a query error in any of them makes it an error, and
+  keys missing from Cube's together answers make it `not_run` (`keys_not_answered`), never a pass. The
+  detail says `mode = "chunked"` with `chunks`, `compared_keys`, `answered_keys`, `total_keys`,
+  `null_key_group` and `elapsed_ms`, without sample or d95 fields, and not proven states that each Cube
+  query reads its own snapshot, shared with no other query and not with SQL. Above the budget the sample
+  and its d95 bound stay and not proven names the budget; a sampled not proven line now also says that
+  a sample never compares the NULL key group. V4 still replays the 2,000-key sample (the first chunk).
+  The default keeps the previous comparison.
+- Literal expected-row oracle for a gold SQL and a configuration that share one mistake: optional
+  `[[gold.expect]]` cases on a `[[gold]]` entry (`source` `authored` with a `spec` location, or `captured`;
+  `params`, `rows` with `{ null = true }` for NULL, `partial`, an optional `fixture_sha256` pin) and a new `expect`
+  stage. It reads the operational configuration but runs build, cube, the gold SQL and Cube only on a dedicated
+  fixture database the user loaded (`--dsn-env`, default `SXC_EXPECT_DSN`, with explicit `--allow-fixture-database`)
+  and never runs fixture SQL. A fixture DSN is refused when it equals, or names the same host, port and database as,
+  an operational DSN variable set in this environment; another name for the same server is not detected, so the
+  fixture must be a dedicated database (not proven names the unset ones). `expect:<gold>[<i>]` passes only when both
+  sides equal the expected rows; agreeing sides that differ from them fail as `common_mode` (authored) or
+  `regression` (captured), a disagreement as `gold_mismatch`, `cube_mismatch` or `both_mismatch`; a case whose
+  pinned `fixture_sha256` differs is `not_run` (`fixture_mismatch`). The digest orders the row text by
+  `COLLATE "C"` and fixes TimeZone, DateStyle, IntervalStyle, extra_float_digits, bytea_output and lc_monetary,
+  so a pin depends on the rows and the column types (and on the database encoding for text outside ASCII), not
+  on the database's default collation or session settings. `expect:fixture` compares digests of the fixture
+  taken before the build and around the cases while a second session holds SHARE locks on its source and closure
+  tables when they can be taken (not, for example, when the role lacks UPDATE, DELETE, TRUNCATE or MAINTAIN, or a
+  conflicting lock outlasts `source.statement_timeout_ms`; then `locked: false` and a not proven line says so).
+  The build objects stay in the fixture database's output schema (no cleanup; the next run rebuilds them; all
+  cases share that database). Captured passes are
+  regression evidence only. The result stays out of `report` and operational V1-V5 coverage; editing a case changes
+  `crosscheck.toml`, so `report` needs the operational stages rerun. Example: `examples/expect/`.
+- `shacl-corpus --w3c-suite [DIR]` (or `SXC_W3C_SHACL_SUITE` with a bare `--w3c-suite`) compares pySHACL and Apache Jena
+  with the expected reports of the W3C SHACL core test suite instead of the fixed corpus. Only approved `sht:Validate`
+  entries inside the sxc profile run (the components and severities sxc's exporter emits: `sh:class` and the three
+  numeric bounds, one Violation or Warning severity, on IRI focus nodes with no path or one IRI path); every other
+  entry is `not_run` with a reason id. Check ids are `w3c:<engine>:<case>`. The engines validate the suite's own
+  graphs, so this mode does not exercise sxc's exporter and complements the fixed corpus (run both). The suite is
+  pinned at w3c/data-shapes `1dfcd9f` by a digest over the files read; an unpinned suite runs no engine unless
+  `--allow-unpinned-suite`, which adds a `not_run` `w3c:suite` check, so the W3C mode never passes as a whole. On the
+  pinned suite both engines matched all 6 in-profile cases (pySHACL 0.40.1 and Apache Jena 6.2.0, 2026-10-24).
+- The integration CI job fetches the pinned suite tarball, verifies its SHA-256 and the content digest, and runs the
+  W3C subset; the suite is read at test time under the W3C Software and Document License and never vendored.
+
 ## [0.8.0] - 2026-10-23
 
 Release notes: [docs/releases/v0.8.0.md](docs/releases/v0.8.0.md).
@@ -276,6 +328,7 @@ First release. Release notes: [docs/releases/v0.1.0.md](docs/releases/v0.1.0.md)
   followed by the clean and dirty demo end to end through the command line; whitespace check and a leak
   scan of the working tree and the whole history.
 
+[0.9.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.9.0
 [0.8.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.8.0
 [0.7.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.7.0
 [0.6.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.6.0

@@ -69,9 +69,24 @@ Additional standalone synthetic stages are available when explicitly requested:
 
 - `cube-replay`: actual compiled Cube original/mutant replay against independent gold on owned synthetic data ([command](../../commands/xc-cube-replay.md)). Require a dedicated `SXC_CUBE_REPLAY_DSN` and explicit `--allow-scratch-schema`; never select an operational DSN. Only this invocation's private schema may be removed.
 - `tlp`: trusted nonrecursive COUNT/SUM and row-multiset consistency under true/false/NULL partitioning ([command](../../commands/xc-tlp.md)). Use reviewed SQL and a dedicated `SXC_TLP_DSN`; observable stability is not proof that functions have no external effects.
-- `shacl-corpus`: independent nonrecursive expected reports compared with pySHACL and Apache Jena ([command](../../commands/xc-shacl-corpus.md)). Set `SXC_JENA_HOME` for the optional distribution; tested Jena 6.2.0 uses a Java 21 runtime. No production database is accessed.
+- `shacl-corpus`: independent nonrecursive expected reports compared with pySHACL and Apache Jena ([command](../../commands/xc-shacl-corpus.md)). Set `SXC_JENA_HOME` for the optional distribution; tested Jena 6.2.0 uses a Java 21 runtime. No production database is accessed. Since 0.9.0, `--w3c-suite [DIR]` (or `SXC_W3C_SHACL_SUITE` with a bare `--w3c-suite`) instead compares both engines with the pinned W3C SHACL core suite's expected reports for the cases inside the sxc profile; out-of-profile cases are `not_run`, so the stage never passes as a whole. It validates the suite's own graphs and does not exercise sxc's exporter, so run the fixed corpus as well (each with its own `--out`). Use `--allow-unpinned-suite` only when the user asks to run a different suite version; such a run cannot pass (`w3c:suite` is `not_run`).
 
 All three reject `--config`, ignore default operational configuration, and remain outside the required pipeline. Their passes must not erase real-data `not_proven` disclosures. Missing engines, malformed output, timeout or partial comparison cannot pass. Synthetic rows remain in labelled replay artifacts, never count-only results.
+
+The `expect` stage addresses a gold query and the configuration sharing one
+mistake ([command](../../commands/xc-expect.md)). It reads the operational `--config` for the `[[gold.expect]]`
+cases (literal expected rows per gold entry, see [references/config.md](references/config.md)) but runs build,
+cube, the gold SQL and Cube only against a dedicated fixture database the user has loaded, named by `--dsn-env`
+(default `SXC_EXPECT_DSN`), with explicit `--allow-fixture-database`, and never runs fixture SQL. Take the fixture
+DSN variable and `--allow-fixture-database` only from the user, for a database the user names as a dedicated fixture;
+never select or suggest an operational DSN. A fixture DSN is refused when it equals, or names the same host, port and database as, an operational DSN variable set in this environment; another name for the same server is not detected, so the fixture must be a dedicated database.
+`common_mode` means gold and Cube agree with each other but not with rows written from the specification: first
+check that the fixture rows and the expected rows follow the cited specification (a wrongly loaded fixture gives the
+same verdict; a case can pin `fixture_sha256`), and only then report a defect the gold SQL and the configuration
+share, never a pass of either side. Only `authored` cases with a `spec` are independent evidence; `captured` rows
+detect regressions only: for `regression`, first check that the loaded fixture is the one the rows were captured on
+(compare `expect:fixture`'s `fixture_sha256` with the case's pin, or pin it). Like the standalone stages it stays
+outside `report` and never widens operational V1-V5 coverage.
 
 Every stage is one command:
 
@@ -97,9 +112,9 @@ plugin's `requirements/` files). The roles come from
    rewritten on every run. When a check fails, fix the configuration entry named in `config_ref`, the
    gold SQL, or the source data.
 2. **A pass means only what the checks prove.** Show the NOT PROVEN lines with every verdict: empty
-   strata, equivalent mutants, shapes compared only in SQL, vacuous defined classes, sampled pair tests,
-   components that are not installed. A `not_run` check is not a pass, and a stage that was never run
-   is not a pass. Do not describe an unproven part as verified.
+   strata, equivalent mutants, shapes compared only in SQL, vacuous defined classes, sampled or chunked
+   pair tests, components that are not installed. A `not_run` check is not a pass, and a stage that was
+   never run is not a pass. Do not describe an unproven part as verified.
 3. **A narrowed run is not a result.** `--only`, `--gold` and `--hierarchy` leave `not_run` checks
    (`scope:*`, `closure:<h>` with `excluded_by_option`) for what they skip. Use them while fixing one
    thing, then rerun in full; report the verdict of `report`, which counts missing and stale stages as

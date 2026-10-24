@@ -223,6 +223,8 @@ class SampleBoundTest(unittest.TestCase):
         self.assertIn("a mismatch affecting at least 1496 keys (0.15%) is detected with 95% probability", note)
         self.assertIn("independent of the fixed md5 sample order", note)
         self.assertIn("fewer mismatching keys may be missed", note)
+        self.assertIn("; the NULL key group is not compared in a sample (its equals filter leaves it out), so a mismatch "
+                      "there is not detected", note, "the bound covers the non-NULL keys only")
 
     def test_verify_lists_the_bound_in_not_proven(self):
         tmp = tempfile.TemporaryDirectory()
@@ -241,7 +243,8 @@ class SampleBoundTest(unittest.TestCase):
                          "compared 2000 of 2500 keys (a deterministic sample with verify.seed); the other keys were "
                          "not compared; a mismatch affecting at least 2 keys (0.08%) is detected with 95% probability, "
                          "assuming the mismatching keys are independent of the fixed md5 sample order; fewer "
-                         "mismatching keys may be missed")
+                         "mismatching keys may be missed; the NULL key group is not compared in a sample (its equals "
+                         "filter leaves it out), so a mismatch there is not detected")
 
 
 class SampleBlindSurvivorTest(unittest.TestCase):

@@ -33,11 +33,30 @@ Above PAIR_KEY_CAP keys the test therefore compares a deterministic sample of PA
 verify.seed, read once from the node table or the closure table and reused by every replay), filtered in each of
 its queries, and its detail says how many keys were compared out of how many (sampled_keys, total_keys). The key
 count and the sample are read in one REPEATABLE READ snapshot, so the sample is drawn from the keys that were counted.
+The sample's equals filter leaves out the NULL key group, which a sampled test therefore never compares (sample_note
+says so next to the detection bound, which counts the non-NULL keys only).
 A sampled detail also carries the sample's detection bound (d95_keys, and d95_rate = d95_keys / total_keys): the
 smallest number of mismatching keys of which a sample of n out of N keys holds at least one with probability 95% or
 more, assuming the mismatching keys are independent of the fixed md5 order; fewer mismatching keys may all lie outside
 the sample.
-Details hold counts and flags only, never totals or keys.
+
+The baseline V3 run (run_test with verify.pair_key_budget) compares every key instead when there are no more keys than
+the budget: the key count and every key, in the same md5 order, are read in one REPEATABLE READ snapshot and split
+into consecutive chunks of PAIR_KEY_CAP, so the cost grows linearly (one sample's queries per chunk). Each chunk runs
+the same filtered queries; then the NULL key group, which an equals filter leaves out and the unfiltered queries of at
+most PAIR_KEY_CAP keys include, runs with a notSet filter. The counts add up over the chunks and the NULL key group
+(whose own counts are null_key_group); the test passes only when all of them do and the together answers held every
+key the chunks asked for (answered_keys = compared_keys): a key missing there is never compared by value, so without a
+mismatch or a duplicate key the test is then not_run (keys_not_answered), never a pass. A query that cannot run in any
+chunk makes it an error (chunks_compared: the chunks that finished). The detail says mode = chunked, chunks,
+compared_keys, answered_keys, total_keys and elapsed_ms (from the key read to the last answer), never sampled_keys or a
+detection bound. Each Cube query (the together query and every alone query of every chunk and of the NULL key group)
+reads its own snapshot, shared with no other query and not with SQL (the key read; chunk_note). The chunked
+alone_only_keys and duplicate_keys cover the key table's keys only (the alone queries are filtered to them) and
+duplicates within one chunk. Every key up to the budget is read in one statement under source.statement_timeout_ms
+and held in memory for the baseline run. Above the budget the test keeps the sample and its detail names the budget
+(pair_key_budget). The V4 replays (run_test without a budget) compare the sample, the first chunk of the baseline's key
+read, never every chunk. Details hold counts, flags and that duration only, never totals or keys.
 
 The additive tests are bounded by the configuration: one per additive measure and cube with the class column that
 Cube can join it to (in a generated model: the node cube of each measure with a node, and the ancestor and
@@ -48,11 +67,12 @@ dimension row (null_group_rows, orphan_rows; under a backward path the orphans a
 """
 
 import math
+import time
 from decimal import Decimal, InvalidOperation
 
-from . import canon, compare, cube_gen, db, ident, naming, sweep
+from . import canon, compare, config, cube_gen, db, ident, naming, sweep
 
-PAIR_KEY_CAP = 2000
+PAIR_KEY_CAP = config.PAIR_KEY_CAP   # 2000; also the least verify.pair_key_budget
 MISS = 20          # the detection bound allows a miss probability of at most 1/MISS (5%)
 ADDITIVE_STEPS = ("many_to_one", "one_to_one")
 _RELATIONSHIPS = {"belongs_to": "many_to_one", "belongsTo": "many_to_one", "has_many": "one_to_many",
@@ -328,18 +348,20 @@ def null_group_sql(cfg, test: dict) -> str:
             f"count(*) FILTER (WHERE NOT EXISTS ({matched})) FROM {table} t{where}")
 
 
-def pair_keys(conn, cfg, test: dict) -> tuple[int, list | None]:
-    """(distinct keys a pair test groups by, a deterministic sample of PAIR_KEY_CAP of them or None when there are not
-    more than that), read from test["keys_from"] (table, column) in one READ ONLY REPEATABLE READ transaction, so the
-    count and the sample see the same rows."""
+def pair_keys(conn, cfg, test: dict, budget: int | None = None) -> tuple[int, list | None]:
+    """(distinct non-NULL keys a pair test groups by, the keys to compare), read from test["keys_from"] (table, column)
+    in one READ ONLY REPEATABLE READ transaction, so the count and the keys see the same rows. The keys are None when
+    there are not more than PAIR_KEY_CAP, every key in the md5 order when there are not more than `budget` (the chunked
+    baseline run), and otherwise a deterministic sample of PAIR_KEY_CAP of them: the first keys of that order."""
     table, column = test["keys_from"]
     col, source = f"t.{ident.quote(column)}", ident.qualified(table)
     with db.read_only(conn, cfg.source.statement_timeout_ms, isolation="repeatable read"):
         total = int(db.scalar(conn, f"SELECT count(DISTINCT {col}) FROM {source} t") or 0)
         if total <= PAIR_KEY_CAP:
             return total, None
+        n = total if budget is not None and total <= budget else PAIR_KEY_CAP
         rows = conn.run(f"SELECT s.k FROM (SELECT DISTINCT {col} AS k FROM {source} t WHERE {col} IS NOT NULL) s "
-                        f"ORDER BY {sweep.md5_order('s.k')} LIMIT :n", seed=str(cfg.verify.seed), n=PAIR_KEY_CAP)
+                        f"ORDER BY {sweep.md5_order('s.k')} LIMIT :n", seed=str(cfg.verify.seed), n=n)
     return total, [r[0] for r in rows or []]
 
 
@@ -376,7 +398,9 @@ def d95_keys(sampled: int, total: int) -> int | None:
 
 
 def sample_note(detail: dict) -> str:
-    """The not_proven text of a sampled pair test's detail: how many keys it compared and its detection bound."""
+    """The not_proven text of a sampled pair test's detail: how many keys it compared, its detection bound (over the
+    non-NULL keys: the sample's equals filter leaves the NULL key group out, so it is never compared) and, when the
+    detail names verify.pair_key_budget (the baseline run), that the key count exceeded it."""
     n, total = detail["sampled_keys"], detail["total_keys"]
     note = f"compared {n} of {total} keys (a deterministic sample with verify.seed); the other keys were not compared"
     d95 = detail.get("d95_keys")
@@ -385,18 +409,42 @@ def sample_note(detail: dict) -> str:
             d95 = d95_keys(n, total)
         except ValueError:
             d95 = None
-    if not d95:
-        return note
-    return (f"{note}; a mismatch affecting at least {d95} keys ({100 * d95 / total:.3g}%) is detected with 95% "
-            "probability, assuming the mismatching keys are independent of the fixed md5 sample order; fewer "
-            "mismatching keys may be missed")
+    if d95:
+        note += (f"; a mismatch affecting at least {d95} keys ({100 * d95 / total:.3g}%) is detected with 95% "
+                 "probability, assuming the mismatching keys are independent of the fixed md5 sample order; fewer "
+                 "mismatching keys may be missed")
+    note += ("; the NULL key group is not compared in a sample (its equals filter leaves it out), so a mismatch there "
+             "is not detected")
+    budget = detail.get("pair_key_budget")
+    if budget is not None:
+        note += (f"; the key count exceeds verify.pair_key_budget ({budget}), so the keys were not compared in chunks "
+                 f"(a budget of at least {total} compares every key)")
+    return note
 
 
-def run_test(conn, client, cfg, model: dict, test: dict) -> tuple[str, dict]:
-    """(status, detail) of one test; errors are reported by type, never by message."""
+def chunk_note(detail: dict) -> str:
+    """The not_proven text of a chunked pair test's detail: how many keys were compared by value (answered_keys, the
+    keys the together answers held; every key only when they held all the chunks asked for), and from which
+    snapshots."""
+    asked, answered, chunks = detail["compared_keys"], detail.get("answered_keys", 0), detail["chunks"]
+    if answered >= asked:
+        note = f"compared every key ({asked}) in {chunks} chunks of at most {PAIR_KEY_CAP} plus the NULL key group"
+    else:
+        note = (f"Cube's together answers held {answered} of the {asked} keys asked for in {chunks} chunks of at most "
+                f"{PAIR_KEY_CAP}, so {asked - answered} keys were not compared (the NULL key group was)")
+    return (f"{note}; the key set comes from one REPEATABLE READ snapshot at the start, and each Cube query (the "
+            "together query and every alone query of every chunk and of the NULL key group) reads its own snapshot, "
+            "shared with no other query and not with SQL")
+
+
+def run_test(conn, client, cfg, model: dict, test: dict, budget: int | None = None) -> tuple[str, dict]:
+    """(status, detail) of one test; errors are reported by type, never by message. `budget` is verify.pair_key_budget,
+    which only the baseline V3 run passes: a pair test over more than PAIR_KEY_CAP keys and not more than the budget
+    then compares every key in chunks. Without it (the V4 replays) such a test compares its sample."""
     run = {"total": _run_total, "additive": _run_additive, "pair": _run_pair}[test["kind"]]
+    extra = {"budget": budget} if run is _run_pair else {}
     try:
-        return run(conn, client, cfg, test)
+        return run(conn, client, cfg, test, **extra)
     except compare.expected_errors() as e:
         return "error", compare.error_detail(e)
 
@@ -482,8 +530,8 @@ def _keyed(rows: list[dict], key: str, kind: str | None) -> tuple[dict, int]:
 
 
 def _sample(conn, cfg, test: dict) -> tuple[int | None, list | None]:
-    """pair_keys of the test, read once: the test dict keeps them in memory for the mutant replays. They are key
-    values, so they never go into a detail or a result."""
+    """pair_keys of the test, read once (or left by the baseline run's key read): the test dict keeps them in memory
+    for the mutant replays. They are key values, so they never go into a detail or a result."""
     if "keys_from" not in test:
         return None, None
     if "sample_keys" not in test:
@@ -509,26 +557,95 @@ def _restricted(query: dict, member: str, sample: list | None) -> dict:
     return {**query, "filters": [{"member": member, "operator": "equals", "values": [_filter_text(v) for v in sample]}]}
 
 
-def _run_pair(conn, client, cfg, test: dict) -> tuple[str, dict]:
+def _equals(keys: list | None):
+    """The restriction of _compare to these keys (an equals filter; no filter for None)."""
+    return lambda query, member: _restricted(query, member, keys)
+
+
+def _null_keys(query: dict, member: str) -> dict:
+    """The query limited to the NULL key group of `member`, which an equals filter leaves out."""
+    return {**query, "filters": [{"member": member, "operator": "notSet"}]}
+
+
+def _compare(client, test: dict, restrict, asked: list | None = None) -> dict:
+    """The together query and each alone query of a pair test, limited by restrict(query, member): the keys answered
+    together, the mismatched keys and the alone-only keys per measure, and the duplicate keys of every answer. With
+    `asked`, the keys of a chunk's equals filter, it also counts how many of them (in the canonical form of the grouped
+    member, as the answer's keys) the together answer holds (answered_keys): only those are compared by value."""
     measures, group, kinds = test["measures"], test["group_by"], test.get("kinds", {})
-    total, sample = _sample(conn, cfg, test)
-    together_q = _restricted({"dimensions": [group], "measures": measures}, group, sample)
-    together, dup = _keyed(client.load(together_q), group, kinds.get(group))
-    mismatched, alone_only, alone_dups = {}, {}, 0
+    together, dups = _keyed(client.load(restrict({"dimensions": [group], "measures": measures}, group)), group,
+                            kinds.get(group))
+    mismatched, alone_only = {}, {}
     for m in measures:
         dim = test["alone"][m]
-        alone, d = _keyed(client.load(_restricted({"dimensions": [dim], "measures": [m]}, dim, sample)), dim, kinds.get(dim))
-        alone_dups += d
+        alone, d = _keyed(client.load(restrict({"dimensions": [dim], "measures": [m]}, dim)), dim, kinds.get(dim))
+        dups += d
         bad = sum(1 for k, row in together.items() if not canon.same(row.get(m), alone.get(k, {}).get(m)))
         if bad:
             mismatched[m] = bad
         alone_only[m] = sum(1 for k in alone if k not in together)
-    ok = not (mismatched or dup or alone_dups)
-    detail = {"keys": len(together), "mismatched": mismatched, "duplicate_keys": dup + alone_dups,
-              "alone_only_keys": alone_only}
+    out = {"keys": len(together), "mismatched": mismatched, "duplicate_keys": dups, "alone_only_keys": alone_only}
+    if asked is not None:
+        out["answered_keys"] = len({canon.canon(k, kinds.get(group)) for k in asked} & together.keys())
+    return out
+
+
+def _add(summed: dict, part: dict):
+    """Adds the counts of one chunk (or of the NULL key group) to those of a chunked pair test."""
+    summed["keys"] += part["keys"]
+    summed["answered_keys"] += part.get("answered_keys", 0)
+    summed["duplicate_keys"] += part["duplicate_keys"]
+    for name in ("mismatched", "alone_only_keys"):
+        for m, n in part[name].items():
+            summed[name][m] = summed[name].get(m, 0) + n
+
+
+def _run_pair(conn, client, cfg, test: dict, budget: int | None = None) -> tuple[str, dict]:
+    started = time.monotonic()
+    if budget is not None and "keys_from" in test:
+        # the baseline run reads the keys within the budget and leaves the first PAIR_KEY_CAP of them, the sample, to
+        # the replays (_sample), so they replay what the baseline compared first and never read the keys again
+        total, keys = pair_keys(conn, cfg, test, budget)
+        test["total_keys"], test["sample_keys"] = total, None if keys is None else keys[:PAIR_KEY_CAP]
+        if keys is not None and total <= budget:
+            return _run_chunks(client, test, total, keys, started)
+    total, sample = _sample(conn, cfg, test)
+    detail = _compare(client, test, _equals(sample))
+    ok = not (detail["mismatched"] or detail["duplicate_keys"])
     if sample is not None:
         detail.update(sampled_keys=len(sample), total_keys=total)
         d95 = d95_keys(len(sample), total) if sample else None
         if d95:
             detail.update(d95_keys=d95, d95_rate=d95 / total)
+        if budget is not None:
+            detail["pair_key_budget"] = budget
     return ("pass" if ok else "fail"), detail
+
+
+def _run_chunks(client, test: dict, total: int, keys: list, started: float) -> tuple[str, dict]:
+    """Every key of a pair test (pair_keys within the budget) in consecutive chunks of PAIR_KEY_CAP, then the NULL key
+    group. A key read that does not match the count, or a query that cannot run, makes the test an error that says how
+    many chunks finished (chunks_compared; all of them when the NULL key group failed). A mismatch or a duplicate key
+    fails it; otherwise, when the together answers held fewer keys than the chunks asked for (answered_keys below
+    compared_keys), the missing keys were never compared and the test is not_run (keys_not_answered), never a pass."""
+    chunks = [keys[i:i + PAIR_KEY_CAP] for i in range(0, len(keys), PAIR_KEY_CAP)]
+    mode = {"mode": "chunked", "chunks": len(chunks)}
+    summed = {"keys": 0, "answered_keys": 0, "mismatched": {}, "duplicate_keys": 0, "alone_only_keys": {}}
+    done = 0
+    try:
+        if len(keys) != total:
+            raise ValueError("the key read does not match the key count")
+        for chunk in chunks:
+            _add(summed, _compare(client, test, _equals(chunk), chunk))
+            done += 1
+        null = _compare(client, test, _null_keys)
+    except compare.expected_errors() as e:
+        return "error", {**compare.error_detail(e), **mode, "chunks_compared": done, "total_keys": total}
+    _add(summed, null)
+    detail = {**summed, **mode, "compared_keys": len(keys), "total_keys": total, "null_key_group": null,
+              "elapsed_ms": int((time.monotonic() - started) * 1000)}
+    if summed["mismatched"] or summed["duplicate_keys"]:
+        return "fail", detail
+    if summed["answered_keys"] < len(keys):
+        return "not_run", {**detail, "reason": "keys_not_answered"}
+    return "pass", detail

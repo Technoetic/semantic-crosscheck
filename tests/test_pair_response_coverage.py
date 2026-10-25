@@ -2,7 +2,7 @@
 import unittest
 
 import pgfixture  # noqa: F401
-from semantic_crosscheck import shape_q
+from semantic_crosscheck import mutate, shape_q
 from test_compare_unit import FakeClient
 
 
@@ -47,6 +47,25 @@ class PairResponseCoverageTest(unittest.TestCase):
         self.assertEqual(detail['answered_keys'], 1)
         self.assertNotIn('d95_keys', detail)
 
+    def test_missing_alone_nonnull_value_is_not_an_observed_mismatch_or_v4_kill(self):
+        answers = self.answers()
+        answers[(('b.key',), ('b.value',))].pop()
+        status, detail = self.run_pair(answers)
+        self.assertEqual(status, 'not_run')
+        self.assertEqual(detail['mismatched'], {})
+        self.assertEqual(detail['answered_keys'], 1)
+        verdict, evidence = mutate.verdict(status, 'v3:pair:a+b')
+        self.assertEqual(verdict, 'error')
+        self.assertNotIn('killed_by', evidence)
+
+    def test_chunked_missing_alone_nonnull_value_is_not_a_confirmed_failure(self):
+        answers = self.answers()
+        answers[(('b.key',), ('b.value',))].pop()
+        compared = shape_q._compare(FakeClient(answers=answers), self.pair(),
+                                    shape_q._equals(['K0', 'K1']), ['K0', 'K1'])
+        self.assertEqual(compared['mismatched'], {})
+        self.assertEqual(compared['answered_keys'], 1)
+
     def test_known_mismatch_still_fails_but_incomplete_sample_has_no_bound(self):
         answers = {key: rows[:1] for key, rows in self.answers().items()}
         answers[(('b.key',), ('b.value',))][0]['b.value'] = '3'
@@ -66,12 +85,23 @@ class PairResponseCoverageTest(unittest.TestCase):
         self.assertEqual(detail['answered_keys'], 2)
         self.assertIn('d95_keys', detail)
 
+    def test_corresponding_keys_use_each_dimensions_declared_type_for_values(self):
+        test = self.pair(['1', '2'])
+        test['kinds'] = {'part.id': 'string', 'a.key': 'number', 'b.key': 'number'}
+        answers = self.answers()
+        for rows in answers.values():
+            for i, row in enumerate(rows):
+                row[next(iter(row))] = str(i + 1)
+        self.assertEqual(self.run_pair(answers, test)[0], 'pass')
+        answers[(('b.key',), ('b.value',))][0]['b.value'] = '3'
+        self.assertEqual(self.run_pair(answers, test)[0], 'fail')
+
     def test_disjoint_missing_keys_are_counted_as_not_fully_answered(self):
         answers = self.answers()
         answers[(('a.key',), ('a.value',))] = answers[(('a.key',), ('a.value',))][:1]
         answers[(('b.key',), ('b.value',))] = answers[(('b.key',), ('b.value',))][1:]
         status, detail = self.run_pair(answers)
-        self.assertIn(status, ('fail', 'not_run'))
+        self.assertEqual(status, 'not_run')
         self.assertEqual(detail['answered_keys'], 0)
 
     def test_chunked_path_also_rejects_missing_alone_null_values(self):

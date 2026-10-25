@@ -321,7 +321,8 @@ class UnchangedPathTest(unittest.TestCase):
         client = KeyedClient(every)
         st, d = shape_q.run_test(KeysConn(every), client, cfg, {}, pair_test(cfg))
         self.assertEqual((st, set(d)), ("pass", {"keys", "mismatched", "duplicate_keys", "alone_only_keys",
-                                                 "sampled_keys", "total_keys", "d95_keys", "d95_rate"}))
+                                                 "sampled_keys", "total_keys", "d95_keys", "d95_rate", "answered_keys"}))
+        self.assertEqual(d["answered_keys"], CAP)
         self.assertEqual(len(client.queries), 3)
 
 

@@ -590,7 +590,11 @@ def _compare(client, test: dict, restrict, asked: list | None = None) -> dict:
         if answered is not None:
             answered.intersection_update(i for i, k in enumerate(asked) if canon.canon(k, kinds.get(dim)) in alone)
         dups += d
-        bad = sum(1 for k, row in together.items() if not canon.same(row.get(m), alone.get(k, {}).get(m)))
+        key_of = ({canon.canon(k, kinds.get(group)): canon.canon(k, kinds.get(dim)) for k in asked}
+                  if asked is not None else {})
+        bad = sum(1 for k, row in together.items()
+                  if (asked is None or key_of.get(k, k) in alone)
+                  and not canon.same(row.get(m), alone.get(key_of.get(k, k), {}).get(m)))
         if bad:
             mismatched[m] = bad
         alone_only[m] = sum(1 for k in alone if k not in together)

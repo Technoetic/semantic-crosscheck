@@ -5,6 +5,9 @@ alone response; do not treat missing rows as NULL-valued answers or use an incom
 D95. `shacl:meta:generated` checks the generated shape graph against only the available shacl-shacl syntax subset:
 correct syntax does not establish the intended rule. `tlp --oracle norec` compares bounded predicate counts only;
 it is not full result-set equivalence and its replay must use the same oracle.
+Standalone measure queries can legitimately omit keys with no fact rows. Requested-key comparisons conservatively
+leave these sparse cases `not_run` too: independent existence evidence is required to distinguish legitimate absence
+from an incomplete response, and substituting NULL would hide that uncertainty.
 
 Each layer has traps that make two correct-looking formulations disagree. The harness already avoids
 the ones listed here; this page explains them so a failing check can be traced to its cause, and so the

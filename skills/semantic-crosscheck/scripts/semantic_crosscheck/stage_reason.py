@@ -98,7 +98,7 @@ def _generated_shapes_preflight(ttl: str, res: Result) -> bool:
         res.add(META_ID, "error", "shapes", reason="meta_validation_error")
         return False
     res.add(META_ID, "pass" if conforms else "fail", "shapes", violations=count, profile="shacl-shacl")
-    res.not_proven.append("Generated SHACL passed only the available shacl-shacl syntax subset when conformant; "
+    res.not_proven.append("Generated SHACL preflight checks only the available shacl-shacl syntax subset; "
                           "this does not prove complete syntax coverage or business-rule semantics")
     return conforms
 

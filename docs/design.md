@@ -536,6 +536,11 @@ are `not_run` (`keys_not_answered`). `answered_keys` counts requested keys prese
 dimension's canonical type. Incomplete samples carry no D95 bound and their not-proven note reports requested
 versus fully answered keys without claiming a detection probability. A complete sample retains the existing bound.
 
+The completeness contract is intentionally conservative: standalone measure cubes may legitimately omit node
+keys with no matching fact rows. Above the sampling cap, such sparse data can therefore become `not_run` even
+without a Cube defect. The harness cannot distinguish legitimate absence from a missing answer without independent
+existence evidence. It does not restore a pass by substituting NULL; the unfiltered path at or below the cap is unchanged.
+
 **Chunked pair tests** (since 0.9.0). `verify.pair_key_budget` (default 2000, at least the cap) is the
 largest key count the baseline V3 run compares in full; the default keeps the sample above the cap. A pair test with
 more keys than the cap and no more than the budget reads the key count and every non-NULL key, in the same md5 order,

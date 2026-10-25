@@ -10,7 +10,7 @@ python "${CLAUDE_PLUGIN_ROOT}/skills/semantic-crosscheck/scripts/sxc.py" tlp --s
 ```
 
 - `--spec FILE` is a required strict version 1 JSON file. It declares the synthetic scenario, relational SELECT, predicate, and COUNT/SUM aggregate. See [the complete spec](../docs/tlp.md).
-- After 0.9.0 (unreleased), `--oracle` defaults to `tlp`. `--oracle norec` requires exactly `count(*)`: independently compare the WHERE count with a CASE/SUM count over the bounded materialized relation. It does not reuse a frozen predicate between the oracle arms. Check IDs and replay identity name the oracle; a TLP replay cannot be used as NoREC evidence or vice versa.
+- Since 0.10.0, `--oracle` defaults to `tlp`. `--oracle norec` requires exactly `count(*)`: independently compare the WHERE count with a CASE/SUM count over the bounded materialized relation. It does not reuse a frozen predicate between the oracle arms. Check IDs and replay identity name the oracle; a TLP replay cannot be used as NoREC evidence or vice versa.
 - `--dsn-env` defaults to `SXC_TLP_DSN`, naming an environment variable with a dedicated synthetic test connection; never place a DSN in arguments.
 - `--seed` defaults to 7; `--max-examples` defaults to 64 and is bounded at 1000.
 - `--statement-timeout-ms` defaults to 10000 and bounds each PostgreSQL statement.

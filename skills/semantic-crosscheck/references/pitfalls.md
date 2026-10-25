@@ -1,6 +1,6 @@
 # Pitfalls behind common failures
 
-After 0.9.0 (unreleased), `keys_not_answered` means requested pair-test keys were absent from the together or an
+Since 0.10.0, `keys_not_answered` means requested pair-test keys were absent from the together or an
 alone response; do not treat missing rows as NULL-valued answers or use an incomplete sample's requested size for
 D95. `shacl:meta:generated` checks the generated shape graph against only the available shacl-shacl syntax subset:
 correct syntax does not establish the intended rule. `tlp --oracle norec` compares bounded predicate counts only;

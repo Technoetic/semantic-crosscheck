@@ -18,7 +18,7 @@ variable. Defaults are `--seed 7`, `--max-examples 64`, and
 `--statement-timeout-ms 10000`. Bounds are 1..1000 examples and 1..120000 ms.
 The stage runs without an operational configuration.
 
-## Optional NoREC oracle (after 0.9.0, unreleased)
+## Optional NoREC oracle (since 0.10.0)
 
 `--oracle tlp` is the default and preserves the partition checks below.
 `--oracle norec` requires the aggregate to be exactly `{"function":"count","column":"*"}`.

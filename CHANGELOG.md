@@ -6,6 +6,10 @@ All notable changes to this project are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-10-25
+
+Release notes: [docs/releases/v0.10.0.md](docs/releases/v0.10.0.md).
+
 ### Fixed
 
 - Sampled V3 pair tests and V4 replay require every requested key in the together and every alone response.
@@ -356,3 +360,5 @@ First release. Release notes: [docs/releases/v0.1.0.md](docs/releases/v0.1.0.md)
 [0.2.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.2.0
 [0.1.1]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.1.1
 [0.1.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.1.0
+
+[0.10.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.10.0

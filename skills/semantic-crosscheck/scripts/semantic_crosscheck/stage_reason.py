@@ -38,6 +38,7 @@ from .result import EXIT_CONFIG, EXIT_ENV, Result, StageError, require_stage
 
 PARTS = ("shacl", "owl")
 INSTALL = '<python> -m pip install -r "<plugin>/requirements/reason.txt"'
+META_ID = "shacl:meta:generated"
 BUILD_REASONS = ("shape_not_built", "view_missing", "closure_not_passed", "closure_table_missing")
 WHY = {   # why the closure table cannot be compared with OWL ({h}: the hierarchy)
     "closure_not_passed": "closure:{h} did not pass in build",
@@ -60,16 +61,22 @@ def run(cfg, args, out: Path) -> Result:
     ttl = shapes_ttl(cfg, out) if planned else ""
     java = components(bool(planned), use_owl)
     res = Result("reason")
+    shacl_ready = bool(planned) and _generated_shapes_preflight(ttl, res)
+    if planned and not shacl_ready:
+        for s in planned:
+            res.add(f"shacl:{s.id}", "not_run", shapes.config_ref(cfg, s), reason="generated_shapes_invalid")
+        res.not_proven.append("SHACL row comparisons did not run because generated shapes did not pass the "
+                              "shacl-shacl syntax preflight")
     if "shacl" in only:
         _shacl_not_proven(cfg, skipped, res)
     if "owl" in only and not use_owl:
         res.not_proven.append("owl: the configuration has no [ontology] section; the OWL checks were not run")
-    if planned or use_owl:
+    if shacl_ready or use_owl:
         conn = db.connect(cfg.source.dsn_env)
         try:
             if use_owl:
                 check_owl_sources(conn, cfg)
-            if planned:
+            if shacl_ready:
                 _shacl(conn, cfg, build, planned, ttl, res)
             if use_owl:
                 _owl(conn, cfg, build, java, res)
@@ -82,6 +89,18 @@ def run(cfg, args, out: Path) -> Result:
             res.add(f"scope:{part}", "not_run", "", reason="excluded_by_only")
     res.next_safe_action = next_action(cfg, res)
     return res
+
+
+def _generated_shapes_preflight(ttl: str, res: Result) -> bool:
+    try:
+        conforms, count = shacl_check.validate_generated_shapes(ttl)
+    except Exception:
+        res.add(META_ID, "error", "shapes", reason="meta_validation_error")
+        return False
+    res.add(META_ID, "pass" if conforms else "fail", "shapes", violations=count, profile="shacl-shacl")
+    res.not_proven.append("Generated SHACL passed only the available shacl-shacl syntax subset when conformant; "
+                          "this does not prove complete syntax coverage or business-rule semantics")
+    return conforms
 
 
 # ---- prerequisites --------------------------------------------------------------------------------------
@@ -318,12 +337,15 @@ def next_action(cfg, res: Result) -> str:
         return _error_action(errors[0])
     failed = [c for c in checks if c.status == "fail"]
     clauses = []
+    if any(c.id == META_ID for c in failed):
+        clauses.append("generated SHACL failed the syntax preflight: review the shapes generator and [[shapes]] "
+                       "configuration, then rerun build")
     if any(c.id == "owl:consistency" for c in failed):
         h = cfg.hierarchies[cfg.ontology.hierarchy]
         clauses.append(f"the rows contradict the ontology (an item of an ontology.no_children class with a child, or a key "
                        f"with two disjoint classes): fix the rows of {cfg.entities[h.edge].table} or "
                        f"{cfg.entities[h.node].table}, or the [ontology] entry")
-    views = [c.detail["view"] for c in failed if c.id.startswith("shacl:")]
+    views = [c.detail["view"] for c in failed if c.id.startswith("shacl:") and c.id != META_ID]
     if views:
         clauses.append(f"SHACL and SQL disagree on which rows violate a shape: compare the keys in {', '.join(views)} with "
                        "the rule (NULL handling, key types, numeric column types; see references/pitfalls.md), fix the "

@@ -263,8 +263,8 @@ class CubeVerifyTest(unittest.TestCase):
         self.assertEqual([c.id for c in res.checks if c.status not in ("pass",) and not c.id.startswith("scope:")], [])
 
     def test_pair_tests_within_the_budget_compare_every_key_in_chunks(self):
-        """Through real Cube: every key the chunks ask for comes back in the together answers (answered_keys, and the
-        answered keys outside the NULL key group equal the key count: both pair kinds are rooted at the key table), and
+        """Through real Cube: together queries answer every key, but sparse standalone facts stay unjudged. The
+        fully answered intersection is distinct from together-row count. In addition,
         the NULL key group is queried (a notSet filter on the grouped member and on each alone dimension) and answered
         empty, which also shows Cube honours notSet: ignoring it would return every key there. The demo has no NULL
         key (primary keys, closure ends), and in a generated model a NULL key joins no measure row while measure cubes
@@ -278,26 +278,50 @@ class CubeVerifyTest(unittest.TestCase):
         pairs = [c for c in res.checks if c.id.startswith("v3:pair:")]
         self.assertEqual(len(pairs), 4)
         self.assertEqual(null_keys.call_count, 3 * len(pairs), "the NULL key group: together and both alone queries")
+        incomplete = []
         for c in pairs:
             d = c.detail
-            self.assertEqual((c.status, d.get("mode"), d["duplicate_keys"], d["mismatched"]), ("pass", "chunked", 0, {}),
-                             c.id)
+            self.assertEqual((d.get("mode"), d["duplicate_keys"], d["mismatched"]), ("chunked", 0, {}), c.id)
             self.assertGreater(d["total_keys"], 500, c.id)
             self.assertEqual((d["compared_keys"], d["chunks"]), (d["total_keys"], -(-d["total_keys"] // 500)), c.id)
-            self.assertEqual(d["answered_keys"], d["total_keys"], "Cube answered every key the chunks asked for")
+            self.assertLessEqual(d["answered_keys"], d["total_keys"])
             self.assertEqual(d["keys"] - d["null_key_group"]["keys"], d["total_keys"], c.id)
             self.assertFalse({"sampled_keys", "d95_keys", "d95_rate"} & set(d), c.id)
             alone = {m: 0 for m in d["alone_only_keys"]}
             self.assertEqual(d["null_key_group"], {"keys": 0, "mismatched": {}, "duplicate_keys": 0,
                                                    "alone_only_keys": alone}, c.id)
-            prefix = f"{c.id}: compared every key ({d['total_keys']}) in {d['chunks']} chunks of at most 500 plus the NULL"
+            if d["answered_keys"] < d["total_keys"]:
+                incomplete.append(c.id)
+                self.assertEqual((c.status, d.get("reason")), ("not_run", "keys_not_answered"), c.id)
+                prefix = f"{c.id}: Cube's together and alone answers held {d['answered_keys']} of the {d['total_keys']} keys"
+            else:
+                self.assertEqual(c.status, "pass", c.id)
+                prefix = f"{c.id}: compared every key ({d['total_keys']}) in {d['chunks']} chunks of at most 500 plus the NULL"
             self.assertTrue(any(line.startswith(prefix) for line in res.not_proven), c.id)
-        self.assertEqual([c.id for c in res.checks if c.status not in ("pass",) and not c.id.startswith("scope:")], [])
+        self.assertTrue(incomplete, "the synthetic fixture really has sparse standalone fact keys")
+        self.assertEqual([c.id for c in res.checks if c.status != "pass" and not c.id.startswith("scope:")], incomplete)
+
+    def test_dense_measure_keys_pass_all_actual_chunked_pair_queries(self):
+        """Positive control: independent per-node COUNT sources answer every requested key in every query."""
+        cfg = copy.deepcopy(self.cfg)
+        cfg.measures = {name: dataclasses.replace(m, entity="part", column="part_id", agg="count", by="part_id",
+                                                 filter={}, filter_normalized={}, date_column="", node="part")
+                        for name, m in cfg.measures.items()}
+        cfg.verify.pair_key_budget = 10_000
+        out = self.tmp / "dense_pairs"
+        prepare(self.fx, cfg, out)
+        with mock.patch.object(shape_q, "PAIR_KEY_CAP", 500):
+            result = self.verify(cfg, out, ["v3"])
+        pairs = [c for c in result.checks if c.id.startswith("v3:pair:")]
+        self.assertTrue(any("closure.qty" in c.id for c in pairs), "closure pairs were exercised")
+        self.assertTrue(any(c.id.startswith("v3:pair:m_") for c in pairs), "node pairs were exercised")
+        for c in pairs:
+            self.assertEqual(c.status, "pass", c.id)
+            self.assertEqual(c.detail.get("mode"), "chunked", c.id)
+            self.assertEqual(c.detail["answered_keys"], c.detail["total_keys"], c.id)
 
     def test_a_real_null_key_is_answered_in_the_null_key_group(self):
-        """A node table with every part and one NULL key (no primary key): through real Cube the chunks answer every
-        non-NULL key and the notSet query answers the NULL key, which joins no measure row on either side, so it is
-        counted (null_key_group keys 1, no alone-only key) and agrees."""
+        """The NULL group is compared separately even when sparse non-NULL facts leave the parent check unjudged."""
         owner_run(self.fx, "CREATE TABLE sxc_demo.sound_null_part AS SELECT part_id FROM sxc_demo.part",
                   "INSERT INTO sxc_demo.sound_null_part VALUES (NULL)")
         try:
@@ -326,10 +350,11 @@ class CubeVerifyTest(unittest.TestCase):
         a, b = "m_sound_firm.value", "m_sound_hand.value"
         c = next(c for c in res.checks if c.id == f"v3:pair:{a}+{b}")
         d = c.detail
-        self.assertEqual((c.status, d.get("mode")), ("pass", "chunked"), d)
+        self.assertEqual((c.status, d.get("mode"), d.get("reason")), ("not_run", "chunked", "keys_not_answered"), d)
         self.assertGreater(d["total_keys"], 500)
-        self.assertEqual((d["answered_keys"], d["compared_keys"], d["keys"]),
-                         (d["total_keys"], d["total_keys"], d["total_keys"] + 1), "the NULL key counts once, apart")
+        self.assertLess(d["answered_keys"], d["total_keys"], "sparse standalone fact rows are not invented")
+        self.assertEqual((d["compared_keys"], d["keys"]),
+                         (d["total_keys"], d["total_keys"] + 1), "the NULL key counts once, apart")
         self.assertEqual(d["null_key_group"], {"keys": 1, "mismatched": {}, "duplicate_keys": 0,
                                                "alone_only_keys": {a: 0, b: 0}})
 

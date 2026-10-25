@@ -24,6 +24,7 @@ python "${CLAUDE_PLUGIN_ROOT}/skills/semantic-crosscheck/scripts/sxc.py" reason 
 - SHACL: the needed rows are exported as RDF in memory (target rows with the shape paths, referenced
   entities with their types) in one read-only snapshot and checked by pySHACL without inference against
   `build/shapes.ttl`. Per shape, the set of focus-node keys must equal the set of keys in `v_shape_<id>`.
+- Since 0.10.0, generated shapes first receive one `shacl:meta:generated` preflight against the pinned pySHACL shacl-shacl syntax subset, before source export. Nonconformance is `fail`; parse/engine/malformed-report failures are sanitized `error`. Affected per-shape comparisons are `not_run` (`generated_shapes_invalid`), while independent OWL may proceed. Full reports and invalid shape values are not logged. This is not complete syntax or business-semantics validation and does not alter the external W3C corpus mode.
 - OWL: an in-memory ontology (node class, one pairwise disjoint subclass per `ontology.classes`
   value, the edge property `<h>` and its transitive super-property `<h>_plus`, `no_children` axioms
   and the `ontology.defined` classes) is checked by HermiT in a private temporary directory. The

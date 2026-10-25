@@ -47,6 +47,7 @@ class ReasonResourceLimits(unittest.TestCase):
             answer = owl.Reasoned(True, 0, 0, 0, 0, 0, members=members,
                                   outside={name: 0 for name in members})
             with patch.object(stage_reason, "components", return_value="synthetic-java"), \
+                 patch.object(shacl_check, "validate_generated_shapes", return_value=(True, 0)), \
                  patch.object(stage_reason, "check_owl_sources"), \
                  patch.object(stage_reason.db, "connect", return_value=SimpleNamespace(close=lambda: None)), \
                  patch.object(shacl_check, "run", **shacl_boundary), \

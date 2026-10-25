@@ -238,6 +238,35 @@ def shapes_graph(shapes_ttl_text: str):
     return rdflib.Graph().parse(data=shapes_ttl_text, format="turtle")
 
 
+def validate_generated_shapes(shapes_ttl_text: str) -> tuple[bool, int]:
+    """The pinned shacl-shacl syntax subset, counts only; no invalid-shape report is logged.
+
+    Keep this separate from validate: external conformance-corpus shapes must not be preflighted as generated ones.
+    The public validate(meta_shacl=True) wrapper logs the complete failed report before raising, so call the pinned
+    meta_validate helper directly and discard its report text. This cannot establish business-rule correctness.
+    """
+    try:
+        import rdflib
+        from pyshacl.entrypoints import meta_validate
+        conforms, report, _text = meta_validate(shapes_graph(shapes_ttl_text), inference="none", advanced=False,
+                                               abort_on_first=False, do_owl_imports=False)
+        if type(conforms) is not bool or not isinstance(report, rdflib.Graph):
+            raise ValueError("invalid meta report")
+        rdf_type, sh = rdflib.RDF.type, rdflib.Namespace(shapes.SH)
+        reports = list(report.subjects(rdf_type, sh.ValidationReport))
+        if len(reports) != 1:
+            raise ValueError("invalid meta report")
+        stated = list(report.objects(reports[0], sh.conforms))
+        if len(stated) != 1 or stated[0].toPython() is not conforms:
+            raise ValueError("invalid meta verdict")
+        count = len(set(report.subjects(rdf_type, sh.ValidationResult)))
+        if conforms != (count == 0):
+            raise ValueError("inconsistent meta report")
+        return conforms, count
+    except Exception:
+        raise ValidationError("meta_validation_error") from None
+
+
 def validate(data_graph, shacl):
     """pySHACL's results graph: no inference, warnings allowed (severity does not change which rows violate). shacl:
     the shapes graph, or its Turtle text."""

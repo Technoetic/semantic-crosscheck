@@ -6,6 +6,28 @@ All notable changes to this project are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-10-25
+
+Release notes: [docs/releases/v0.10.0.md](docs/releases/v0.10.0.md).
+
+### Fixed
+
+- Sampled V3 pair tests and V4 replay require every requested key in the together and every alone response.
+  Confirmed disagreements still fail; otherwise missing answers are `not_run` (`keys_not_answered`). Incomplete
+  samples do not claim a D95 bound or describe requested keys as compared. Chunked tests now apply the same
+  coverage guard to missing alone rows, including NULL-valued measures.
+
+### Added
+
+- Generated SHACL preflight `shacl:meta:generated` in `reason`, once before source export, using the pinned
+  pySHACL shacl-shacl syntax subset without logging invalid-shape reports. Failure blocks SHACL comparisons,
+  while independent OWL can proceed. This is not a proof of complete syntax or business-rule correctness.
+- Optional `tlp --oracle norec`: bounded, independently evaluated WHERE-count and CASE/SUM-count consistency,
+  restricted to `count(*)`, with full-row diagnostic stability checks, strict counts and oracle-bound replay.
+  Default TLP and existing TLP artifacts remain compatible. This remains separate from operational V1-V5.
+
+These changes alter the existing engine digest; rerun build, reason, cube, verify and report after upgrading.
+
 ## [0.9.0] - 2026-10-24
 
 Release notes: [docs/releases/v0.9.0.md](docs/releases/v0.9.0.md).
@@ -338,3 +360,5 @@ First release. Release notes: [docs/releases/v0.1.0.md](docs/releases/v0.1.0.md)
 [0.2.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.2.0
 [0.1.1]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.1.1
 [0.1.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.1.0
+
+[0.10.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.10.0

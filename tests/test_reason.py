@@ -768,7 +768,8 @@ class ReasonCleanTest(_ReasonCase):
         cfg = copy.deepcopy(self.cfg)
         cfg.verify.shacl_max_rows = cfg.verify.owl_max_individuals = 10
         res = self.reason(cfg, self.copy_out("limits"))
-        checks = [c for c in res.checks if not c.id.startswith("scope:")]
+        self.assertEqual(get_check(res, stage_reason.META_ID).status, "pass")
+        checks = [c for c in res.checks if not c.id.startswith("scope:") and c.id != stage_reason.META_ID]
         self.assertTrue(checks)
         self.assertEqual(res.status, "not_run")
         self.assertTrue(all(c.status == "not_run" and c.detail.get("reason") == "resource_limit" for c in checks))
@@ -991,7 +992,8 @@ class ReasonValueGroupsTest(unittest.TestCase):
             self.shacl_run(cfg)
         self.assertEqual((e.exception.rows, e.exception.limit), (total, total - 1))
         res = stage_reason.run(cfg, types.SimpleNamespace(only=["shacl"]), self.copy_out("cap"))
-        checks = [c for c in res.checks if c.id.startswith("shacl:")]
+        self.assertEqual(get_check(res, stage_reason.META_ID).status, "pass")
+        checks = [c for c in res.checks if c.id.startswith("shacl:") and c.id != stage_reason.META_ID]
         self.assertEqual(len(checks), sum(len(ids) for ids in self.GROUPS.values()))
         self.assertTrue(all((c.status, c.detail["reason"], c.detail["rows"]) == ("not_run", "resource_limit", total)
                             for c in checks))

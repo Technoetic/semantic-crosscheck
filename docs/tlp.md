@@ -18,6 +18,37 @@ variable. Defaults are `--seed 7`, `--max-examples 64`, and
 `--statement-timeout-ms 10000`. Bounds are 1..1000 examples and 1..120000 ms.
 The stage runs without an operational configuration.
 
+## Optional NoREC oracle (since 0.10.0)
+
+`--oracle tlp` is the default and preserves the partition checks below.
+`--oracle norec` requires the aggregate to be exactly `{"function":"count","column":"*"}`.
+Other aggregates are rejected before connecting. For example:
+
+```console
+python skills/semantic-crosscheck/scripts/sxc.py tlp --oracle norec --spec examples/tlp/norec-count.json --out /tmp/sxc-norec
+```
+
+NoREC compares `COUNT(*) WHERE predicate` with
+`COALESCE(SUM(CASE WHEN predicate THEN 1 ELSE 0 END), 0)`. Only the bounded
+relation is materialized; each oracle arm evaluates the predicate independently.
+TRUE contributes one, FALSE/NULL zero, and an empty relation counts zero.
+A third diagnostic evaluation retains the bounded row/predicate bag in memory;
+the complete statement runs twice within READ ONLY, REPEATABLE READ, and changed
+diagnostic rows or counts are errors. Known volatile SQL, row/response limits,
+timeouts and changed input files use the existing fail-closed controls.
+
+Results still live under `tlp`, but `inputs.oracle`, check details and
+`norec:consistency`, `norec:engine`, `norec:execution` identify the selected oracle.
+Normal output includes only counts, not diagnostic rows. A replay uses format
+`sxc-synthetic-norec` and `oracle: norec`; selecting the wrong oracle is rejected.
+Existing `sxc-synthetic-tlp` replay artifacts remain compatible with default TLP.
+
+This follows the count-oracle idea of Rigger and Su's
+[NoREC (ESEC/FSE 2020)](https://arxiv.org/abs/2007.08292). Materializing the
+relation limits optimizer and index coverage compared with unrestricted NoREC.
+Agreement is bounded predicate-count consistency, not business correctness,
+equal full result sets, or operational V1-V5 coverage.
+
 ## Version 1 spec
 
 ```json
@@ -54,7 +85,7 @@ silently changed to zero.
 
 ## Execution and trust boundary
 
-The two bags and SQL aggregates are evaluated within one statement. MATERIALIZED
+For the default TLP oracle, the two bags and SQL aggregates are evaluated within one statement. MATERIALIZED
 CTEs freeze the relation and the predicate once per row before partitioning.
 The statement runs twice in a single READ ONLY, REPEATABLE READ transaction;
 different baseline bags, predicate outcomes or aggregates produce an error.

@@ -279,6 +279,7 @@ configuration ids; `<member>` is a Cube member (`cube.member`); `<stratum>` is a
 | tlp | `tlp:consistency` | every bounded comparison has the same complete row multiset and exact COUNT or SUM after partitioning by predicate TRUE, FALSE and NULL | `fail` when a complete row or aggregate comparison disagrees; a pass proves internal partition consistency only |
 | tlp | `tlp:engine` | unavailable-engine check only | `not_run` when PostgreSQL cannot be reached |
 | tlp | `tlp:execution` | error check only | `error` for invalid/unsupported answers, timeout, unstable execution, changed spec/generator/replay inputs or artifact failure |
+| tlp | `norec:consistency`, `norec:engine`, `norec:execution` | since 0.10.0, `--oracle norec` selects independent WHERE and CASE counts over a bounded relation, `count(*)` only | strict integer counts; missing/error/unstable execution cannot pass; oracle-bound replay; outside operational V1-V5 |
 | expect | `expect:<gold>[<i>]` | the gold SQL and the gold's Cube query, run on the fixture with case `<i>`'s parameters, both equal the case's expected rows | `fail` (`reason` `common_mode`: gold and Cube agree but differ from authored rows; `regression`: they agree but differ from captured rows; `gold_mismatch`, `cube_mismatch`, `both_mismatch`: they disagree); `error` (`side`, error type, SQLSTATE, HTTP status; `expected_duplicate_keys`: expected keys equal in their typed form); `not_run` with a `not_proven` line (`fixture_mismatch`, `closure_not_passed`, `cube_not_passed`, `gold_members_not_passed`, `fixture_changed`, `fingerprint_failed`, `fixture_unreadable`) |
 | expect | `expect:build`, `expect:cube` | the fixture's closure checks passed in the inner build; `cube:meta` passed in the inner cube stage | the worst closure status (`fail`, `error`); the `cube:meta` status (`error` when it is missing) |
 | expect | `expect:fixture` | the fixture's source tables hashed the same before the build and after the cases, and its source and built closure tables the same before and after the cases (`fixture_sha256` of the source tables, `locked`, `operational_variables_compared`) | `error` (`fixture_changed`, `fingerprint_failed`); `not_run` (`no_case_ran`): every case was gated |
@@ -305,6 +306,7 @@ configuration ids; `<member>` is a Cube member (`cube.member`); `<stratum>` is a
 | build | `closure:<h>` | acyclic (or `on_cycle = "report"`) within `max_depth` | `fail` (`reason` `cycle` or `depth_limit`); `error` (SQLSTATE); `not_run` (`excluded_by_option`: left out by `--hierarchy`) |
 | build | `closure_apply:<h>` | after the MERGE the table equals the recomputation in both directions | `fail` |
 | reason | `shacl:<id>` | pySHACL's focus nodes equal the keys in `v_shape_<id>` | `fail` (`shacl_only`, `sql_only`); `error` (SQLSTATE or `validation_failure`); `not_run` (`shape_not_built`, `view_missing`, `resource_limit`) |
+| reason | `shacl:meta:generated` | since 0.10.0, generated shapes conform to the pinned shacl-shacl syntax subset before source export | `fail` for nonconformance, sanitized `error` for parse/engine/report failure; affected comparisons `not_run` (`generated_shapes_invalid`), independent OWL may proceed |
 | reason | `owl:consistency` | HermiT finds the ontology consistent | `fail`; `error` (SQLSTATE or `reasoner_error`); `not_run` (`resource_limit`) |
 | reason | `v5:closure:<h>` | the OWL closure pairs equal the closure table | `fail`; `not_run` (`closure_not_passed`, `cycle_edges_dropped`, `closure_table_missing`, `inconsistent`, `owl_not_run`, `resource_limit`) |
 | reason | `v5:defined:<name>` | the members of the defined class equal its SQL definition (a class without members on either side passes and is listed in `not_proven`) | `fail`; `not_run` (as `v5:closure:<h>`; `contains_class` reads the closure table) |
@@ -528,10 +530,16 @@ N = 5,000, 29 at N = 20,000, 149 at N = 100,000 and 1,496 at N = 1,000,000. The 
 and adds that a mismatch affecting at least D keys (r%) is detected with 95% probability, assuming the mismatching
 keys are independent of the fixed md5 sample order, and that fewer mismatching keys may be missed. Since 0.9.0
 it also says that the NULL key group is not compared in a sample: the `equals` filter leaves it out, so
-the bound covers the non-NULL keys only. A sample does not yet check that Cube answered every sampled key: a
-key missing from the together answer is still counted as compared and in the d95 bound; only the chunked
-comparison below refuses it (`keys_not_answered`). The bound is a statement about the sample, not a verdict: the check's status
-is unchanged.
+the bound covers the non-NULL keys only. Since 0.10.0, sampled V3 and V4 replay require every requested
+key in the together and every alone answer. Confirmed mismatches/duplicates still fail; otherwise missing answers
+are `not_run` (`keys_not_answered`). `answered_keys` counts requested keys present in every response, with each
+dimension's canonical type. Incomplete samples carry no D95 bound and their not-proven note reports requested
+versus fully answered keys without claiming a detection probability. A complete sample retains the existing bound.
+
+The completeness contract is intentionally conservative: standalone measure cubes may legitimately omit node
+keys with no matching fact rows. Above the sampling cap, such sparse data can therefore become `not_run` even
+without a Cube defect. The harness cannot distinguish legitimate absence from a missing answer without independent
+existence evidence. It does not restore a pass by substituting NULL; the unfiltered path at or below the cap is unchanged.
 
 **Chunked pair tests** (since 0.9.0). `verify.pair_key_budget` (default 2000, at least the cap) is the
 largest key count the baseline V3 run compares in full; the default keeps the sample above the cap. A pair test with
@@ -544,8 +552,8 @@ and runs the same `equals`-filtered together and alone queries per chunk, so the
 queries of at most 2,000 keys include and an `equals` filter leaves out, is then compared with a `notSet` filter
 (together on the grouped member, alone on each alone dimension). Mismatched keys, duplicate keys and alone-only keys
 add up over the chunks and the NULL key group; the test passes only when every chunk and the NULL key group pass and
-the together answers held every key the chunks asked for (`answered_keys`, counted in the canonical form of the
-grouped member, equal to `compared_keys`). A key missing there is never compared by value, so without a mismatch or a
+the together and (since 0.10.0) every alone answer held every key the chunks asked for (`answered_keys`,
+equal to `compared_keys`). A key missing there is never fully compared by value, so without a mismatch or a
 duplicate key the test is then `not_run` (`keys_not_answered`), never a pass. A query that cannot run in any chunk
 makes it an `error` whose detail says `mode`, `chunks` and `chunks_compared` (the chunks that finished; all of them
 when the NULL key group failed). The detail of a finished comparison gains `mode = "chunked"`, `chunks`,

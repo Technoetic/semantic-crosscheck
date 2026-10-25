@@ -18,6 +18,10 @@ from .result import EXIT_CONFIG, Result, StageError
 
 VERSION = 1
 FORMAT = 'sxc-synthetic-tlp'
+CHECK_IDS = {
+    'tlp': {'engine': 'tlp:engine', 'consistency': 'tlp:consistency', 'execution': 'tlp:execution'},
+    'norec': {'engine': 'norec:engine', 'consistency': 'norec:consistency', 'execution': 'norec:execution'},
+}
 SPEC_LIMIT = 65536
 REPLAY_LIMIT = 1024 * 1024
 ANSWER_LIMIT = 16 * 1024 * 1024
@@ -353,7 +357,7 @@ def run(cfg, args, out):
         try:
             conn = db.connect(args.dsn_env)
         except StageError:
-            result.add(f'{oracle}:engine', 'not_run', reason='postgresql_unavailable', oracle=oracle)
+            result.add(CHECK_IDS[oracle]['engine'], 'not_run', reason='postgresql_unavailable', oracle=oracle)
             return result
         for index in ([replay['case_index']] if replay else range(maximum)):
             case = replay if replay else make_replay(spec, seed, index, oracle=oracle)
@@ -375,7 +379,7 @@ def run(cfg, args, out):
         detail = ({'optimized_count': answer['optimized_count'], 'reference_count': answer['reference_count']}
                   if oracle == 'norec' else {'multiset_equal': answer['multiset_equal'],
                                             'aggregate_equal': answer['aggregate_equal']})
-        result.add(f'{oracle}:consistency', 'pass' if answer['equal'] else 'fail', bounded=True, oracle=oracle,
+        result.add(CHECK_IDS[oracle]['consistency'], 'pass' if answer['equal'] else 'fail', bounded=True, oracle=oracle,
                    examples=checked, relation_rows=rows, case_index=last['case_index'],
                    fixture_sha256=last['tables_sha256'], spec_sha256=spec['spec_sha256'], **detail)
         result.next_safe_action = ('Review bounded synthetic coverage and trusted SQL before treating this as evidence '
@@ -385,7 +389,7 @@ def run(cfg, args, out):
         artifact.unlink(missing_ok=True)
         detail = error.args[0] if getattr(error, 'args', None) else None
         code = detail.get('C', '') if isinstance(detail, dict) else ''
-        result.add(f'{oracle}:execution', 'error', reason='invalid_or_unstable_execution', examples=checked, oracle=oracle,
+        result.add(CHECK_IDS[oracle]['execution'], 'error', reason='invalid_or_unstable_execution', examples=checked, oracle=oracle,
                    sqlstate=code if isinstance(code, str) and re.fullmatch(r'[A-Z0-9]{5}', code) else '')
         return result
     finally:

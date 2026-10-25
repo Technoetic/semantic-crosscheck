@@ -249,18 +249,29 @@ class CubeVerifyTest(unittest.TestCase):
             res = self.verify(cfg, self.out("sampled"), ["v3"])
         pairs = [c for c in res.checks if c.id.startswith("v3:pair:")]
         self.assertEqual(len(pairs), 4)
+        incomplete = []
         for c in pairs:
-            self.assertEqual((c.status, c.detail["sampled_keys"], c.detail["duplicate_keys"]), ("pass", 40, 0), c.id)
+            self.assertEqual((c.detail["sampled_keys"], c.detail["duplicate_keys"]), (40, 0), c.id)
             self.assertGreater(c.detail["total_keys"], 40, c.id)
             self.assertLessEqual(c.detail["keys"], 40, c.id)
-            note = (f"{c.id}: compared 40 of {c.detail['total_keys']} keys (a deterministic sample with verify.seed); "
-                    "the other keys were not compared")
-            self.assertEqual(c.detail["d95_keys"], shape_q.d95_keys(40, c.detail["total_keys"]), c.id)
-            prefix = f"{note}; a mismatch affecting at least {c.detail['d95_keys']} keys ("
+            if c.detail["answered_keys"] < 40:
+                incomplete.append(c.id)
+                self.assertEqual((c.status, c.detail.get("reason")), ("not_run", "keys_not_answered"), c.id)
+                self.assertFalse({"d95_keys", "d95_rate"} & set(c.detail), c.id)
+                prefix = f"{c.id}: requested 40 of {c.detail['total_keys']} keys, but only "
+            else:
+                self.assertEqual(c.status, "pass", c.id)
+                note = (f"{c.id}: compared 40 of {c.detail['total_keys']} keys (a deterministic sample with verify.seed); "
+                        "the other keys were not compared")
+                self.assertEqual(c.detail["d95_keys"], shape_q.d95_keys(40, c.detail["total_keys"]), c.id)
+                prefix = f"{note}; a mismatch affecting at least {c.detail['d95_keys']} keys ("
             line = next((line for line in res.not_proven if line.startswith(prefix)), "")
             self.assertTrue(line, c.id)
+            if c.detail["answered_keys"] < 40:
+                self.assertNotIn("95%", line)
             self.assertIn("exceeds verify.pair_key_budget (40)", line)
-        self.assertEqual([c.id for c in res.checks if c.status not in ("pass",) and not c.id.startswith("scope:")], [])
+        self.assertTrue(incomplete)
+        self.assertEqual([c.id for c in res.checks if c.status != "pass" and not c.id.startswith("scope:")], incomplete)
 
     def test_pair_tests_within_the_budget_compare_every_key_in_chunks(self):
         """Through real Cube: together queries answer every key, but sparse standalone facts stay unjudged. The
@@ -307,18 +318,23 @@ class CubeVerifyTest(unittest.TestCase):
         cfg.measures = {name: dataclasses.replace(m, entity="part", column="part_id", agg="count", by="part_id",
                                                  filter={}, filter_normalized={}, date_column="", node="part")
                         for name, m in cfg.measures.items()}
-        cfg.verify.pair_key_budget = 10_000
-        out = self.tmp / "dense_pairs"
-        prepare(self.fx, cfg, out)
-        with mock.patch.object(shape_q, "PAIR_KEY_CAP", 500):
-            result = self.verify(cfg, out, ["v3"])
-        pairs = [c for c in result.checks if c.id.startswith("v3:pair:")]
-        self.assertTrue(any("closure.qty" in c.id for c in pairs), "closure pairs were exercised")
-        self.assertTrue(any(c.id.startswith("v3:pair:m_") for c in pairs), "node pairs were exercised")
-        for c in pairs:
-            self.assertEqual(c.status, "pass", c.id)
-            self.assertEqual(c.detail.get("mode"), "chunked", c.id)
-            self.assertEqual(c.detail["answered_keys"], c.detail["total_keys"], c.id)
+        for mode, cap, budget in (("chunked", 500, 10_000), ("sampled", 40, 40)):
+            cfg.verify.pair_key_budget = budget
+            out = self.tmp / ("dense_pairs_" + mode)
+            prepare(self.fx, cfg, out)
+            with mock.patch.object(shape_q, "PAIR_KEY_CAP", cap):
+                result = self.verify(cfg, out, ["v3"])
+            pairs = [c for c in result.checks if c.id.startswith("v3:pair:")]
+            self.assertTrue(any("closure.qty" in c.id for c in pairs), "closure pairs were exercised")
+            self.assertTrue(any(c.id.startswith("v3:pair:m_") for c in pairs), "node pairs were exercised")
+            for c in pairs:
+                self.assertEqual(c.status, "pass", c.id)
+                if mode == "chunked":
+                    self.assertEqual(c.detail.get("mode"), mode, c.id)
+                    self.assertEqual(c.detail["answered_keys"], c.detail["total_keys"], c.id)
+                else:
+                    self.assertEqual(c.detail["answered_keys"], cap, c.id)
+                    self.assertIn("d95_keys", c.detail, c.id)
 
     def test_a_real_null_key_is_answered_in_the_null_key_group(self):
         """The NULL group is compared separately even when sparse non-NULL facts leave the parent check unjudged."""

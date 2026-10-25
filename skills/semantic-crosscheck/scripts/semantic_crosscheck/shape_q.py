@@ -35,17 +35,18 @@ its queries, and its detail says how many keys were compared out of how many (sa
 count and the sample are read in one REPEATABLE READ snapshot, so the sample is drawn from the keys that were counted.
 The sample's equals filter leaves out the NULL key group, which a sampled test therefore never compares (sample_note
 says so next to the detection bound, which counts the non-NULL keys only).
-A sampled detail also carries the sample's detection bound (d95_keys, and d95_rate = d95_keys / total_keys): the
+A complete sampled detail also carries the sample's detection bound (d95_keys, and d95_rate = d95_keys / total_keys): the
 smallest number of mismatching keys of which a sample of n out of N keys holds at least one with probability 95% or
 more, assuming the mismatching keys are independent of the fixed md5 order; fewer mismatching keys may all lie outside
-the sample.
+the sample. Every requested key must occur in the together and every alone response: missing answers are not_run
+(unless an observed mismatch or duplicate already fails the test), with no detection bound for an incomplete sample.
 
 The baseline V3 run (run_test with verify.pair_key_budget) compares every key instead when there are no more keys than
 the budget: the key count and every key, in the same md5 order, are read in one REPEATABLE READ snapshot and split
 into consecutive chunks of PAIR_KEY_CAP, so the cost grows linearly (one sample's queries per chunk). Each chunk runs
 the same filtered queries; then the NULL key group, which an equals filter leaves out and the unfiltered queries of at
 most PAIR_KEY_CAP keys include, runs with a notSet filter. The counts add up over the chunks and the NULL key group
-(whose own counts are null_key_group); the test passes only when all of them do and the together answers held every
+(whose own counts are null_key_group); the test passes only when all of them do and the together and every alone answer held every
 key the chunks asked for (answered_keys = compared_keys): a key missing there is never compared by value, so without a
 mismatch or a duplicate key the test is then not_run (keys_not_answered), never a pass. A query that cannot run in any
 chunk makes it an error (chunks_compared: the chunks that finished). The detail says mode = chunked, chunks,

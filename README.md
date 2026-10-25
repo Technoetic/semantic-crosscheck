@@ -335,7 +335,7 @@ python skills/semantic-crosscheck/scripts/sxc.py report --config demo/crosscheck
 <details>
 <summary><b>✅ 정상 데모의 실제 기대 출력과 NOT PROVEN 펼치기</b></summary>
 
-CLI 출력 원문을 유지했습니다. 아래 검사 수와 `NOT PROVEN` 문장은 문서 통합 테스트에서도 대조합니다.
+CLI 출력 원문을 유지했습니다. 아래 검사 수와 `NOT PROVEN` 문장은 문서 통합 테스트에서도 대조합니다. `reason` 출력은 0.9.0 이후(미출시) 구문 사전 검사를 포함합니다.
 
 ```text
 [sxc demo] PASS  checks: 5 pass, 0 fail, 0 error, 0 not_run  -> .../demo/.sxc/demo/result.json
@@ -343,7 +343,8 @@ CLI 출력 원문을 유지했습니다. 아래 검사 수와 `NOT PROVEN` 문�
 [sxc build] PASS  checks: 6 pass, 0 fail, 0 error, 0 not_run  -> .../demo/.sxc/build/result.json
   NOT PROVEN  runtime evidence is unbound: actual PostgreSQL, Node, Java, HermiT and selected Cube installation were not bound; local engine/package metadata alone does not establish the executing runtime
   NOT PROVEN  data revision is unbound: no owner-maintained revision was checked; separate database sessions and cached gold answers are not proven to observe one data version
-[sxc reason] PASS  checks: 9 pass, 0 fail, 0 error, 0 not_run  -> .../demo/.sxc/reason/result.json
+[sxc reason] PASS  checks: 10 pass, 0 fail, 0 error, 0 not_run  -> .../demo/.sxc/reason/result.json
+  NOT PROVEN  Generated SHACL preflight checks only the available shacl-shacl syntax subset; this does not prove complete syntax coverage or business-rule semantics
   NOT PROVEN  shacl:open_le_total: no SHACL form (sql_violation); checked only in SQL (shape:open_le_total in build)
   NOT PROVEN  v5:defined:ProductUsedAsPart: the class has no members in OWL or in SQL, so the comparison holds vacuously
   NOT PROVEN  runtime evidence is unbound: actual PostgreSQL, Node, Java, HermiT and selected Cube installation were not bound; local engine/package metadata alone does not establish the executing runtime

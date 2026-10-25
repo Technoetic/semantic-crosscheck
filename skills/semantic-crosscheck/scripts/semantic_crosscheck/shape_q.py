@@ -402,9 +402,14 @@ def sample_note(detail: dict) -> str:
     non-NULL keys: the sample's equals filter leaves the NULL key group out, so it is never compared) and, when the
     detail names verify.pair_key_budget (the baseline run), that the key count exceeded it."""
     n, total = detail["sampled_keys"], detail["total_keys"]
-    note = f"compared {n} of {total} keys (a deterministic sample with verify.seed); the other keys were not compared"
+    complete = detail.get("answered_keys", n) == n
+    note = (f"compared {n} of {total} keys (a deterministic sample with verify.seed); the other keys were not compared"
+            if complete else f"requested {n} of {total} keys, but only {detail.get('answered_keys', 0)} were answered "
+            "by every Cube query; the sample is incomplete and no detection probability is claimed")
     d95 = detail.get("d95_keys")
-    if not d95:
+    if not complete:
+        d95 = None
+    elif not d95:
         try:
             d95 = d95_keys(n, total)
         except ValueError:
@@ -424,13 +429,13 @@ def sample_note(detail: dict) -> str:
 
 def chunk_note(detail: dict) -> str:
     """The not_proven text of a chunked pair test's detail: how many keys were compared by value (answered_keys, the
-    keys the together answers held; every key only when they held all the chunks asked for), and from which
+    keys answered by the together and every alone query), and from which
     snapshots."""
     asked, answered, chunks = detail["compared_keys"], detail.get("answered_keys", 0), detail["chunks"]
     if answered >= asked:
         note = f"compared every key ({asked}) in {chunks} chunks of at most {PAIR_KEY_CAP} plus the NULL key group"
     else:
-        note = (f"Cube's together answers held {answered} of the {asked} keys asked for in {chunks} chunks of at most "
+        note = (f"Cube's together and alone answers held {answered} of the {asked} keys asked for in {chunks} chunks of at most "
                 f"{PAIR_KEY_CAP}, so {asked - answered} keys were not compared (the NULL key group was)")
     return (f"{note}; the key set comes from one REPEATABLE READ snapshot at the start, and each Cube query (the "
             "together query and every alone query of every chunk and of the NULL key group) reads its own snapshot, "
@@ -570,15 +575,19 @@ def _null_keys(query: dict, member: str) -> dict:
 def _compare(client, test: dict, restrict, asked: list | None = None) -> dict:
     """The together query and each alone query of a pair test, limited by restrict(query, member): the keys answered
     together, the mismatched keys and the alone-only keys per measure, and the duplicate keys of every answer. With
-    `asked`, the keys of a chunk's equals filter, it also counts how many of them (in the canonical form of the grouped
-    member, as the answer's keys) the together answer holds (answered_keys): only those are compared by value."""
+    `asked`, it also counts keys present in the together and every alone answer (answered_keys). Missing rows must
+    not masquerade as NULL-valued measures. Expected keys use each queried dimension's canonical type."""
     measures, group, kinds = test["measures"], test["group_by"], test.get("kinds", {})
     together, dups = _keyed(client.load(restrict({"dimensions": [group], "measures": measures}, group)), group,
                             kinds.get(group))
+    answered = ({i for i, k in enumerate(asked) if canon.canon(k, kinds.get(group)) in together}
+                if asked is not None else None)
     mismatched, alone_only = {}, {}
     for m in measures:
         dim = test["alone"][m]
         alone, d = _keyed(client.load(restrict({"dimensions": [dim], "measures": [m]}, dim)), dim, kinds.get(dim))
+        if answered is not None:
+            answered.intersection_update(i for i, k in enumerate(asked) if canon.canon(k, kinds.get(dim)) in alone)
         dups += d
         bad = sum(1 for k, row in together.items() if not canon.same(row.get(m), alone.get(k, {}).get(m)))
         if bad:
@@ -586,7 +595,7 @@ def _compare(client, test: dict, restrict, asked: list | None = None) -> dict:
         alone_only[m] = sum(1 for k in alone if k not in together)
     out = {"keys": len(together), "mismatched": mismatched, "duplicate_keys": dups, "alone_only_keys": alone_only}
     if asked is not None:
-        out["answered_keys"] = len({canon.canon(k, kinds.get(group)) for k in asked} & together.keys())
+        out["answered_keys"] = len(answered)
     return out
 
 
@@ -610,15 +619,18 @@ def _run_pair(conn, client, cfg, test: dict, budget: int | None = None) -> tuple
         if keys is not None and total <= budget:
             return _run_chunks(client, test, total, keys, started)
     total, sample = _sample(conn, cfg, test)
-    detail = _compare(client, test, _equals(sample))
+    detail = _compare(client, test, _equals(sample), sample)
     ok = not (detail["mismatched"] or detail["duplicate_keys"])
     if sample is not None:
         detail.update(sampled_keys=len(sample), total_keys=total)
-        d95 = d95_keys(len(sample), total) if sample else None
+        complete = detail["answered_keys"] == len(sample)
+        d95 = d95_keys(len(sample), total) if sample and complete else None
         if d95:
             detail.update(d95_keys=d95, d95_rate=d95 / total)
         if budget is not None:
             detail["pair_key_budget"] = budget
+        if not complete:
+            return ("fail" if not ok else "not_run"), {**detail, "reason": "keys_not_answered"}
     return ("pass" if ok else "fail"), detail
 
 

@@ -95,7 +95,7 @@ class NoRecPostgresTest(unittest.TestCase):
                                ('SELECT 1 AS qty FROM pg_sleep(2)', '57014'),
                                ('SELECT i AS qty FROM generate_series(1,10001) AS i', ''),
                                ('SELECT 1 AS qty, TRUE AS __sxc_tlp_p', ''),
-                               ('SELECT 1 AS qty, 2 AS qty', '')):
+                               ('SELECT 1 AS qty, 2 AS qty', '42702')):
             with self.subTest(sqlstate=code):
                 self.spec(relation_sql=relation)
                 result = tlp.run(None, self.args(max_examples=1), self.out)

@@ -421,7 +421,7 @@ python skills/semantic-crosscheck/scripts/sxc.py <stage> [--config PATH] [--out 
 | `cube-install` | 사용자별 고정 Cube 어댑터 설치 | `--home DIR`, `--native-file PATH`, `--force` | `cube_install/result.json`, `cube_install/npm-ci.log`, `cube_install/smoke.log` |
 | `counterexample` | 합성 데이터에서 SQL의 차이·BOM 변환 관계를 검사하고 축소·재현 | `--reference-sql FILE`, `--candidate-sql FILE`, `--metamorphic-sql FILE`, `--mutation-operator NAME`, `--gold-sql FILE`, `--scenario nulls`, `--seed N`, `--max-examples N`, `--max-shrink-steps N`, `--shrink-strategy structured`, `--witness-schema FILE`, `--solver-timeout-ms N`, `--dsn-env NAME`, `--statement-timeout-ms N`, `--constraints FILE`, `--replay FILE` | `counterexample/result.json`, `counterexample/fixture.json` |
 | `cube-replay` | 고정 합성 데이터를 실제 Cube 원형·변형 모델과 독립 gold SQL로 비교 | `--mutation-operator NAME`, `--allow-scratch-schema`, `--seed N`, `--dsn-env NAME`, `--statement-timeout-ms N`, `--replay FILE` | `cube_replay/result.json`, `cube_replay/fixture.json` |
-| `tlp` | 참·거짓·NULL 분할의 행 중복과 COUNT/SUM 일관성 검사 | `--spec FILE`, `--dsn-env NAME`, `--seed N`, `--max-examples N`, `--statement-timeout-ms N`, `--replay FILE` | `tlp/result.json`, `tlp/fixture.json` |
+| `tlp` | 참·거짓·NULL 분할 검사. 0.9.0 이후(미출시) 선택형 NoREC 조건 건수 비교 | `--spec FILE`, `--oracle tlp\|norec`, `--dsn-env NAME`, `--seed N`, `--max-examples N`, `--statement-timeout-ms N`, `--replay FILE` | `tlp/result.json`, `tlp/fixture.json` |
 | `shacl-corpus` | 독립 기대 결과와 pySHACL·Apache Jena의 합성 보고서 비교. 0.9.0부터는 W3C SHACL 시험 모음 core의 프로필 안 사례도 W3C 기대 보고서와 비교 | `--jena-home DIR`, `--timeout-ms N`, `--w3c-suite [DIR]`, `--allow-unpinned-suite` | `shacl_corpus/result.json` |
 | `expect` | 전용 fixture DB에서 gold SQL·Cube를 실행해 `[[gold.expect]]`의 문자 그대로 기대 행과 비교 | `--allow-fixture-database`, `--dsn-env NAME` | `expect/result.json`, `expect/build/`, `expect/cube/`, `expect/server.log` |
 
@@ -568,6 +568,7 @@ flowchart TD
 | build | `shape:<id>` | 위반 없음; warning 규칙은 건수를 보고하고 통과 |
 | build | `closure:<h>`, `closure_apply:<h>` | 순환 정책·최대 깊이 충족, 적용한 폐포가 재계산과 일치 |
 | reason | `shacl:<id>` | pySHACL의 위반 대상과 SQL 위반 키 일치 |
+| reason | `shacl:meta:generated` | 0.9.0 이후(미출시): 생성한 규칙을 shacl-shacl 구문 규칙의 부분집합으로 사전 검사 |
 | reason | `owl:consistency`, `v5:closure:<h>`, `v5:defined:<name>` | OWL 일관성, OWL의 폐포·정의 클래스가 SQL과 일치 |
 | reason | `v5:witness:<name>` | 선택한 합성 예제에서 HermiT·SQL이 독립 기대 결과와 일치; 실제 데이터의 공허성은 별도 유지 |
 | cube | `cube:model`, `cube:meta`, `cube:gold_members:<gold>` | 모델 생성, 공개 멤버 목록 정확(Cube 버전·SQL 플래너 기록), gold 질의 멤버 존재·공개 |
@@ -650,6 +651,7 @@ Cube의 기본 오류 로그에는 오류 클래스·코드·대략적인 범주
 
 - **[실제 Cube 재생](docs/cube-replay.md):** 기존 9개 변이 템플릿의 고정 합성 데이터를 별도 시험 DB의 전용 스키마에 넣고, 실제 생성·변형 모델을 Cube로 실행한다. 독립 gold SQL과 원형은 일치하고 변형은 달라야 통과한다. `SXC_CUBE_REPLAY_DSN`과 명시적 `--allow-scratch-schema`가 필요하며, 이 실행이 만든 스키마만 정리한다.
 - **[SQL TLP 검사](docs/tlp.md):** 검토한 비재귀 SQL을 참·거짓·NULL로 나누고 `UNION ALL`로 합쳐 행의 중복과 COUNT/SUM을 비교한다. 전용 `SXC_TLP_DSN`을 사용하며, 빈 집합·NULL·정확한 소수·입력 변경·재생을 검사한다. 질의의 업무적 정답이나 범용 동등성 증명은 아니다.
+- **0.9.0 이후(미출시) NoREC 선택 검사:** `tlp --oracle norec --spec examples/tlp/norec-count.json`으로 WHERE에서 센 건수와 CASE/SUM으로 센 건수를 비교한다. `count(*)`만 지원하며, 두 계산은 조건식을 따로 평가한다. 입력 행과 조건 결과의 재확인, 선택한 검사 방식에 묶인 재생 기록을 제공한다. 관계를 먼저 고정하므로 최적화·인덱스 검사 범위는 제한되며, 운영 V1–V5 검증을 대신하지 않는다.
 - **[독립 SHACL 코퍼스](docs/shacl-corpus.md):** 기존 class/bounds 범위의 고정 예제와 독립 기대 보고서를 pySHACL·Apache Jena에 각각 대조한다. 선택 설치한 `SXC_JENA_HOME`이 필요하다. 실제 확인한 Jena 6.2.0은 Java 21 실행 환경을 사용하며, 기본 HermiT 요구 환경은 그대로다.
   - **W3C core 부분집합(0.9.0부터):** `--w3c-suite [DIR]`(DIR 없이 쓰면 `SXC_W3C_SHACL_SUITE`)는 고정 예제 대신 W3C SHACL 시험 모음 core 사례를 W3C 작업반이 쓴 기대 보고서와 엔진별로 비교한다. sxc가 내보내는 제약과 심각도(`sh:class`와 세 숫자 범위, Violation·Warning 심각도 하나)를 IRI focus node에 경로 없이 또는 IRI 경로 하나로 쓰는 프로필 안의 사례만 실행하고, `sh:datatype`·개수·복합/재귀 경로·SPARQL·`sh:closed` 같은 프로필 밖 사례는 이유와 함께 `not_run`이며 통과로 세지 않는다. 엔진이 프로필 안 사례를 틀리면 `fail`이다. 이 방식은 시험 모음에 들어 있는 shapes·data 그래프를 그대로 검증하므로 sxc의 내보내기(exporter)는 시험하지 않는다. 고정 예제를 대신하지 않고 보완하므로 둘 다 실행한다(결과 파일이 같으니 `--out`을 따로 준다).
   - 고정 커밋(w3c/data-shapes `1dfcd9f`)은 읽은 파일의 경로와 내용으로 계산한 SHA-256 해시로 확인하며, 다르면 엔진을 실행하지 않는다. `--allow-unpinned-suite`를 주면 실행하지만 `w3c:suite` 검사가 `not_run`이라 단계는 통과하지 못한다. 고정 커밋에서는 98개 중 6개 사례가 프로필 안이고 두 엔진 모두 통과했다(2026-10-24, pySHACL 0.40.1·Apache Jena 6.2.0). 나머지 92개는 `not_run`이라 단계 전체 상태는 `not_run`이다. 프로필 안 W3C 사례 중 `sh:minInclusive`를 쓰는 것은 없어 그 범위는 고정 예제로만 확인한다. 시험 모음은 W3C Software and Document License로 시험 때만 읽고 저장소에 넣지 않는다.
@@ -668,7 +670,7 @@ Cube의 기본 오류 로그에는 오류 클래스·코드·대략적인 범주
 | 동등 변이 | 현재 데이터에서 모델을 바꿔도 결과가 같아 V4로 구분 불가 |
 | SQL에서만 비교한 규칙 | `sql_violation` 제약. 한 shape에 class와 범위가 함께 있는 제약은 `sh:class` 속성 shape와, 같은 열 값을 리터럴로 담은 값 술어(`<entity>.<column>/value`)의 범위 속성 shape 두 개로 SHACL과 비교함(0.5.0까지는 SQL에서만 비교). 같은 열에 서로 다른 RDF 값 유형이 필요한 shapes(class와 범위, 서로 다른 class)는 값 그룹별 데이터 그래프로 나눠 SHACL과 비교함 |
 | 비어 있는 정의 클래스 | OWL과 SQL 양쪽 모두 멤버가 없어 비교가 공허하게 성립 |
-| V3 지표 쌍의 표본 | 2,000키를 넘으면 재현 가능한 2,000키 표본으로 비교. not_proven에 95% 탐지 한계(`d95_keys`)를 함께 적으며, 그보다 적은 키에만 있는 불일치는 놓칠 수 있음. 표본은 키가 NULL인 행(NULL 키 그룹)을 비교하지 않으므로 그곳에만 있는 불일치는 찾지 못함(0.9.0부터 not_proven에도 적음). 0.9.0부터 `verify.pair_key_budget`(기본 2000)을 키 수 이상으로 올리면 V4 재생이 아닌 V3 검사 실행이 모든 키를 2,000키 조각과 NULL 키 그룹으로 나눠 비교함. 조각 비교에서 요청한 키가 Cube 응답에 빠지면 그 키는 비교되지 않았으므로 통과가 아니라 `not_run`(`keys_not_answered`)임. 표본 비교(예산 초과·V4 재생)는 Cube가 요청한 키에 모두 답했는지 아직 확인하지 않아, 답이 빠진 키도 비교한 키 수와 d95 계산에 들어감. 키 집합은 시작 시점의 REPEATABLE READ 스냅샷 하나에서 읽지만 Cube 질의는 하나하나 각자의 스냅샷을 읽어 다른 질의·SQL과 스냅샷을 공유하지 않으며, 이 사실을 not_proven에 적음. 예산 안의 키는 질의 하나로 모두 읽어 메모리에 담으므로 `source.statement_timeout_ms`를 넘으면 오류가 됨. 예산을 넘으면 표본으로 비교하고 not_proven에 예산 초과를 적음. V4 재생은 계속 2,000키 표본(첫 조각)을 씀 |
+| V3 지표 쌍의 표본 | 2,000키를 넘으면 재현 가능한 표본으로 비교하며, 표본 밖의 불일치와 NULL 키 그룹은 놓칠 수 있음. 0.9.0 이후(미출시)는 표본 V3·V4 재생과 조각 비교 모두 요청한 키가 결합 조회와 각 단독 조회에 있는지 확인함. 불일치·중복이 확인되면 실패, 그렇지 않고 응답이 빠지면 `not_run`(`keys_not_answered`). 불완전한 표본은 D95 확률이나 비교 완료를 주장하지 않음. 완전한 표본에는 기존 가정에 따른 95% 탐지 한계를 공시함. 0.9.0부터 `verify.pair_key_budget`(기본 2000)을 키 수 이상으로 올리면 V3는 모든 키를 2,000키 조각과 NULL 그룹으로 비교하며, V4 재생은 2,000키 표본을 유지함. 키 집합은 시작 시 REPEATABLE READ로 읽지만 각 Cube 질의는 서로·SQL과 스냅샷을 공유하지 않음. 예산 안의 키는 메모리에 담으며 조회 시간 제한을 넘으면 오류가 됨 |
 | 독립 폐포 검산의 범위 | 자료형·원본 50,000줄·폐포 100,000쌍·10,000노드·계산 예산의 상한. 순환 보고 모드는 강연결요소 안의 연결을 지운 뒤 비교함(0.5.0까지는 `not_run`). 지원하지 않는 범위는 `not_run`이며 표본 통과로 대체하지 않음 |
 | 합성 SQL·OWL 예제 | 지정한 SQL의 차이와 합성 그래프의 논리만 검사. 실제 Cube 변이와의 대응·실제 열 자료형·업무 규칙 전체의 정확성은 별도 확인 필요 |
 | 선택 구성 요소·단계 | 설치되지 않았거나 선택 단계가 실행되지 않음 |

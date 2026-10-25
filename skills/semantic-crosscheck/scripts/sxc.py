@@ -137,7 +137,7 @@ def parser() -> argparse.ArgumentParser:
     s.add_argument("--statement-timeout-ms", type=int, default=10000)
     s.add_argument("--replay", default=None, metavar="FILE", help="replay a generated synthetic Cube fixture with matching input bindings")
 
-    s = sub.add_parser("tlp", parents=[common], help="check a bounded synthetic relation using true/false/NULL predicate partitions and COUNT or SUM")
+    s = sub.add_parser("tlp", parents=[common], help="check bounded synthetic TLP partition or NoREC predicate-count consistency")
     s.add_argument("--oracle", choices=("tlp", "norec"), default="tlp", help="partition consistency (default) or bounded NoREC count(*) predicate consistency")
     s.add_argument("--spec", required=True, metavar="FILE", help="strict version 1 trusted SQL and aggregate specification")
     s.add_argument("--dsn-env", default="SXC_TLP_DSN", help="environment variable holding a dedicated read-only synthetic test connection")

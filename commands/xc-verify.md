@@ -40,13 +40,14 @@ python "${CLAUDE_PLUGIN_ROOT}/skills/semantic-crosscheck/scripts/sxc.py" verify 
   sample's detection bound (detail `d95_keys`, `d95_rate`): a mismatch affecting at least that many
   keys is detected with 95% probability if the mismatching keys are independent of the sample order;
   fewer can be missed. A sample never compares the NULL key group (keys that are NULL), which its equals
-  filter leaves out; since 0.9.0, not proven says so. A sample also does not yet check that Cube
-  answered every sampled key: a key missing from the together answer is still counted in
-  `compared n of N keys` and in the d95 bound (only the chunked comparison refuses it). Since 0.9.0, with
+  filter leaves out; since 0.9.0, not proven says so. After 0.9.0 (unreleased), sampled V3 and V4 replay
+  require every requested key in the together and every alone answer. Without a confirmed mismatch or duplicate,
+  incomplete answers are `not_run` (`keys_not_answered`); no d95 bound is reported and requested keys are not
+  described as compared. Since 0.9.0, with
   `verify.pair_key_budget` (default 2000) raised to at least the key count, the pair test compares every
   key instead, in chunks of 2,000 keys from one read-only snapshot plus the NULL key group (detail
   `mode`, `chunks`, `compared_keys`, `answered_keys`, `total_keys`, `null_key_group`, `elapsed_ms`; no
-  `d95_keys`); a key Cube leaves out of a chunk's together answer is not compared, so such a test is
+  `d95_keys`); a key Cube leaves out of a chunk's together or (after 0.9.0, unreleased) alone answer is not fully compared, so such a test is
   `not_run` (`keys_not_answered`) unless it fails. Not proven says that each Cube query reads its own
   snapshot, shared with no other query and not with SQL. Above the budget the sample stays and not
   proven names the budget. V4 still replays the 2,000-key sample, the first chunk.
@@ -106,7 +107,7 @@ that generated the model. Fix `crosscheck.toml` or the gold SQL file, never the 
   alone, which is join fan-out (wrong grain or relationship). A chunked test (since 0.9.0)
   adds up its counts over every chunk and the NULL key group (`null_key_group` holds the latter's own);
   when it is `error`, `chunks_compared` says how many chunks finished, and when it is `not_run`
-  (`keys_not_answered`), `answered_keys` is below `compared_keys`: Cube's together answers left keys
+  (`keys_not_answered`), `answered_keys` is below `compared_keys`: Cube's together or alone answers left keys
   out, and those keys were not compared.
 - `v4:<operator>:<target>` fails: a mutant that changes results on this data survived, so the gold suite
   cannot see that kind of error. Add a gold query, a mapped column or a stratum that would observe it,

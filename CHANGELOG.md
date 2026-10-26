@@ -33,10 +33,11 @@ Release notes: [docs/releases/v0.11.0.md](docs/releases/v0.11.0.md).
   the closure `qty`, whether the closure table still has the key), binding the texts Cube's equals filter receives:
   once in the key-read REPEATABLE READ snapshot and again after the Cube queries. Keys without such rows and with
   an empty (NULL) together value pass (`absent_no_facts`); keys with rows in both reads fail (`absent_with_facts`),
-  as do keys without rows but with a non-empty together value (`witness_value_mismatch`); a key missing from the
-  together answer, a failed cast, another failed statement (`witness_error`) or a change between the two reads
-  leaves the check `not_run` (`witness_incomplete`), and a witnessed pair test that is an `error` after its key
-  read leaves it `not_run` (`pair_error`). Details hold counts only: `asked_keys`, `incomplete_keys`,
+  as do keys without rows but with a non-empty together value (`witness_value_mismatch`); when no key fails, a key
+  missing from the together answer, a failed cast, another failed statement (`witness_error`), a change between the
+  two reads or a member no configuration measure backs (`not_witnessed`) leaves the check `not_run`
+  (`witness_incomplete`), since a failing key takes precedence, and a witnessed pair test that is an `error` after
+  its key read leaves it `not_run` (`pair_error`). Details hold counts only: `asked_keys`, `incomplete_keys`,
   `undecided_keys` and `together_absent` count keys, the other labels count absences (one per key and measure an
   alone answer left out). The pair test's own status, detail (the chunked `elapsed_ms` leaves the witness reads
   out), D95 bound and V4 role are unchanged, also when the witness's statements or connection fail; the unfiltered

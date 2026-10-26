@@ -656,12 +656,14 @@ class PairWitness:
         return post
 
     def result(self, pair_status: str) -> tuple[str, dict] | None:
-        """(status, detail) of the separate check, or None for a pair test that compared unfiltered (no key read
-        asked for keys, so there is nothing to witness). A pair test that could not run leaves it not_run."""
-        if pair_status == "error":
-            return "not_run", {"reason": "pair_error"}
+        """(status, detail) of the separate check, or None for a pair test the witness never armed for: one that
+        compared unfiltered (no key read asked for keys, so there is nothing to witness) or whose key read failed,
+        whatever its status. A witnessed pair test that could not run leaves it not_run (pair_error), discarding
+        what earlier chunks found: the pair test's error already makes verify an error."""
         if not self.armed:
             return None
+        if pair_status == "error":
+            return "not_run", {"reason": "pair_error"}
         mode = self.mode
         detail = {"mode": mode, **self.counts}
         if detail["absent_with_facts"] or detail["witness_value_mismatch"]:

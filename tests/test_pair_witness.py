@@ -10,8 +10,9 @@
                      after the Cube queries like every measure; details hold counts only
   WitnessChunkTest   chunked tests read the witness of every key inside the key-read REPEATABLE READ transaction, in
                      slices of PAIR_KEY_CAP, and the second read after each chunk's Cube queries, for its absent keys only
-  WitnessScopeTest   the unfiltered path at or below the cap gets no witness, V4 replays run none, and a pair test that
-                     errors leaves the witness not_run
+  WitnessScopeTest   the unfiltered path at or below the cap gets no witness, not even when it errors, nor does a pair
+                     test whose key read failed; V4 replays run none, and a sampled or chunked pair test that errors
+                     after its key read leaves the witness not_run (pair_error)
   WitnessFailureTest whatever the witness's own work raises (a failed statement, savepoint or second-read transaction,
                      a lost connection, a key it cannot canonicalise) stays in the witness: the V3 check, its detail
                      (elapsed_ms, which leaves the witness reads out, included) and the V4 baseline are the option-off
@@ -400,6 +401,25 @@ class WitnessScopeTest(unittest.TestCase):
         self.assertEqual(v._test_fn(conn, test)(client), checks[f"v3:{PAIR}"].status)
         self.assertEqual(conn.witness, before)
         self.assertEqual(len([s for kind, s in conn.log if kind == "sql"]), reads, "no key read either")
+
+    def test_an_unwitnessed_pair_test_that_errors_gets_no_witness_check(self):
+        small = keys(10)
+        conn, client = paired(WitnessConn(small, {A: set(small), B: set(small)}), WitnessClient(small, fail=True))
+        v, checks, _t = run_v3(self, conn, client)
+        self.assertEqual(checks[f"v3:{PAIR}"].status, "error")
+        self.assertEqual(list(checks), [f"v3:{PAIR}"], "the unfiltered path gets no witness, also when it errors")
+        self.assertFalse([line for line in v.res.not_proven if line.startswith("v3w:")])
+
+        def trap(_conn, sql):
+            if "count(DISTINCT" in sql:
+                return DatabaseError({"S": "ERROR", "C": "57014", "M": "canceling statement"})
+            return None
+        every = keys(CAP + 5)
+        conn, client = paired(WitnessConn(every, {A: set(every), B: set(every)}, trap=trap), WitnessClient(every))
+        _v, checks, _t = run_v3(self, conn, client)
+        self.assertEqual(checks[f"v3:{PAIR}"].status, "error")
+        self.assertEqual(list(checks), [f"v3:{PAIR}"], "a key read that failed armed no witness")
+        self.assertEqual(conn.witness, [])
 
     def test_a_pair_test_that_errors_leaves_the_witness_not_run(self):
         every = keys(CAP + 5)

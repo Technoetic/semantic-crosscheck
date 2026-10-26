@@ -3,7 +3,8 @@
   WitnessPgTest    (database)         the first witness read runs inside the key-read REPEATABLE READ transaction,
                                       casts the key texts the way PostgreSQL casts Cube's equals filter values ('01'
                                       finds the integer 1), and a statement whose cast fails is undecided without
-                                      aborting the key read or the other measure's statement
+                                      aborting the key read, the next slice or the other measure's statement, which
+                                      runs after it
   WitnessCubeTest  (database + Cube)  the decisive fact: through real Cube, the together value of a key without
                                       qualifying rows is NULL (sum and count measures alike) while its alone answer
                                       has no row; the demo's sparse keys are absent_no_facts in sampled and chunked
@@ -51,19 +52,19 @@ key = ["id"]
 table = "sxc_demo.wit_date"
 key = ["id"]
 
+[measures.w_date]
+entity = "wdate"
+column = "v"
+agg = "sum"
+by = "k"
+node = "wnode"
+
 [measures.w_ok]
 entity = "wfact"
 column = "v"
 agg = "sum"
 by = "k"
 filter = { status = ["OK"] }
-node = "wnode"
-
-[measures.w_date]
-entity = "wdate"
-column = "v"
-agg = "sum"
-by = "k"
 node = "wnode"
 
 [verify]
@@ -105,7 +106,7 @@ class WitnessPgTest(unittest.TestCase):
             model = cube_gen.generate(self.cfg, conn)[0]
         test = next(t for t in shape_q.tests(self.cfg, model) if t["kind"] == "pair")
         ok, dated = "m_w_ok.value", "m_w_date.value"
-        self.assertEqual(test["measures"], [ok, dated])
+        self.assertEqual(test["measures"], [dated, ok], "the failing measure runs first")
         rec = Recording(conn)
         with mock.patch.object(shape_q, "PAIR_KEY_CAP", 2):
             w = shape_q.PairWitness(rec, self.cfg, test)
@@ -117,9 +118,11 @@ class WitnessPgTest(unittest.TestCase):
         kinds = rec.kinds()
         self.assertEqual(kinds[:4], ["rr_begin", "timeout", "count", "sample"])
         self.assertEqual(kinds[-1], "rollback")
-        witness = [k for k in kinds if k.startswith("SELECT DISTINCT")]
+        witness = [i for i, k in enumerate(kinds) if k.startswith("SELECT DISTINCT")]
         self.assertEqual(len(witness), 4, "two slices of PAIR_KEY_CAP per measure")
-        self.assertIn("ROLLBACK TO SAVEPOINT sxc_witness", kinds)
+        rollbacks = [i for i, k in enumerate(kinds) if k == "ROLLBACK TO SAVEPOINT sxc_witness"]
+        self.assertEqual(len(rollbacks), 2, "both slices of the date measure failed their cast")
+        self.assertLess(max(rollbacks), witness[2], "the other measure's statements run after the failed casts")
         self.assertEqual(rec.sql[0], RR_BEGIN)
         self.assertEqual(db.scalar(conn, "SHOW transaction_isolation"), "read committed", "the snapshot is closed")
 

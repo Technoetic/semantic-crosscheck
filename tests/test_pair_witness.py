@@ -195,10 +195,12 @@ class WitnessConfigTest(unittest.TestCase):
         self.assertIs(config.Verify().existence_witness, False)
         self.assertIs(demo_cfg().verify.existence_witness, False)
         self.assertIs(self.load("[verify]\nexistence_witness = true\n").verify.existence_witness, True)
-        for bad in ("1", '"true"', "0"):
-            with self.subTest(value=bad), self.assertRaises(StageError) as e:
-                self.load(f"[verify]\nexistence_witness = {bad}\n")
-            self.assertEqual(e.exception.exit_code, EXIT_CONFIG)
+        for bad in ("1", '"true"', "0", "[true]"):
+            with self.subTest(value=bad):
+                with self.assertRaises(StageError) as e:
+                    self.load(f"[verify]\nexistence_witness = {bad}\n")
+                self.assertEqual(e.exception.exit_code, EXIT_CONFIG)
+                self.assertIn("verify.existence_witness", str(e.exception))
 
 
 class WitnessOffTest(unittest.TestCase):

@@ -11,14 +11,19 @@
                      slices of PAIR_KEY_CAP, and the second read after each chunk's Cube queries, for its absent keys only
   WitnessScopeTest   the unfiltered path at or below the cap gets no witness, V4 replays run none, and a pair test that
                      errors leaves the witness not_run
+  WitnessFailureTest whatever the witness's own work raises (a failed statement, savepoint or second-read transaction,
+                     a lost connection, a key it cannot canonicalise) stays in the witness: the V3 check, its detail
+                     (elapsed_ms, which leaves the witness reads out, included) and the V4 baseline are the option-off
+                     run's
 """
 
 import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
-from pg8000.exceptions import DatabaseError
+from pg8000.exceptions import DatabaseError, InterfaceError
 
 import pgfixture
 from semantic_crosscheck import config, shape_q, stage_verify
@@ -53,9 +58,10 @@ class WitnessConn:
     """pair_keys from keys already in the md5 order, and the witness statements of the demo measures: a statement
     answers the asked keys that have qualifying rows (`facts`, per measure member; `later` from the first Cube query
     on, a change between the two reads), or raises the SQLSTATE `fail` names for its measure. Every statement goes to
-    `log`, shared with the client, so their order can be checked."""
+    `log`, shared with the client, so their order can be checked. `trap(conn, sql)` may return an exception for any
+    statement to raise instead of answering; `clock`, a FakeClock, advances one second per statement."""
 
-    def __init__(self, ordered: list, facts=None, later=None, fail=None, log=None):
+    def __init__(self, ordered: list, facts=None, later=None, fail=None, log=None, trap=None, clock=None):
         self.keys = list(ordered)
         self.facts = {m: set(v) for m, v in (facts or {}).items()}
         self.later = {m: set(v) for m, v in (later or {}).items()}
@@ -63,9 +69,15 @@ class WitnessConn:
         self.log = log if log is not None else []
         self.witness: list[tuple[str, list]] = []
         self.cube_started = lambda: False
+        self.trap, self.clock = trap, clock
 
     def run(self, sql, **params):
         self.log.append(("sql", sql))
+        if self.clock is not None:
+            self.clock.now += 1.0
+        error = self.trap(self, sql) if self.trap is not None else None
+        if error is not None:
+            raise error
         if sql.startswith(("BEGIN", "SET LOCAL", "ROLLBACK", "SAVEPOINT", "RELEASE")):
             return None
         if "count(DISTINCT" in sql:
@@ -136,9 +148,20 @@ def paired(conn: WitnessConn, client: WitnessClient):
     return conn, client
 
 
+class FakeClock:
+    """shape_q's time module in a test: monotonic() is `now`, which WitnessConn advances per statement."""
+
+    def __init__(self):
+        self.now = 0.0
+
+    def monotonic(self) -> float:
+        return self.now
+
+
 def run_v3(case: unittest.TestCase, conn, client, test_id: str = PAIR, budget: int | None = None,
-           witness: bool = True):
-    """_Verify.v3 of a demo pair test as the verify stage runs it: (the _Verify, {check id: check}, the test)."""
+           witness: bool = True, edit=None):
+    """_Verify.v3 of a demo pair test as the verify stage runs it: (the _Verify, {check id: check}, the test).
+    edit(test), when given, changes the test before it runs."""
     cfg = demo_cfg()
     cfg.verify.existence_witness = witness
     if budget is not None:
@@ -147,6 +170,8 @@ def run_v3(case: unittest.TestCase, conn, client, test_id: str = PAIR, budget: i
     case.addCleanup(tmp.cleanup)
     v = stage_verify._Verify(cfg, Path(tmp.name), demo_model(cfg), ["v3", "v4"])
     test = next(t for t in shape_q.tests(cfg, v.model) if t["id"] == test_id)
+    if edit is not None:
+        edit(test)
     v.v3(conn, client, test, None)
     return v, {c.id: c for c in v.res.checks}, test
 
@@ -371,6 +396,80 @@ class WitnessScopeTest(unittest.TestCase):
         _v, checks, _t = run_v3(self, conn, client)
         self.assertEqual(checks[f"v3:{PAIR}"].status, "error")
         self.assertEqual((checks[WID].status, checks[WID].detail), ("not_run", {"reason": "pair_error"}))
+
+
+
+def dead_from_first_witness(conn, sql):
+    """The connection is lost at the first witness statement: it and every later statement raise InterfaceError."""
+    if sql.startswith("SELECT DISTINCT"):
+        conn.dead = True
+    return InterfaceError("network error") if getattr(conn, "dead", False) else None
+
+
+class WitnessFailureTest(unittest.TestCase):
+    every = keys(CAP + 5)
+
+    def same_as_off(self, trap, budget=None, edit=None):
+        """The demo pair test with P00007 missing from A's alone answer, off and on under the same trap and a fake
+        clock: asserts that the V3 check (elapsed_ms included), the V4 baseline and the other not_proven lines are
+        the option-off run's, and returns (the witness check of the on run, its V3 check)."""
+        facts = {A: set(self.every) - {"P00007"}, B: set(self.every)}
+        runs = {}
+        for witness in (False, True):
+            clock = FakeClock()
+            conn = WitnessConn(self.every, facts, trap=trap, clock=clock)
+            with mock.patch.object(shape_q, "time", clock):
+                runs[witness] = run_v3(self, *paired(conn, WitnessClient(self.every, {A: {"P00007"}})),
+                                       budget=budget, witness=witness, edit=edit)
+        (off_v, off, _t), (on_v, on, _t) = runs[False], runs[True]
+        pair = f"v3:{PAIR}"
+        self.assertEqual((on[pair].status, on[pair].detail), (off[pair].status, off[pair].detail))
+        self.assertEqual(on_v.baseline, off_v.baseline, "V4 sees the same V3 status")
+        self.assertEqual([line for line in on_v.res.not_proven if not line.startswith("v3w:")], off_v.res.not_proven)
+        self.assertNotRegex(json.dumps(on_v.res.to_dict()), r"P\d{5}", "no key values in results")
+        return on.get(WID), on[pair]
+
+    def test_a_lost_connection_during_the_witness_leaves_the_pair_test_as_off(self):
+        for mode, budget in (("sampled", None), ("chunked", 5000)):
+            with self.subTest(mode=mode):
+                w, pair = self.same_as_off(dead_from_first_witness, budget)
+                self.assertNotEqual(pair.status, "error")
+                self.assertEqual((w.status, w.detail["reason"], w.detail["witness_error"]),
+                                 ("not_run", "witness_incomplete", 1))
+
+    def test_a_failed_savepoint_is_a_witness_error(self):
+        def trap(_conn, sql):
+            if sql.startswith("SAVEPOINT"):
+                return DatabaseError({"S": "ERROR", "C": "25P02", "M": "current transaction is aborted"})
+            return None
+        for mode, budget in (("sampled", None), ("chunked", 5000)):
+            with self.subTest(mode=mode):
+                w, _pair = self.same_as_off(trap, budget)
+                self.assertEqual((w.status, w.detail["witness_error"], w.detail["absent_no_facts"]), ("not_run", 1, 0))
+
+    def test_a_second_read_that_cannot_begin_is_a_witness_error(self):
+        def trap(conn, sql):
+            if sql.startswith("BEGIN") and conn.cube_started():
+                return InterfaceError("network error")
+            return None
+        for mode, budget in (("sampled", None), ("chunked", 5000)):
+            with self.subTest(mode=mode):
+                w, _pair = self.same_as_off(trap, budget)
+                self.assertEqual((w.status, w.detail["witness_error"], w.detail["witness_changed"]), ("not_run", 1, 0))
+
+    def test_elapsed_ms_leaves_the_witness_reads_out(self):
+        w, pair = self.same_as_off(None, 5000)
+        self.assertEqual((pair.detail["mode"], w.status), ("chunked", "pass"))
+        self.assertGreater(pair.detail["elapsed_ms"], 0, "the fake clock moves with the key read")
+
+    def test_a_key_the_witness_cannot_canonicalise_errors_the_pair_test_as_off(self):
+        def edit(test):
+            test["kinds"][test["alone"][A]] = "no_such_kind"
+        for mode, budget in (("sampled", None), ("chunked", 5000)):
+            with self.subTest(mode=mode):
+                w, pair = self.same_as_off(None, budget, edit)
+                self.assertEqual((pair.status, pair.detail["error"]), ("error", "ValueError"))
+                self.assertEqual((w.status, w.detail), ("not_run", {"reason": "pair_error"}))
 
 
 if __name__ == "__main__":

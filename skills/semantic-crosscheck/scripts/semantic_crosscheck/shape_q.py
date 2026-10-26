@@ -355,19 +355,25 @@ def pair_keys(conn, cfg, test: dict, budget: int | None = None,
     in one READ ONLY REPEATABLE READ transaction, so the count and the keys see the same rows. The keys are None when
     there are not more than PAIR_KEY_CAP, every key in the md5 order when there are not more than `budget` (the chunked
     baseline run), and otherwise a deterministic sample of PAIR_KEY_CAP of them: the first keys of that order. A
-    `witness` (verify.existence_witness) reads its first witness of those keys in the same transaction."""
+    `witness` (verify.existence_witness) reads its first witness of those keys in the same transaction; when one of
+    its savepoint commands failed, a failure to end the transaction afterwards is the witness's, not the key read's."""
     table, column = test["keys_from"]
     col, source = f"t.{ident.quote(column)}", ident.qualified(table)
-    with db.read_only(conn, cfg.source.statement_timeout_ms, isolation="repeatable read"):
-        total = int(db.scalar(conn, f"SELECT count(DISTINCT {col}) FROM {source} t") or 0)
-        if total <= PAIR_KEY_CAP:
-            return total, None
-        n = total if budget is not None and total <= budget else PAIR_KEY_CAP
-        rows = conn.run(f"SELECT s.k FROM (SELECT DISTINCT {col} AS k FROM {source} t WHERE {col} IS NOT NULL) s "
-                        f"ORDER BY {sweep.md5_order('s.k')} LIMIT :n", seed=str(cfg.verify.seed), n=n)
-        keys = [r[0] for r in rows or []]
-        if witness is not None:
-            witness.before(keys)
+    keys = None
+    try:
+        with db.read_only(conn, cfg.source.statement_timeout_ms, isolation="repeatable read"):
+            total = int(db.scalar(conn, f"SELECT count(DISTINCT {col}) FROM {source} t") or 0)
+            if total <= PAIR_KEY_CAP:
+                return total, None
+            n = total if budget is not None and total <= budget else PAIR_KEY_CAP
+            rows = conn.run(f"SELECT s.k FROM (SELECT DISTINCT {col} AS k FROM {source} t WHERE {col} IS NOT NULL) s "
+                            f"ORDER BY {sweep.md5_order('s.k')} LIMIT :n", seed=str(cfg.verify.seed), n=n)
+            keys = [r[0] for r in rows or []]
+            if witness is not None:
+                witness.before(keys)
+    except compare.expected_errors():
+        if keys is None or witness is None or not witness.broken:
+            raise
     return total, keys
 
 
@@ -470,7 +476,10 @@ class PairWitness:
     bound to the same texts Cube's equals filter receives (_filter_text) and sent untyped, as Cube's PostgreSQL
     driver sends them, so PostgreSQL casts them to the key column's type the same way; the answer is canonicalised
     with the alone dimension's kind. A statement that fails is undecided (witness_type for a failed cast, SQLSTATE
-    class 22, witness_error otherwise); it runs under a savepoint, so the transaction goes on. The closure cube's qty
+    class 22, witness_error otherwise, a lost connection included); it runs under a savepoint, so the transaction goes
+    on, and a failed savepoint command or second-read transaction leaves the keys it covers witness_error. The
+    witness catches whatever its own work raises (compare.expected_errors), so it never reaches the pair test, and
+    its reads are left out of the pair test's elapsed_ms. The closure cube's qty
     gets no statement: its alone query reads the closure table by the column the keys were read from, in the key-read
     snapshot every asked key has closure rows, so its key read is its witness and an absence there has facts.
 
@@ -499,6 +508,8 @@ class PairWitness:
         self.pre: dict[str, dict] = {m: {} for m in test["measures"]}
         self.counts = dict.fromkeys(WITNESS_COUNTS, 0)
         self.armed = False
+        self.broken = False     # a savepoint command of the current transaction failed
+        self.seconds = 0.0      # time spent in before and observe, left out of the pair test's elapsed_ms
         self.mode = "sampled"   # _run_chunks makes it chunked
 
     def _spec(self, member: str):
@@ -518,45 +529,70 @@ class PairWitness:
 
     def _read(self, member: str, keys: list) -> dict:
         """{canonical alone key: True (a qualifying row) | False | a failure label} for keys, in slices of
-        PAIR_KEY_CAP, inside the caller's transaction; each statement under a savepoint."""
+        PAIR_KEY_CAP, inside the caller's transaction; each statement under a savepoint. A failed statement labels
+        its slice (witness_type for SQLSTATE class 22, witness_error otherwise); once a savepoint command fails the
+        transaction cannot go on (broken), and the remaining slices are witness_error without a statement."""
         head, kind = self.specs[member]
         out = {}
         for i in range(0, len(keys), PAIR_KEY_CAP):
             part = keys[i:i + PAIR_KEY_CAP]
-            try:
-                canonical = [canon.canon(k, kind) for k in part]
-            except ValueError:
-                out.update({canon.key(k): "witness_type" for k in part})
+            canonical = [canon.canon(k, kind) for k in part]
+            if self.broken:
+                out.update(dict.fromkeys(canonical, "witness_error"))
                 continue
             params = {f"k{j}": _filter_text(k) for j, k in enumerate(part)}
             sql = head + "(" + ", ".join(f":{name}" for name in params) + ")"
-            self.conn.run(f"SAVEPOINT {_SAVEPOINT}")
+            if not self._savepoint("SAVEPOINT"):
+                out.update(dict.fromkeys(canonical, "witness_error"))
+                continue
             try:
                 rows = self.conn.run(sql, **params)
-                found = {canon.canon(r[0], kind) for r in rows or []}
-            except _database_errors() as e:
-                self.conn.run(f"ROLLBACK TO SAVEPOINT {_SAVEPOINT}")
-                label = "witness_type" if compare.error_detail(e).get("sqlstate", "").startswith("22") else "witness_error"
-                out.update(dict.fromkeys(canonical, label))
+            except compare.expected_errors() as e:
+                cast = compare.error_detail(e).get("sqlstate", "").startswith("22")
+                out.update(dict.fromkeys(canonical, "witness_type" if cast else "witness_error"))
+                self._savepoint("ROLLBACK TO SAVEPOINT")
                 continue
-            except ValueError:
-                self.conn.run(f"RELEASE SAVEPOINT {_SAVEPOINT}")
-                out.update(dict.fromkeys(canonical, "witness_type"))
-                continue
-            self.conn.run(f"RELEASE SAVEPOINT {_SAVEPOINT}")
+            found = {canon.canon(r[0], kind) for r in rows or []}
             out.update({k: k in found for k in canonical})
+            self._savepoint("RELEASE SAVEPOINT")
         return out
+
+    def _savepoint(self, command: str) -> bool:
+        """Runs a savepoint command; a failure marks the transaction broken (no more witness statements in it)."""
+        try:
+            self.conn.run(f"{command} {_SAVEPOINT}")
+        except compare.expected_errors():
+            self.broken = True
+            return False
+        return True
 
     def before(self, keys: list):
         """The first read, inside pair_keys's REPEATABLE READ transaction: every asked key of every measure with a
-        witness statement."""
-        self.armed = True
-        for m, spec in self.specs.items():
-            if isinstance(spec, tuple):
-                self.pre[m] = self._read(m, keys)
+        witness statement. Nothing it raises reaches pair_keys: a measure whose read did not finish has no first
+        read for its keys (witness_error when they are absent)."""
+        self.armed, self.broken = True, False
+        started = time.monotonic()
+        try:
+            for m, spec in self.specs.items():
+                if isinstance(spec, tuple):
+                    self.pre[m] = self._read(m, keys)
+        except compare.expected_errors():
+            # only an asked key that cannot be canonicalised (an unknown kind) gets here; _compare canonicalises the
+            # same keys with the same kinds before observe, so the pair test is an error either way
+            pass
+        finally:
+            self.seconds += time.monotonic() - started
 
     def observe(self, asked: list, together: dict, alones: dict):
-        """Classifies the asked keys of one sample or chunk once its Cube queries have answered (see the class)."""
+        """Classifies the asked keys of one sample or chunk once its Cube queries have answered (see the class). The
+        time it takes is left out of the pair test's elapsed_ms."""
+        started = time.monotonic()
+        try:
+            self._observe(asked, together, alones)
+        finally:
+            self.seconds += time.monotonic() - started
+
+    def _observe(self, asked: list, together: dict, alones: dict):
         group_kind = self.kinds.get(self.test["group_by"])
         c = self.counts
         c["asked_keys"] += len(asked)
@@ -573,14 +609,9 @@ class PairWitness:
             if missing:
                 c["incomplete_keys"] += 1
             absent += [(m, k, ak, together[tk].get(m)) for m, ak in missing]
-        post: dict[str, dict] = {}
         reread = {m: [k for mm, k, ak, _v in absent if mm == m and self.pre[m].get(ak) in (True, False)]
                   for m, spec in self.specs.items() if isinstance(spec, tuple)}
-        if any(reread.values()):
-            with db.read_only(self.conn, self.cfg.source.statement_timeout_ms, isolation="repeatable read"):
-                for m, ks in reread.items():
-                    if ks:
-                        post[m] = self._read(m, ks)
+        post = self._second_read({m: ks for m, ks in reread.items() if ks})
         for m, _k, ak, value in absent:
             spec = self.specs[m]
             if spec == "closure":
@@ -589,11 +620,10 @@ class PairWitness:
             if spec is None:
                 label = "not_witnessed"
             else:
-                pre, after = self.pre[m].get(ak), post.get(m, {}).get(ak)
+                pre = self.pre[m].get(ak, "witness_error")   # no entry: the first read did not finish
+                after = post.get(m, {}).get(ak, "witness_error") if isinstance(pre, bool) else pre
                 if isinstance(pre, str) or isinstance(after, str):
                     label = pre if isinstance(pre, str) else after
-                elif pre is None or after is None:
-                    label = "not_witnessed"
                 elif pre != after:
                     label = "witness_changed"
                 elif pre:
@@ -603,6 +633,22 @@ class PairWitness:
             c[label] += 1
             if label not in ("absent_with_facts", "absent_no_facts", "witness_value_mismatch"):
                 c["undecided"] += 1
+
+    def _second_read(self, reread: dict) -> dict:
+        """{measure: _read of its keys} in a new READ ONLY REPEATABLE READ transaction. A transaction that cannot
+        begin, be set up or end leaves the measures it has not read out (their keys are witness_error); what it read
+        before stays, since each statement answered from the transaction's one snapshot."""
+        post: dict[str, dict] = {}
+        if not reread:
+            return post
+        self.broken = False
+        try:
+            with db.read_only(self.conn, self.cfg.source.statement_timeout_ms, isolation="repeatable read"):
+                for m, ks in reread.items():
+                    post[m] = self._read(m, ks)
+        except compare.expected_errors():
+            pass
+        return post
 
     def result(self, pair_status: str) -> tuple[str, dict] | None:
         """(status, detail) of the separate check, or None for a pair test that compared unfiltered (no key read
@@ -618,14 +664,6 @@ class PairWitness:
         if detail["undecided"]:
             return "not_run", {"mode": mode, "reason": "witness_incomplete", **self.counts}
         return "pass", detail
-
-
-def _database_errors() -> tuple:
-    try:
-        from pg8000.exceptions import DatabaseError
-    except ImportError:
-        return ()
-    return (DatabaseError,)
 
 
 def witness_note() -> str:
@@ -868,8 +906,9 @@ def _run_chunks(client, test: dict, total: int, keys: list, started: float,
     except compare.expected_errors() as e:
         return "error", {**compare.error_detail(e), **mode, "chunks_compared": done, "total_keys": total}
     _add(summed, null)
+    witnessed = witness.seconds if witness is not None else 0.0   # the witness reads are not the pair test's time
     detail = {**summed, **mode, "compared_keys": len(keys), "total_keys": total, "null_key_group": null,
-              "elapsed_ms": int((time.monotonic() - started) * 1000)}
+              "elapsed_ms": int((time.monotonic() - started - witnessed) * 1000)}
     if summed["mismatched"] or summed["duplicate_keys"]:
         return "fail", detail
     if summed["answered_keys"] < len(keys):

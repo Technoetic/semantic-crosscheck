@@ -363,7 +363,8 @@ share a mistake with the fixed corpus. Both engines validate the suite's own sha
 checks engine conformance on the components sxc emits, not sxc's exporter, so it complements the fixed corpus
 (run both) and says so in `not_proven`. Only approved entries inside the sxc profile run: the components and
 severities `shapes.shapes_ttl()` emits (sh:class and the three numeric bounds, one Violation or Warning
-severity) on IRI focus nodes, through sh:targetClass, sh:targetNode, implicit class targets or node-level
+severity; after 0.10.0, unreleased, also sh:lessThan and sh:lessThanOrEquals with an IRI value on property shapes,
+which `reason` generates for `verify.shacl_pairs`) on IRI focus nodes, through sh:targetClass, sh:targetNode, implicit class targets or node-level
 shapes, with no path or one IRI path; everything else is `not_run` with a reason id. The suite is pinned by a
 SHA-256 over the sorted relative paths and bytes of the files read; a different digest runs no engine unless
 `--allow-unpinned-suite`, and then the `not_run` check `w3c:suite` keeps the stage from passing. It is read

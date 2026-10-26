@@ -152,9 +152,12 @@ core entries that use only those constraints (such as
 than compared. The profile widens only when the exporter emits a constraint:
 after 0.10.0 (unreleased), `reason` generates `sh:lessThan` and
 `sh:lessThanOrEquals` property shapes for `verify.shacl_pairs`, so those two
-parameters are inside the profile on property shapes with an IRI value. The
-fixed corpus has no property-pair case yet; the three pinned W3C pair cases
-below are their only engine comparison here.
+parameters are inside the profile on property shapes with an IRI value.
+Known gap: the fixed corpus has no property-pair case (adding one would change
+its default output), so the always-on corpus test does not compare the engines
+on these parameters. The three pinned W3C pair cases below are their only
+engine comparison here, and they run only when `SXC_W3C_SHACL_SUITE`,
+`SXC_JENA_HOME` and `SXC_JAVA` are set; `reason` itself runs pySHACL only.
 SHACL vocabulary is checked across the whole shapes graph: an unused or
 ill-formed path node is outside the profile too. A separate data graph is parsed
 and may not use `owl:imports`; it is not otherwise profile-checked, since the

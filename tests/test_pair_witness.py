@@ -278,11 +278,14 @@ class WitnessLabelTest(unittest.TestCase):
     def test_a_non_empty_together_value_without_facts_is_a_mismatch(self):
         for value in ("0", "5"):
             with self.subTest(value=value):
-                _v, checks, _conn = self.run_case({A: self.full({"P00007"}), B: self.full()}, {A: {"P00007"}},
-                                                  together_value={("P00007", A): value})
+                v, checks, _conn = self.run_case({A: self.full({"P00007"}), B: self.full()}, {A: {"P00007"}},
+                                                 together_value={("P00007", A): value})
                 c = checks[WID]
                 self.assertEqual((c.status, c.detail["witness_value_mismatch"], c.detail["absent_no_facts"]),
                                  ("fail", 1, 0))
+                action = stage_verify._next_action(v.res)
+                self.assertIn(WID, action)
+                self.assertIn("1 key-measure absence(s), witness_value_mismatch", action)
 
     def test_a_key_missing_from_the_together_answer_stays_undecided(self):
         _v, checks, conn = self.run_case({A: self.full(), B: self.full()}, {}, together_missing={"P00007"})

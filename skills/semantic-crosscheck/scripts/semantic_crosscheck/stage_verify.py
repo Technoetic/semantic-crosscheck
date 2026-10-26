@@ -525,7 +525,7 @@ def _next_action(res: Result) -> str:
         return (f"{first.id}: Cube's standalone answers left out keys that have qualifying source rows under "
                 f"crosscheck.toml's filters ({d.get('absent_with_facts')} key-measure absence(s), absent_with_facts), "
                 f"or left out keys without such rows that had a non-empty together value "
-                f"({d.get('witness_value_mismatch')}, witness_value_mismatch); "
+                f"({d.get('witness_value_mismatch')} key-measure absence(s), witness_value_mismatch); "
                 f"compare the generated measure cubes of {first.config_ref} with crosscheck.toml, rerun cube, then "
                 "rerun verify")
     if st == "fail" and first.id.startswith("v3:closure_oracle:"):

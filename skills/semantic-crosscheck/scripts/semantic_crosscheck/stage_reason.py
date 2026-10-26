@@ -472,11 +472,6 @@ def next_action(cfg, res: Result) -> str:
     if "resource_limit" in reasons:
         return ("selected checks exceeded a resource limit: review verify.shacl_max_rows, verify.owl_max_individuals "
                 "and the input size, then rerun reason" + (" without --only" if narrowed else ""))
-    pair_reasons = {c.detail.get("reason") for c in checks if c.status == "not_run" and c.id.startswith(PAIR_PREFIX)}
-    if pair_reasons:
-        return (f"some shacl:pair checks could not compare their predicate with SHACL ({', '.join(sorted(pair_reasons))}): "
-                "those rules stay checked only in SQL; see each check's reason (column types, NaN or infinities, "
-                "repeated keys, the pair-shape preflight), or set verify.shacl_pairs = false, then rerun reason")
     if "cycle_edges_dropped" in reasons:
         return ("the closure leaves out the edges inside cycles (on_cycle = report): fix the cycles in the data so V5 "
                 "compares the whole hierarchy, then rerun build and reason")
@@ -486,4 +481,11 @@ def next_action(cfg, res: Result) -> str:
     if narrowed:
         return ("--only left a part of reason out (the scope:* check): rerun reason without --only before reporting a "
                 "result")
+    # last: the causes of these stay in the data or the schema, so they would hide every clause after them on each run
+    pair_reasons = {c.detail.get("reason") for c in checks if c.status == "not_run" and c.id.startswith(PAIR_PREFIX)}
+    if pair_reasons:
+        return (f"some shacl:pair checks could not compare their predicate with SHACL ({', '.join(sorted(pair_reasons))}): "
+                "those rules stay checked only in SQL and reason cannot pass while they are not_run; see each check's "
+                "reason (column types, NaN or infinities, repeated keys, the pair-shape preflight), or set "
+                "verify.shacl_pairs = false, then rerun reason")
     return "run `sxc.py cube` to generate the Cube model and check that Cube serves it"

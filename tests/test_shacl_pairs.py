@@ -272,6 +272,41 @@ class PairShapesOnRowsTest(unittest.TestCase):
         self.assertNotEqual(got["mix_gt"], self.expected()["mix_gt"])
 
 
+class PairNextActionTest(unittest.TestCase):
+    """A pair check that cannot run (its cause is in the data or the schema, so it stays on every run) must not hide
+    advice the user can act on: cycles, synthetic-witness gaps and --only come first."""
+
+    @staticmethod
+    def result(*extra) -> stage_reason.Result:
+        res = stage_reason.Result("reason")
+        res.add("shacl:qty_positive", "pass", "")
+        res.add("shacl:pair:open_le_total", "not_run", "shapes[3] open_le_total", reason="column_type")
+        for check_id, reason in extra:
+            res.add(check_id, "not_run", "", reason=reason)
+        return res
+
+    def test_alone_the_pair_reason_is_named(self):
+        action = stage_reason.next_action(demo_config(), self.result())
+        self.assertIn("shacl:pair", action)
+        self.assertIn("column_type", action)
+        self.assertIn("verify.shacl_pairs = false", action)
+
+    def test_cycle_edges_dropped_comes_first(self):
+        action = stage_reason.next_action(demo_config(), self.result(("v5:closure:has_component", "cycle_edges_dropped")))
+        self.assertIn("on_cycle = report", action)
+        self.assertNotIn("shacl:pair", action)
+
+    def test_a_synthetic_witness_gap_comes_first(self):
+        action = stage_reason.next_action(demo_config(), self.result(("v5:witness:Composite", "configuration_gap")))
+        self.assertIn("synthetic witnesses", action)
+        self.assertNotIn("shacl:pair", action)
+
+    def test_a_narrowed_run_comes_first(self):
+        action = stage_reason.next_action(demo_config(), self.result(("scope:owl", "excluded_by_only")))
+        self.assertIn("rerun reason without --only", action)
+        self.assertNotIn("shacl:pair", action)
+
+
 # ---- PostgreSQL ------------------------------------------------------------------------------------------
 @unittest.skipUnless(pgfixture.available() and HAVE_SHACL, "needs SXC_TEST_ADMIN_DSN, rdflib and pyshacl")
 class ReasonShaclPairsTest(unittest.TestCase):
@@ -389,7 +424,7 @@ class ReasonShaclPairsTest(unittest.TestCase):
                          ["double precision", "double precision"])
         self.assertEqual(get_check(self.res, "shacl:pair:dup_gt").detail["duplicate_key_rows"], 1)
         self.assertEqual(self.res.status, "not_run")
-        self.assertIn("shacl:pair", self.res.next_safe_action)
+        self.assertIn("rerun reason without --only", self.res.next_safe_action, "--only shacl: scope:owl comes first")
 
     def test_a_predicate_outside_the_form_keeps_the_sql_only_line(self):
         self.assertFalse([c for c in self.res.checks if c.id == "shacl:pair:commented"])

@@ -6,6 +6,20 @@ All notable changes to this project are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Opt-in `verify.shacl_pairs = true` (default `false`): `reason` translates a shape whose `sql_violation` is
+  exactly `t.<a> <op> t.<b>` (`>`, `>=`, `<`, `<=`; no comment, cast, parenthesis, constant, `=` or `<>`, and no
+  `path`, `class` or bound on the shape) into a SHACL property-pair shape (`a > b` as `sh:lessThanOrEquals`,
+  `a >= b` as `sh:lessThan`, `<` and `<=` with the columns swapped) and adds the separate check
+  `shacl:pair:<id>`: pass when pySHACL's focus nodes on a separate pair export equal the keys in `v_shape_<id>`.
+  The pair shapes are generated at reason time and pass the generated-shape preflight; `build/shapes.ttl`, its
+  comparison and every existing check stay unchanged. Both columns must be `smallint`, `integer`, `bigint` or
+  `numeric` without NaN or infinities and the target keys unique, otherwise the check is `not_run`
+  (`column_type`, `non_finite_values`, `duplicate_keys`), because pySHACL 0.40.1 orders NaN and mixed datatypes
+  unlike SHACL and PostgreSQL. The pair rows count against `verify.shacl_max_rows` after the shape export.
+  A pass shows agreement on one snapshot, not that the rule is right. With the option off nothing changes.
+
 ## [0.10.0] - 2026-10-25
 
 Release notes: [docs/releases/v0.10.0.md](docs/releases/v0.10.0.md).

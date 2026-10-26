@@ -137,7 +137,9 @@ bound, or `sql_violation`; when it has several, a row violating any of them viol
 
 `reason` compares a shape with SHACL only when it has a separate SHACL form. A shape with `sql_violation`
 (also when it has `class` or bounds as well) has none and is reported as not proven, "checked only in SQL",
-instead of compared. A shape that combines `class` with bounds is compared: `build/shapes.ttl` gives it
+instead of compared. After 0.10.0 (unreleased), `verify.shacl_pairs = true` also compares a shape whose only
+constraint is an `sql_violation` of exactly the form `t.<a> <op> t.<b>` as a SHACL property pair
+(`shacl:pair:<id>`, below). A shape that combines `class` with bounds is compared: `build/shapes.ttl` gives it
 two property shapes (`sh:class` on the column, the bounds on the same value written as a number), and a
 row that violates either one violates the shape, as in its view. Its target and class-entity rows count
 against `verify.shacl_max_rows` (releases up to 0.5.0 did not export such shapes).
@@ -237,6 +239,7 @@ Defined classes compared with their SQL definition (`v5:defined:<name>`).
 | `mutant_bindings` | integer | `3` | Bindings per stratum replayed against each mutant. At least 1. |
 | `shacl_max_rows` | integer | `200000` | Upper bound on the rows exported to RDF for the SHACL comparison; at least 1. Above it each planned shape is `not_run` (`resource_limit`), with an explanation in `not_proven`; reason and report cannot pass. |
 | `owl_max_individuals` | integer | `50000` | Upper bound on the individuals (node keys and edge endpoints) given to HermiT; at least 1. Above it OWL consistency and V5 checks are `not_run` (`resource_limit`), with an explanation in `not_proven`; reason and report cannot pass. |
+| `shacl_pairs` | boolean | `False` | After 0.10.0 (unreleased). Opt in to `shacl:pair:<id>` in `reason`: a shape whose only constraint is an `sql_violation` that is, as a whole, `t.<a> <op> t.<b>` with `>`, `>=`, `<` or `<=` (two different plain column names; no comment, cast, parenthesis, constant, `=` or `<>`) is translated to `sh:lessThanOrEquals` or `sh:lessThan` and compared with pySHACL on a separate export, against `v_shape_<id>`. Both columns must be `smallint`, `integer`, `bigint` or `numeric` without NaN or infinities and the target keys unique; otherwise the check is `not_run`. The pair rows count against `shacl_max_rows` after the shape export (above it the pair checks are `not_run`, `resource_limit`). `build/shapes.ttl` and every other check are unchanged; `false` runs none of it. |
 | `pair_key_budget` | integer | `2000` | The largest distinct key count for which the baseline V3 run of a pair test compares every key, in chunks of 2,000 plus the NULL key group, instead of the 2,000-key sample; at least 2000, the default, which keeps the sample. The Cube queries grow with the number of chunks, and every key up to the budget is read in one statement under `source.statement_timeout_ms` (a timeout makes the test an `error`) and held in memory, so size it to the memory and time available; each Cube query reads its own snapshot (listed in `not_proven`) and V4 replays keep the sample. |
 
 ## `[[gold]]`

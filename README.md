@@ -570,6 +570,7 @@ flowchart TD
 | build | `closure:<h>`, `closure_apply:<h>` | 순환 정책·최대 깊이 충족, 적용한 폐포가 재계산과 일치 |
 | reason | `shacl:<id>` | pySHACL의 위반 대상과 SQL 위반 키 일치 |
 | reason | `shacl:meta:generated` | 0.10.0부터: 생성한 규칙을 shacl-shacl 구문 규칙의 부분집합으로 사전 검사 |
+| reason | `shacl:pair:<id>` | 0.10.0 이후(미출시), `verify.shacl_pairs = true`일 때만: `t.<a> <op> t.<b>` 꼴 `sql_violation`을 SHACL 속성 쌍으로 바꾼 pySHACL 위반 대상과 SQL 위반 키 일치 |
 | reason | `owl:consistency`, `v5:closure:<h>`, `v5:defined:<name>` | OWL 일관성, OWL의 폐포·정의 클래스가 SQL과 일치 |
 | reason | `v5:witness:<name>` | 선택한 합성 예제에서 HermiT·SQL이 독립 기대 결과와 일치; 실제 데이터의 공허성은 별도 유지 |
 | cube | `cube:model`, `cube:meta`, `cube:gold_members:<gold>` | 모델 생성, 공개 멤버 목록 정확(Cube 버전·SQL 플래너 기록), gold 질의 멤버 존재·공개 |
@@ -669,7 +670,7 @@ Cube의 기본 오류 로그에는 오류 클래스·코드·대략적인 범주
 |---|---|
 | 빈 층 | 해당 종류의 데이터가 없어 V2 비교 대상 없음 |
 | 동등 변이 | 현재 데이터에서 모델을 바꿔도 결과가 같아 V4로 구분 불가 |
-| SQL에서만 비교한 규칙 | `sql_violation` 제약. 한 shape에 class와 범위가 함께 있는 제약은 `sh:class` 속성 shape와, 같은 열 값을 리터럴로 담은 값 술어(`<entity>.<column>/value`)의 범위 속성 shape 두 개로 SHACL과 비교함(0.5.0까지는 SQL에서만 비교). 같은 열에 서로 다른 RDF 값 유형이 필요한 shapes(class와 범위, 서로 다른 class)는 값 그룹별 데이터 그래프로 나눠 SHACL과 비교함 |
+| SQL에서만 비교한 규칙 | `sql_violation` 제약. 한 shape에 class와 범위가 함께 있는 제약은 `sh:class` 속성 shape와, 같은 열 값을 리터럴로 담은 값 술어(`<entity>.<column>/value`)의 범위 속성 shape 두 개로 SHACL과 비교함(0.5.0까지는 SQL에서만 비교). 같은 열에 서로 다른 RDF 값 유형이 필요한 shapes(class와 범위, 서로 다른 class)는 값 그룹별 데이터 그래프로 나눠 SHACL과 비교함. 0.10.0 이후(미출시) `verify.shacl_pairs = true`를 켜면 다른 제약 없이 전체가 정확히 `t.<a> <op> t.<b>`(`>`·`>=`·`<`·`<=`)인 `sql_violation`만 `sh:lessThan`·`sh:lessThanOrEquals`로 바꿔 `shacl:pair:<id>`로 따로 비교함. 두 열이 NaN·무한대 없는 `smallint`·`integer`·`bigint`·`numeric`이고 대상 키가 중복되지 않을 때만 비교하며, 아니면 `not_run`. 주석·형 변환·식·`=`·`<>`는 계속 SQL에서만 비교함. 통과는 이 스냅숏에서 pySHACL과 SQL 뷰가 같은 행을 가리킨다는 뜻이며 규칙의 옳음은 증명하지 않음 |
 | 비어 있는 정의 클래스 | OWL과 SQL 양쪽 모두 멤버가 없어 비교가 공허하게 성립 |
 | V3 지표 쌍의 표본 | 2,000키를 넘으면 재현 가능한 표본으로 비교하며, 표본 밖의 불일치와 NULL 키 그룹은 놓칠 수 있음. 0.10.0부터는 표본 V3·V4 재생과 조각 비교 모두 요청한 키가 결합 조회와 각 단독 조회에 있는지 확인함. 불일치·중복이 확인되면 실패, 그렇지 않고 응답이 빠지면 `not_run`(`keys_not_answered`). 불완전한 표본은 D95 확률이나 비교 완료를 주장하지 않음. 완전한 표본에는 기존 가정에 따른 95% 탐지 한계를 공시함. 0.9.0부터 `verify.pair_key_budget`(기본 2000)을 키 수 이상으로 올리면 V3는 모든 키를 2,000키 조각과 NULL 그룹으로 비교하며, V4 재생은 2,000키 표본을 유지함. 키 집합은 시작 시 REPEATABLE READ로 읽지만 각 Cube 질의는 서로·SQL과 스냅샷을 공유하지 않음. 예산 안의 키는 메모리에 담으며 조회 시간 제한을 넘으면 오류가 됨 |
 | 독립 폐포 검산의 범위 | 자료형·원본 50,000줄·폐포 100,000쌍·10,000노드·계산 예산의 상한. 순환 보고 모드는 강연결요소 안의 연결을 지운 뒤 비교함(0.5.0까지는 `not_run`). 지원하지 않는 범위는 `not_run`이며 표본 통과로 대체하지 않음 |

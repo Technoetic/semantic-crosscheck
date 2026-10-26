@@ -155,6 +155,16 @@ gold SQL and `crosscheck.toml` avoid them too.
   Each extra group exports its target rows again, and `verify.shacl_max_rows` limits the sum over all
   groups, so splitting one column across value kinds can push a large export over the limit (every SHACL
   check is then `not_run`).
+- **Property pairs compare finite numbers only.** After 0.10.0 (unreleased), `verify.shacl_pairs = true`
+  compares a rule `t.<a> <op> t.<b>` as `sh:lessThan` or `sh:lessThanOrEquals` (`shacl:pair:<id>`). pySHACL
+  compares rdflib literals, not as SHACL or PostgreSQL do: rdflib orders any comparison involving NaN as
+  less-than in both directions, so a NaN pair never violates (PostgreSQL orders NaN above every number, SHACL
+  counts it as a violation), and literals of unrelated datatypes (a date or text against a number) are ordered by
+  datatype IRI. A repeated key would give one RDF node the values of several rows and pair them across rows. So
+  the check is `not_run` unless both columns are of the base types `smallint`, `integer`, `bigint` or `numeric`
+  (`column_type`: `real`, `double precision`, text, dates and domains are refused), neither holds NaN or an
+  infinity (`non_finite_values`) and the target key is unique (`duplicate_keys`). Change the column type or the
+  data, or leave the option off: a `not_run` pair check keeps `reason` from passing.
 
 ## Comparing values
 

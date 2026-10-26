@@ -725,6 +725,8 @@ counted plus these may not exceed `verify.shacl_max_rows` (else every remaining 
 `resource_limit`, while the `shacl:<id>` checks keep their own outcome). The rows are exported as one pair data
 graph (`rdf:type` and the non-NULL literals of the compared columns, `literal()` typing), a key repeated among the
 exported RDF nodes is still `duplicate_keys`, and pySHACL validates it without inference after the transaction.
+A database error in that transaction, even on one target entity, makes every pair check that reached it `error`
+with its SQLSTATE (all or nothing, as the shape comparison is after a database error).
 `shacl:pair:<id>` passes iff the focus-node keys of `<iri>shape/<id>/pair` equal the keys in `v_shape_<id>`; its
 detail holds the operator, constraint, column names and types, counts (`violations`, `shacl_focus_nodes`,
 `shacl_only`, `sql_only`, `rows_exported`), severity and view, never a value. Only when it passes or fails does the

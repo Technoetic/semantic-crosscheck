@@ -294,8 +294,9 @@ def _shacl_pairs(conn, cfg, build: dict, out: Path, pairs: list, pair_ttl: str, 
     """One shacl:pair:<id> check per shape with a pair form, in configuration order, after the shape comparisons.
     A shape is compared only when build created its view from the predicate as configured now (shape_not_built,
     view_stale otherwise); run_pairs decides the rest in its own read-only snapshot, so a pair query can never turn
-    a shacl:<id> check into an error. The not-proven line of a shape changes only when its pair check passed or
-    failed."""
+    a shacl:<id> check into an error. A database error there, even on one entity, makes every shape that reached
+    run_pairs an error with its SQLSTATE, as _shacl does for the shape comparisons. The not-proven line of a shape
+    changes only when its pair check passed or failed."""
     recorded, decided, eligible = _build_sql(out), {}, []
     for s in pairs:
         built = _build_check(build, f"shape:{s.id}").get("status")

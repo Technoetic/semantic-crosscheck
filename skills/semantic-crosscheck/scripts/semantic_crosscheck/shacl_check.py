@@ -434,7 +434,9 @@ def run_pairs(conn, cfg, pairs, pair_ttl: str, rows_before: int = 0) -> dict[str
     the shapes that meet them (rows_before, the rows the shape comparison counted, plus these may not exceed
     verify.shacl_max_rows, else every one is resource_limit) and exports them; pySHACL then validates the pair data
     graph with pair_ttl (inference none) after the transaction. A key repeated in the exported rows (one RDF node)
-    is duplicate_keys even where SQL grouping saw none. Database errors are raised."""
+    is duplicate_keys even where SQL grouping saw none. Database errors are raised: one entity's error ends the
+    transaction, so the caller marks every shape given here as error (all or nothing, as the shape comparison does
+    after a database error)."""
     out, live, dup = {}, [], {}
     with db.read_only(conn, cfg.source.statement_timeout_ms, isolation="repeatable read"):
         for s in pairs:

@@ -14,16 +14,15 @@ All notable changes to this project are recorded here. The format follows
   `a >= b` as `sh:lessThan`, `<` and `<=` with the columns swapped) and adds the separate check
   `shacl:pair:<id>`: pass when pySHACL's focus nodes on a separate pair export equal the keys in `v_shape_<id>`.
   The pair shapes are generated at reason time and pass the generated-shape preflight; `build/shapes.ttl`, its
-  comparison and every existing check stay unchanged. Both columns must be `smallint`, `integer`, `bigint` or
-  `numeric` without NaN or infinities and the target keys unique, otherwise the check is `not_run`
-  (`column_type`, `non_finite_values`, `duplicate_keys`), because pySHACL 0.40.1 orders NaN and mixed datatypes
-  unlike SHACL and PostgreSQL. The pair rows count against `verify.shacl_max_rows` after the shape export.
-  A pass shows agreement on one snapshot, not that the rule is right. With the option off nothing changes.
-- `shacl-corpus --w3c-suite` profile: `sh:lessThan` and `sh:lessThanOrEquals` with an IRI value on property
-  shapes (the parameters `verify.shacl_pairs` generates). On the pinned suite `core/property/lessThan-001`,
-  `lessThan-002` and `lessThanOrEquals-001` are now in profile (9 of 98 instead of 6), and pySHACL 0.40.1 and
-  Apache Jena 6.2.0 both match their expected reports (observed 2026-10-26). This changes the stage's result on
-  the pinned suite (six more passing checks); it still cannot pass as a whole.
+  comparison and every existing check stay unchanged. Both columns must be of the base types `smallint`,
+  `integer`, `bigint` or `numeric` (a domain over them is `column_type`) without NaN or infinities and the target
+  keys unique, otherwise the check is `not_run` (`column_type`, `non_finite_values`, `duplicate_keys`), because
+  pySHACL 0.40.1 orders NaN and mixed datatypes unlike SHACL and PostgreSQL; while a pair check is `not_run`,
+  reason and report cannot pass: change the column type or the data, or set `verify.shacl_pairs = false`. The
+  pair rows count against `verify.shacl_max_rows` after the shape export. With the option on and a pair-form
+  shape configured, `reason` needs rdflib and pySHACL (exit 3) and a `build/shapes.ttl` that matches the
+  configuration (exit 2), even when no other shape is compared. A pass shows agreement on one snapshot, not that
+  the rule is right. With the option off nothing changes.
 - Opt-in `verify.existence_witness` (default `false`): each sampled or chunked V3 pair test gains a separate
   check `v3w:pair_witness:<member>+<member>`. For every asked key that Cube's together answer holds but an alone
   answer leaves out, PostgreSQL is asked whether the measure has a row satisfying its configured `where_sql`, binding
@@ -35,6 +34,15 @@ All notable changes to this project are recorded here. The format follows
   detail, D95 bound and V4 role are unchanged, the unfiltered path at or below 2,000 keys gets no witness, and V4
   replays do not run it. The witness shares the configuration's filters with the measure cubes, so it shows
   agreement on key presence, not data completeness. With the option off every output is unchanged.
+
+### Changed
+
+- `shacl-corpus --w3c-suite` profile: `sh:lessThan` and `sh:lessThanOrEquals` with an IRI value on property
+  shapes (the parameters `verify.shacl_pairs` generates). On the pinned suite `core/property/lessThan-001`,
+  `lessThan-002` and `lessThanOrEquals-001` are now in profile (9 of 98 instead of 6), and pySHACL 0.40.1 and
+  Apache Jena 6.2.0 both match their expected reports (observed 2026-10-26). No option controls this change: it
+  changes the stage's default result on the pinned suite (six more passing checks); it still cannot pass as a
+  whole.
 
 ## [0.10.0] - 2026-10-25
 

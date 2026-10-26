@@ -249,7 +249,7 @@ Cube (see `cube_gen.py` for the exact model):
 RDF/SHACL: `naming.rdf_*` helpers define the IRIs of entity classes, rows (reversible key encoding of
 `canon.key` values, so two text keys never share an IRI), predicates (`<iri><entity>.<column>`), node shapes and
 property shapes (`<iri>shape/<id>/p`; `<iri>shape/<id>/b` for the bounds of a shape with class and bounds;
-`<iri>shape/<id>/pair` for the reason-time property-pair shape of `verify.shacl_pairs`).
+after 0.10.0, unreleased, `<iri>shape/<id>/pair` for the reason-time property-pair shape of `verify.shacl_pairs`).
 
 ## 6. Check catalogue
 
@@ -751,12 +751,12 @@ holds the view statement the configuration generates now (else `view_stale`).
 `shacl_check.run_pairs` then reads, in its own read-only `REPEATABLE READ` transaction (after the shape
 comparison's, so a pair query can never turn a `shacl:<id>` check into an error): the view keys (`view_missing`
 when the view is gone); both column types from `pg_attribute`, which must be the base types `smallint`, `integer`,
-`bigint` or `numeric` (`column_type` otherwise, with the type names; `real`, `double precision`, text, dates and
-booleans included); the rows holding NaN or an infinity in a numeric column (`non_finite_values`); and the rows
-repeating a target key (`duplicate_keys`). pySHACL 0.40.1 compares rdflib Literals: NaN counts as less than every
-value, so a NaN pair never violates, while SHACL makes an incomparable pair a violation and PostgreSQL orders NaN
-above every number; literals of unrelated datatypes are ordered by datatype IRI (an `xsd:date` against an
-`xsd:integer` conforms one way round and violates the other). `tests/test_shacl_pairs.py` pins these behaviours
+`bigint` or `numeric` (`column_type` otherwise, with the type names; `real`, `double precision`, text, dates,
+booleans and domains over the four types included); the rows holding NaN or an infinity in a numeric column (`non_finite_values`); and the rows
+repeating a target key (`duplicate_keys`). pySHACL 0.40.1 compares rdflib Literals: rdflib orders any comparison
+involving NaN as less-than in both directions, so a NaN pair never violates, while SHACL makes an incomparable
+pair a violation and PostgreSQL orders NaN above every number; literals of unrelated datatypes are ordered by
+datatype IRI (an `xsd:date` against an `xsd:integer` conforms one way round and violates the other). `tests/test_shacl_pairs.py` pins these behaviours
 so a pySHACL change is noticed before the preconditions are relaxed. A repeated key would give one RDF node the
 values of several rows and pair them across rows. NULL needs no rule: no triple, no pair, no violation, as the SQL
 predicate is unknown there. The target rows of the remaining shapes are counted; the rows the shape comparison
@@ -764,6 +764,8 @@ counted plus these may not exceed `verify.shacl_max_rows` (else every remaining 
 `resource_limit`, while the `shacl:<id>` checks keep their own outcome). The rows are exported as one pair data
 graph (`rdf:type` and the non-NULL literals of the compared columns, `literal()` typing), a key repeated among the
 exported RDF nodes is still `duplicate_keys`, and pySHACL validates it without inference after the transaction.
+A database error in that transaction, even on one target entity, makes every pair check that reached it `error`
+with its SQLSTATE (all or nothing, as the shape comparison is after a database error).
 `shacl:pair:<id>` passes iff the focus-node keys of `<iri>shape/<id>/pair` equal the keys in `v_shape_<id>`; its
 detail holds the operator, constraint, column names and types, counts (`violations`, `shacl_focus_nodes`,
 `shacl_only`, `sql_only`, `rows_exported`), severity and view, never a value. Only when it passes or fails does the

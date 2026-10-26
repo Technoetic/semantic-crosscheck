@@ -14,6 +14,7 @@ import copy
 import importlib.util
 import json
 import os
+import re
 import shutil
 import tempfile
 import types
@@ -31,6 +32,7 @@ HAVE_SHACL = all(importlib.util.find_spec(m) for m in ("rdflib", "pyshacl"))
 SH = shapes.SH
 XSD = shapes.XSD
 OLD_LINE = "shacl:{id}: no SHACL form (sql_violation); checked only in SQL (shape:{id} in build)"
+ROW_ID = re.compile(r"P-\d{6}|SO-\d{6}")   # the demo's part and order keys
 
 
 def demo_config():
@@ -80,7 +82,8 @@ class PairFormTest(unittest.TestCase):
                 "(t.a > t.b)", "t.a::numeric > t.b", "CAST(t.a AS numeric) > t.b", "t.a > t.b::integer",
                 "t.a > t.a", "T.a > t.b", "t.A > t.b", 't."a" > t.b', "s.a > t.b", "t . a > t.b", "a > b",
                 "t.a > t.b AND t.b > 0", "t.a > t.b;", "t.a > t.b /* c */", "t.a >= t.b\n-- c",
-                "t.a > -t.b", "t.a > t.b + 0", "t.a > t.b", "t.a > t.b ", f"t.{long_name} > t.b",
+                # the third and fourth hold a no-break space and an em space: only space, tab, CR and LF count
+                "t.a > -t.b", "t.a > t.b + 0", "t.a\u00a0> t.b", "t.a > t.b\u2003", f"t.{long_name} > t.b",
                 "t.a > t.b\nOR true", "NOT t.a > t.b"):
             with self.subTest(predicate=predicate):
                 self.assertIsNone(shapes.pair_form(self.shape(predicate)))
@@ -138,9 +141,10 @@ class PairOptionTest(unittest.TestCase):
 @unittest.skipUnless(HAVE_SHACL, "rdflib and pyshacl are not installed")
 class PinnedPyShaclPairBehaviourTest(unittest.TestCase):
     """The pySHACL 0.40.1 / rdflib 7.6.0 behaviour the preconditions exist for (cases of the C26 lab). SHACL 2017
-    4.5.3-4.5.4 makes incomparable values a violation; pySHACL compares rdflib Literals, so NaN counts as less than
-    everything and literals of unrelated datatypes are ordered by datatype IRI. If any of these change, the
-    preconditions (numeric base types only, no NaN or infinities) must be reviewed before relaxing them."""
+    4.5.3-4.5.4 makes incomparable values a violation; pySHACL compares rdflib Literals, and rdflib orders any
+    comparison involving NaN as less-than in both directions (so a NaN pair never violates) and literals of unrelated
+    datatypes by datatype IRI. If any of these change, the preconditions (numeric base types only, no NaN or
+    infinities) must be reviewed before relaxing them."""
 
     PREFIX = (f"@prefix ex: <http://example.org/lab#> .\n@prefix xsd: <{XSD}> .\n@prefix sh: <{SH}> .\n")
 
@@ -272,28 +276,108 @@ class PairShapesOnRowsTest(unittest.TestCase):
         self.assertNotEqual(got["mix_gt"], self.expected()["mix_gt"])
 
 
+class _ExportOnlyConn:
+    """Answers the two statements run_pairs runs itself (the row count and the export) with fixed rows; the view
+    and precondition queries are patched in the test. Every other statement (BEGIN, SET LOCAL, ROLLBACK) returns
+    nothing."""
+
+    def __init__(self, rows):
+        self.rows = rows
+
+    def run(self, sql, **_params):
+        if sql.startswith("SELECT count(*) FROM"):
+            return [[len(self.rows)]]
+        if sql.startswith("SELECT t."):
+            return [list(r) for r in self.rows]
+        return []
+
+
+class PairExportedKeyGuardTest(unittest.TestCase):
+    def test_keys_that_share_an_rdf_node_after_the_export_are_duplicate_keys(self):
+        """The second guard: SQL grouping saw no repeated key (patched to 0 here), but two exported keys give one
+        RDF node (1.0 and 1.00 have the same canonical key). One node would carry both rows' values, so every pair
+        shape of that entity is duplicate_keys and nothing is validated."""
+        cfg = PairShapesOnRowsTest.config()
+        pairs = [s for s in shacl_check.pair_plan(cfg) if s.target == "pair_mix"]
+        rows = [[Decimal("1.0"), 2, Decimal("1")], [Decimal("1.00"), 1, Decimal("2")], [Decimal("2"), 5, Decimal("1")]]
+        self.assertEqual(len({naming.rdf_node(cfg, "pair_mix", r[:1]) for r in rows}), 2)
+        with mock.patch.object(shacl_check, "sql_keys", return_value=set()), \
+                mock.patch.object(shacl_check, "_column_type", side_effect=[("integer", True, False),
+                                                                            ("numeric", True, True)] * len(pairs)), \
+                mock.patch.object(shacl_check, "_non_finite_rows", return_value=0), \
+                mock.patch.object(shacl_check, "_duplicate_key_rows", return_value=0), \
+                mock.patch.object(shacl_check, "validate", side_effect=AssertionError("must not validate")) as validate:
+            got = shacl_check.run_pairs(_ExportOnlyConn(rows), cfg, pairs, "")
+        self.assertEqual(got, {s.id: {"reason": "duplicate_keys", "column_types": ["integer", "numeric"],
+                                      "duplicate_key_rows": 1} for s in pairs})
+        validate.assert_not_called()
+
+
+class PairNextActionTest(unittest.TestCase):
+    """A pair check that cannot run (its cause is in the data or the schema, so it stays on every run) must not hide
+    advice the user can act on: cycles, synthetic-witness gaps and --only come first."""
+
+    @staticmethod
+    def result(*extra) -> stage_reason.Result:
+        res = stage_reason.Result("reason")
+        res.add("shacl:qty_positive", "pass", "")
+        res.add("shacl:pair:open_le_total", "not_run", "shapes[3] open_le_total", reason="column_type")
+        for check_id, reason in extra:
+            res.add(check_id, "not_run", "", reason=reason)
+        return res
+
+    def test_alone_the_pair_reason_is_named(self):
+        action = stage_reason.next_action(demo_config(), self.result())
+        self.assertIn("shacl:pair", action)
+        self.assertIn("column_type", action)
+        self.assertIn("verify.shacl_pairs = false", action)
+
+    def test_cycle_edges_dropped_comes_first(self):
+        action = stage_reason.next_action(demo_config(), self.result(("v5:closure:has_component", "cycle_edges_dropped")))
+        self.assertIn("on_cycle = report", action)
+        self.assertNotIn("shacl:pair", action)
+
+    def test_a_synthetic_witness_gap_comes_first(self):
+        action = stage_reason.next_action(demo_config(), self.result(("v5:witness:Composite", "configuration_gap")))
+        self.assertIn("synthetic witnesses", action)
+        self.assertNotIn("shacl:pair", action)
+
+    def test_a_narrowed_run_comes_first(self):
+        action = stage_reason.next_action(demo_config(), self.result(("scope:owl", "excluded_by_only")))
+        self.assertIn("rerun reason without --only", action)
+        self.assertNotIn("shacl:pair", action)
+
+
 # ---- PostgreSQL ------------------------------------------------------------------------------------------
 @unittest.skipUnless(pgfixture.available() and HAVE_SHACL, "needs SXC_TEST_ADMIN_DSN, rdflib and pyshacl")
 class ReasonShaclPairsTest(unittest.TestCase):
     """build and reason on the dirty demo plus small tables. pair_mix: the four operators on integer against
-    numeric(10,3) values (equal values at different scales, NULLs). pair_nan / pair_inf: numeric columns with NaN /
-    -Infinity in one row. pair_float: double precision columns. pair_dup: no primary key and two rows with key 1.
-    commented: the demo rule with a trailing comment, outside the strict form."""
+    numeric(10,3) values (equal values at different scales, NULLs). pair_wide: smallint against bigint, extremes
+    included. pair_nan / pair_inf: numeric columns with NaN in one row / -Infinity and Infinity in two rows.
+    pair_float: double precision columns. pair_date: date columns. pair_dom: a domain over numeric (holding NaN)
+    against integer. pair_dup: no primary key and two rows with key 1. commented: the demo rule with a trailing
+    comment, outside the strict form."""
 
     database = "sxc_t_shacl_pairs"
     MIX = PairShapesOnRowsTest.ROWS
-    EXTRA_SHAPES = [("nan_gt", "pair_nan"), ("inf_gt", "pair_inf"), ("float_gt", "pair_float"), ("dup_gt", "pair_dup")]
+    WIDE = [(1, 1, 2), (2, 3, 2), (3, -5, -5), (4, None, 1), (5, 32767, 9223372036854775807),
+            (6, -32768, -9223372036854775808)]   # id, lo (smallint), hi (bigint)
+    EXTRA_SHAPES = [("nan_gt", "pair_nan"), ("inf_gt", "pair_inf"), ("float_gt", "pair_float"), ("dup_gt", "pair_dup"),
+                    ("wide_gt", "pair_wide"), ("date_gt", "pair_date"), ("dom_gt", "pair_dom")]
+    PAIR_SHAPES = 1 + len(PairShapesOnRowsTest.OPS) + len(EXTRA_SHAPES)   # open_le_total, mix_*, EXTRA_SHAPES
 
     @classmethod
     def config(cls, pairs=True):
+        """pairs None leaves verify.shacl_pairs as the configuration loaded it (unset, so the default)."""
         cfg = demo_config()
-        for name in ("pair_mix", "pair_nan", "pair_inf", "pair_float", "pair_dup"):
+        for _sid, name in [("", "pair_mix")] + cls.EXTRA_SHAPES:
             cfg.entities[name] = Entity(name, f"sxc_demo.{name}", ["id"])
         cfg.shapes += [Shape(id=sid, target="pair_mix", sql_violation=f"t.a {op} t.b")
                        for sid, op in PairShapesOnRowsTest.OPS.items()]
         cfg.shapes += [Shape(id=sid, target=target, sql_violation="t.lo > t.hi") for sid, target in cls.EXTRA_SHAPES]
         cfg.shapes.append(Shape(id="commented", target="sales_order", sql_violation="t.qty_open > t.qty_total -- note"))
-        cfg.verify.shacl_pairs = pairs
+        if pairs is not None:
+            cfg.verify.shacl_pairs = pairs
         return cfg
 
     @classmethod
@@ -311,11 +395,20 @@ class ReasonShaclPairsTest(unittest.TestCase):
                 conn.run("CREATE TABLE sxc_demo.pair_nan (id integer PRIMARY KEY, lo numeric, hi numeric)")
                 conn.run("INSERT INTO sxc_demo.pair_nan VALUES (1, 'NaN', 1), (2, 2, 1), (3, 1, 2)")
                 conn.run("CREATE TABLE sxc_demo.pair_inf (id integer PRIMARY KEY, lo numeric, hi numeric)")
-                conn.run("INSERT INTO sxc_demo.pair_inf VALUES (1, 1, '-Infinity'), (2, 2, 1)")
+                conn.run("INSERT INTO sxc_demo.pair_inf VALUES (1, 1, '-Infinity'), (2, 2, 1), (3, 'Infinity', 1)")
                 conn.run("CREATE TABLE sxc_demo.pair_float (id integer PRIMARY KEY, lo double precision, hi double precision)")
                 conn.run("INSERT INTO sxc_demo.pair_float VALUES (1, 0.1, 0.3), (2, 2, 1)")
                 conn.run("CREATE TABLE sxc_demo.pair_dup (id integer, lo integer, hi integer)")
                 conn.run("INSERT INTO sxc_demo.pair_dup VALUES (1, 1, 2), (1, 3, 2), (2, 5, 1)")
+                conn.run("CREATE TABLE sxc_demo.pair_wide (id integer PRIMARY KEY, lo smallint, hi bigint)")
+                for i, lo, hi in cls.WIDE:
+                    conn.run("INSERT INTO sxc_demo.pair_wide VALUES (:i, CAST(:lo AS smallint), CAST(:hi AS bigint))",
+                             i=i, lo=lo, hi=None if hi is None else str(hi))
+                conn.run("CREATE TABLE sxc_demo.pair_date (id integer PRIMARY KEY, lo date, hi date)")
+                conn.run("INSERT INTO sxc_demo.pair_date VALUES (1, '2026-01-02', '2026-01-01'), (2, '2026-01-01', '2026-01-02')")
+                conn.run("CREATE DOMAIN sxc_demo.pair_amount AS numeric")
+                conn.run("CREATE TABLE sxc_demo.pair_dom (id integer PRIMARY KEY, lo sxc_demo.pair_amount, hi integer)")
+                conn.run("INSERT INTO sxc_demo.pair_dom VALUES (1, 'NaN', 1), (2, 2, 1)")
         finally:
             conn.close()
         tmp = tempfile.TemporaryDirectory()
@@ -326,6 +419,7 @@ class ReasonShaclPairsTest(unittest.TestCase):
         stage_build.run(cls.cfg, types.SimpleNamespace(hierarchy=""), cls.out).write(cls.out)
         cls.res = stage_reason.run(cls.cfg, types.SimpleNamespace(only=["shacl"]), cls.out)
         cls.off = stage_reason.run(cls.config(pairs=False), types.SimpleNamespace(only=["shacl"]), cls.copy_out("off"))
+        cls.unset = stage_reason.run(cls.config(pairs=None), types.SimpleNamespace(only=["shacl"]), cls.copy_out("unset"))
 
     @classmethod
     def copy_out(cls, name: str) -> Path:
@@ -339,6 +433,14 @@ class ReasonShaclPairsTest(unittest.TestCase):
     def reason(self, cfg, name):
         return stage_reason.run(cfg, types.SimpleNamespace(only=["shacl"]), self.copy_out(name))
 
+    def shape(self, cfg, shape_id: str):
+        return next(s for s in cfg.shapes if s.id == shape_id)
+
+    def assert_shape_checks_unchanged(self, res):
+        """Every check outside shacl:pair:* (the shape comparisons and shacl:meta:generated) as with the option off."""
+        self.assertEqual([(c.id, c.status, c.config_ref, c.detail) for c in res.checks if not c.id.startswith("shacl:pair:")],
+                         [(c.id, c.status, c.config_ref, c.detail) for c in self.off.checks])
+
     def injected_keys(self) -> set:
         return {key(o["order_id"]) for o in self.fx.data["orders"] if int(o["qty_open"]) > int(o["qty_total"])}
 
@@ -347,13 +449,13 @@ class ReasonShaclPairsTest(unittest.TestCase):
         self.assertEqual(len(injected), self.fx.data["expected"]["open_gt_total"])
         self.assertEqual(len(injected), 3)
         c = get_check(self.res, "shacl:pair:open_le_total")
-        self.assertEqual((c.status, c.config_ref), ("pass", shapes.config_ref(self.cfg, self.cfg.shapes[3])))
+        self.assertEqual((c.status, c.config_ref), ("pass", shapes.config_ref(self.cfg, self.shape(self.cfg, "open_le_total"))))
         d = c.detail
         self.assertEqual((d["op"], d["constraint"], d["path_column"], d["compare_column"], d["column_types"]),
                          (">", "lessThanOrEquals", "qty_open", "qty_total", ["numeric", "numeric"]))
         self.assertEqual((d["violations"], d["shacl_focus_nodes"], d["shacl_only"], d["sql_only"]), (3, 3, 0, 0))
         self.assertEqual((d["rows_exported"], d["severity"], d["view"]),
-                         (self.fx.loaded["sales_order"] + len(self.MIX), "violation",
+                         (self.fx.loaded["sales_order"] + len(self.MIX) + len(self.WIDE), "violation",
                           naming.shape_view(self.cfg, "open_le_total")))
         conn = self.fx.check_conn()
         try:
@@ -362,7 +464,7 @@ class ReasonShaclPairsTest(unittest.TestCase):
         finally:
             conn.close()
         self.assertEqual((got["open_le_total"]["shacl_keys"], got["open_le_total"]["sql_keys"]), (injected, injected))
-        self.assertEqual(json.dumps(c.detail).count("SO-"), 0, "no key values in the detail")
+        self.assertNotRegex(json.dumps(self.res.to_dict()), ROW_ID, "no key values anywhere in the result")
 
     def test_all_four_operators_agree_on_integer_against_numeric(self):
         expected = PairShapesOnRowsTest.expected()
@@ -376,20 +478,32 @@ class ReasonShaclPairsTest(unittest.TestCase):
             self.assertTrue(any(line.startswith(f"shacl:{sid}: ") and f"shacl:pair:{sid}" in line
                                 for line in self.res.not_proven), sid)
 
-    def test_non_finite_values_float_columns_and_duplicate_keys_are_not_run(self):
+    def test_smallint_against_bigint_is_compared(self):
+        expected = {key(i) for i, lo, hi in self.WIDE if violates(lo, ">", hi)}
+        self.assertEqual(expected, {key(2), key(6)})
+        c = get_check(self.res, "shacl:pair:wide_gt")
+        self.assertEqual((c.status, c.detail["column_types"], c.detail["violations"], c.detail["shacl_focus_nodes"],
+                          c.detail["shacl_only"], c.detail["sql_only"]), ("pass", ["smallint", "bigint"], 2, 2, 0, 0))
+
+    def test_non_finite_values_other_types_and_duplicate_keys_are_not_run(self):
         for sid, reason in (("nan_gt", "non_finite_values"), ("inf_gt", "non_finite_values"),
-                            ("float_gt", "column_type"), ("dup_gt", "duplicate_keys")):
+                            ("float_gt", "column_type"), ("date_gt", "column_type"), ("dom_gt", "column_type"),
+                            ("dup_gt", "duplicate_keys")):
             c = get_check(self.res, f"shacl:pair:{sid}")
             self.assertEqual((c.status, c.detail["reason"]), ("not_run", reason), sid)
             self.assertIn(OLD_LINE.format(id=sid), self.res.not_proven)
             self.assertTrue(any(line.startswith(f"shacl:pair:{sid}: not compared") for line in self.res.not_proven), sid)
         self.assertEqual(get_check(self.res, "shacl:pair:nan_gt").detail["non_finite_rows"], 1)
-        self.assertEqual(get_check(self.res, "shacl:pair:inf_gt").detail["non_finite_rows"], 1)
+        self.assertEqual(get_check(self.res, "shacl:pair:inf_gt").detail["non_finite_rows"], 2, "-Infinity and Infinity")
         self.assertEqual(get_check(self.res, "shacl:pair:float_gt").detail["column_types"],
                          ["double precision", "double precision"])
+        self.assertEqual(get_check(self.res, "shacl:pair:date_gt").detail["column_types"], ["date", "date"])
+        dom = get_check(self.res, "shacl:pair:dom_gt").detail
+        self.assertEqual((dom["column_types"], "non_finite_rows" in dom), (["sxc_demo.pair_amount", "integer"], False),
+                         "a domain is refused by its type, before its NaN is counted")
         self.assertEqual(get_check(self.res, "shacl:pair:dup_gt").detail["duplicate_key_rows"], 1)
         self.assertEqual(self.res.status, "not_run")
-        self.assertIn("shacl:pair", self.res.next_safe_action)
+        self.assertIn("rerun reason without --only", self.res.next_safe_action, "--only shacl: scope:owl comes first")
 
     def test_a_predicate_outside_the_form_keeps_the_sql_only_line(self):
         self.assertFalse([c for c in self.res.checks if c.id == "shacl:pair:commented"])
@@ -397,12 +511,18 @@ class ReasonShaclPairsTest(unittest.TestCase):
 
     def test_with_the_option_off_nothing_changes(self):
         self.assertFalse([c for c in self.off.checks if c.id.startswith("shacl:pair:")])
+        self.assertNotIn("shacl:pair", json.dumps(self.off.to_dict()))
+        timeless = ("started_at", "finished_at")
+        self.assertEqual({k: v for k, v in self.off.to_dict().items() if k not in timeless},
+                         {k: v for k, v in self.unset.to_dict().items() if k not in timeless},
+                         "false and an unset option give the same result")
         sql_only = [s.id for s in self.cfg.shapes if s.sql_violation]
         self.assertEqual([n for n in self.off.not_proven if n.startswith("shacl:") and "no SHACL form" in n],
                          [OLD_LINE.format(id=sid) for sid in sql_only])
         on = [(c.id, c.status, c.config_ref, c.detail) for c in self.res.checks if not c.id.startswith("shacl:pair:")]
         off = [(c.id, c.status, c.config_ref, c.detail) for c in self.off.checks]
         self.assertEqual(on, off, "the option adds checks and never changes an existing one")
+        self.assert_shape_checks_unchanged(self.res)
 
     def test_the_row_cap_counts_pair_rows_after_the_shape_export(self):
         main = get_check(self.off, "shacl:child_exists").detail["rows_exported"]
@@ -429,14 +549,15 @@ class ReasonShaclPairsTest(unittest.TestCase):
         with mock.patch.object(shacl_check, "validate_generated_shapes", preflight):
             res = self.reason(self.cfg, "preflight")
         pairs = [c for c in res.checks if c.id.startswith("shacl:pair:")]
-        self.assertEqual(len(pairs), 9)
+        self.assertEqual(len(pairs), self.PAIR_SHAPES)
+        self.assertEqual(self.PAIR_SHAPES, 12)
         self.assertTrue(all(c.status == "not_run" and c.detail["reason"] == "generated_shapes_invalid" for c in pairs))
         self.assertEqual(get_check(res, stage_reason.META_ID).status, "pass")
         self.assertEqual(get_check(res, "shacl:child_exists").status, get_check(self.off, "shacl:child_exists").status)
 
     def test_a_predicate_changed_after_build_is_not_compared(self):
         cfg = copy.deepcopy(self.cfg)
-        cfg.shapes[3].sql_violation = "t.qty_open >= t.qty_total"
+        self.shape(cfg, "open_le_total").sql_violation = "t.qty_open >= t.qty_total"
         res = self.reason(cfg, "stale")
         c = get_check(res, "shacl:pair:open_le_total")
         self.assertEqual((c.status, c.detail["reason"]), ("not_run", "view_stale"))
@@ -452,6 +573,72 @@ class ReasonShaclPairsTest(unittest.TestCase):
         c = get_check(res, "shacl:pair:mix_gt")
         self.assertEqual((c.status, c.detail["reason"], c.detail["build_status"]), ("not_run", "shape_not_built", "error"))
         self.assertEqual(get_check(res, "shacl:pair:mix_ge").status, "pass")
+
+    def test_a_view_gone_after_build_is_view_missing(self):
+        view = naming.shape_view(self.cfg, "mix_gt")
+        schema = view.rsplit(".", 1)[0]
+        self.rename_view(f"{view}", "v_shape_mix_gt_gone")   # build created the views as the check role
+        self.addCleanup(self.rename_view, f"{schema}.v_shape_mix_gt_gone", "v_shape_mix_gt")
+        res = self.reason(self.cfg, "view_gone")
+        c = get_check(res, "shacl:pair:mix_gt")
+        self.assertEqual((c.status, c.detail["reason"], c.detail["constraint"]),
+                         ("not_run", "view_missing", "lessThanOrEquals"))
+        self.assertIn(OLD_LINE.format(id="mix_gt"), res.not_proven)
+        self.assertEqual(get_check(res, "shacl:pair:mix_ge").status, "pass")
+        self.assertIn("rerun `sxc.py build`", res.next_safe_action)
+        self.assert_shape_checks_unchanged(res)
+
+    def rename_view(self, qualified: str, new_name: str) -> None:
+        conn = self.fx.check_conn()
+        try:
+            with db.write_tx(conn):
+                conn.run(f"ALTER VIEW {qualified} RENAME TO {new_name}")
+        finally:
+            conn.close()
+
+    def test_a_database_error_in_the_pair_preconditions_makes_the_pair_checks_errors(self):
+        from pg8000.exceptions import DatabaseError
+        leaky = DatabaseError({"S": "ERROR", "C": "57014", "M": "canceling statement near SO-000001"})
+        with mock.patch.object(shacl_check, "_duplicate_key_rows", side_effect=leaky):
+            res = self.reason(self.cfg, "pair_db_error")
+        pairs = [c for c in res.checks if c.id.startswith("shacl:pair:")]
+        self.assertEqual(len(pairs), self.PAIR_SHAPES)
+        for c in pairs:
+            self.assertEqual((c.status, c.detail["sqlstate"]), ("error", "57014"), c.id)
+            self.assertEqual(set(c.detail), {"sqlstate", "op", "constraint", "path_column", "compare_column"}, c.id)
+        self.assertEqual(res.status, "error")
+        self.assertEqual(res.next_safe_action, "shacl:pair:open_le_total hit a database error (SQLSTATE 57014): raise "
+                                               "source.statement_timeout_ms, then rerun reason")
+        self.assert_shape_checks_unchanged(res)
+        self.assertNotRegex(json.dumps(res.to_dict()), ROW_ID)
+        self.assertNotIn(stage_reason.PAIR_NOTE, res.not_proven)
+
+    def test_a_pair_graph_pyshacl_cannot_validate_makes_the_compared_pair_checks_errors(self):
+        original = shacl_check.validate
+
+        def validate(data_graph, shacl):
+            if isinstance(shacl, str) and "sh:lessThan" in shacl:   # the pair shapes graph only
+                raise RuntimeError("cannot compare SO-000001")
+            return original(data_graph, shacl)
+
+        with mock.patch.object(shacl_check, "validate", validate):
+            res = self.reason(self.cfg, "pair_validation_error")
+        compared = {"open_le_total", *PairShapesOnRowsTest.OPS, "wide_gt"}
+        pairs = [c for c in res.checks if c.id.startswith("shacl:pair:")]
+        self.assertEqual(len(pairs), self.PAIR_SHAPES)
+        for c in pairs:
+            sid = c.id.split(":", 2)[2]
+            if sid in compared:
+                self.assertEqual((c.status, c.detail["reason"], c.detail["exception"]),
+                                 ("error", "validation_failure", "RuntimeError"), sid)
+            else:
+                self.assertEqual((c.status, c.detail), ("not_run", get_check(self.res, c.id).detail), sid)
+        self.assertEqual(res.status, "error")
+        self.assertIn("shacl:pair:open_le_total: pySHACL could not validate the property-pair shapes generated by reason",
+                      res.next_safe_action)
+        self.assertIn("verify.shacl_pairs = false", res.next_safe_action)
+        self.assert_shape_checks_unchanged(res)
+        self.assertNotRegex(json.dumps(res.to_dict()), ROW_ID)
 
     def test_pairs_run_when_no_shape_has_a_shacl_form(self):
         """Only sql_violation shapes: no shapes.ttl comparison and no preflight of it, but the pair checks run."""

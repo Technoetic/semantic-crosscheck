@@ -480,19 +480,23 @@ class PairWitness:
     on, and a failed savepoint command or second-read transaction leaves the keys it covers witness_error. The
     witness catches whatever its own work raises (compare.expected_errors), so it never reaches the pair test, and
     its reads are left out of the pair test's elapsed_ms. The closure cube's qty
-    gets no statement: its alone query reads the closure table by the column the keys were read from, in the key-read
-    snapshot every asked key has closure rows, so its key read is its witness and an absence there has facts.
+    gets no first statement: its alone query reads the closure table by the column the keys were read from (no
+    filter), so in the key-read snapshot every asked key has closure rows and the key read is its first read; its
+    second read asks the closure table again for the absent keys (SELECT DISTINCT t.<column> FROM <closure table> t
+    WHERE t.<column> IN (...)), so a closure rebuilt between the reads is witness_changed, not a fail.
 
     The first read (before) runs inside pair_keys's READ ONLY REPEATABLE READ transaction, over every asked key in
     slices of PAIR_KEY_CAP; the second (observe) runs after the sample's or the chunk's Cube queries in a new READ ONLY
     REPEATABLE READ transaction, for the absent keys only. A key is classified only when both reads agree
-    (otherwise witness_changed, undecided); Cube's queries each read their own snapshot, which the two reads bracket
-    but never share. Labels, per asked key and measure whose alone answer left the key out:
+    (otherwise witness_changed, undecided), the closure qty's included; Cube's queries each read their own snapshot,
+    which the two reads bracket but never share. Labels, per asked key and measure whose alone answer left the key
+    out:
 
       absent_no_facts         no witness row and the together value is empty (NULL, the value Cube gives a key
                               without facts, since count is re-aggregated as a sum: cube_gen.measure_cube)
       witness_value_mismatch  no witness row, but the together value is not empty
-      absent_with_facts       a witness row (or the closure qty): Cube left out a key the configuration has rows for
+      absent_with_facts       a witness row in both reads: Cube left out a key the configuration (or the closure
+                              table, for the closure qty) has rows for
       undecided               no witness statement (not_witnessed), a failed statement, or a change between reads
     An asked key missing from the together answer is undecided once (together_absent): a fact-table witness cannot
     tell why the together query left it out. The NULL key group is outside the witness (no equals filter asks it).
@@ -513,26 +517,28 @@ class PairWitness:
         self.mode = "sampled"   # _run_chunks makes it chunked
 
     def _spec(self, member: str):
-        """'closure' for a closure cube's measure, None when no configuration measure backs the member, otherwise
-        (statement head, alone dimension kind)."""
+        """None when no configuration measure backs the member, otherwise (statement head, alone dimension kind,
+        whether the key read is the first read: the closure cube's qty, read from the closure table)."""
         cube = member.split(".", 1)[0]
+        kind = self.kinds.get(self.test["alone"][member])
         if cube in {naming.cube_closure(h) for h in self.cfg.hierarchies}:
-            return "closure"
+            table, column = self.test["keys_from"]
+            col = f"t.{ident.quote(column)}"
+            return f"SELECT DISTINCT {col} FROM {ident.qualified(table)} t WHERE {col} IN ", kind, True
         m = next((m for m in self.cfg.measures.values()
                   if naming.cube_measure(m.name) == cube and not m.date_column), None)
         if m is None or member != _m(cube, naming.MEASURE_VALUE):
             return None
         table = ident.qualified(self.cfg.entity(m.entity, f"measures.{m.name}").table)
         by = f"t.{ident.quote(m.by)}"
-        head = f"SELECT DISTINCT {by} FROM {table} t WHERE {cube_gen.where_sql(m)} AND {by} IN "
-        return head, self.kinds.get(self.test["alone"][member])
+        return f"SELECT DISTINCT {by} FROM {table} t WHERE {cube_gen.where_sql(m)} AND {by} IN ", kind, False
 
     def _read(self, member: str, keys: list) -> dict:
         """{canonical alone key: True (a qualifying row) | False | a failure label} for keys, in slices of
         PAIR_KEY_CAP, inside the caller's transaction; each statement under a savepoint. A failed statement labels
         its slice (witness_type for SQLSTATE class 22, witness_error otherwise); once a savepoint command fails the
         transaction cannot go on (broken), and the remaining slices are witness_error without a statement."""
-        head, kind = self.specs[member]
+        head, kind, _key_read = self.specs[member]
         out = {}
         for i in range(0, len(keys), PAIR_KEY_CAP):
             part = keys[i:i + PAIR_KEY_CAP]
@@ -568,13 +574,16 @@ class PairWitness:
 
     def before(self, keys: list):
         """The first read, inside pair_keys's REPEATABLE READ transaction: every asked key of every measure with a
-        witness statement. Nothing it raises reaches pair_keys: a measure whose read did not finish has no first
-        read for its keys (witness_error when they are absent)."""
+        witness statement (the closure qty's first read is the key read itself). Nothing it raises reaches
+        pair_keys: a measure whose read did not finish has no first read for its keys (witness_error when they are
+        absent)."""
         self.armed, self.broken = True, False
         started = time.monotonic()
         try:
             for m, spec in self.specs.items():
-                if isinstance(spec, tuple):
+                if spec is not None and spec[2]:
+                    self.pre[m] = dict.fromkeys((canon.canon(k, spec[1]) for k in keys), True)
+                elif spec is not None:
                     self.pre[m] = self._read(m, keys)
         except compare.expected_errors():
             # only an asked key that cannot be canonicalised (an unknown kind) gets here; _compare canonicalises the
@@ -610,14 +619,10 @@ class PairWitness:
                 c["incomplete_keys"] += 1
             absent += [(m, k, ak, together[tk].get(m)) for m, ak in missing]
         reread = {m: [k for mm, k, ak, _v in absent if mm == m and self.pre[m].get(ak) in (True, False)]
-                  for m, spec in self.specs.items() if isinstance(spec, tuple)}
+                  for m, spec in self.specs.items() if spec is not None}
         post = self._second_read({m: ks for m, ks in reread.items() if ks})
         for m, _k, ak, value in absent:
-            spec = self.specs[m]
-            if spec == "closure":
-                c["absent_with_facts"] += 1
-                continue
-            if spec is None:
+            if self.specs[m] is None:
                 label = "not_witnessed"
             else:
                 pre = self.pre[m].get(ak, "witness_error")   # no entry: the first read did not finish

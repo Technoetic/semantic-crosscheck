@@ -6,7 +6,8 @@
   WitnessLabelTest   sampled tests: absent_no_facts with an empty together value passes; absent_with_facts and
                      witness_value_mismatch fail; a key missing from the together answer, a failed cast and a change
                      between the two witness reads are undecided (not_run witness_incomplete) unless a known fail wins;
-                     the closure qty gets no statement (its key read is its witness); details hold counts only
+                     the closure qty gets no first statement (its key read is its first witness) but is read again
+                     after the Cube queries like every measure; details hold counts only
   WitnessChunkTest   chunked tests read the witness of every key inside the key-read REPEATABLE READ transaction, in
                      slices of PAIR_KEY_CAP, and the second read after each chunk's Cube queries, for its absent keys only
   WitnessScopeTest   the unfiltered path at or below the cap gets no witness, V4 replays run none, and a pair test that
@@ -39,8 +40,8 @@ CLOSURE_PAIR = f"pair:{QTY}+{A}"
 WID = f"v3w:pair_witness:{A}+{B}"
 CLOSURE_WID = f"v3w:pair_witness:{QTY}+{A}"
 RR_BEGIN = "BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY"
-# the demo measures' where_sql, told apart by their filter values
-MEASURE_OF = (("'FIRM'", A), ("'CONSIGN'", "m_consigned.value"), ("'MAIN'", B))
+# the demo measures' where_sql, told apart by their filter values, and the closure qty's reread of its table
+MEASURE_OF = (('_closure" t', QTY), ("'FIRM'", A), ("'CONSIGN'", "m_consigned.value"), ("'MAIN'", B))
 COUNTS = ("asked_keys", "incomplete_keys", "absent_no_facts", "absent_with_facts", "witness_value_mismatch", "undecided",
           "together_absent", "not_witnessed", "witness_type", "witness_error", "witness_changed")
 
@@ -315,14 +316,24 @@ class WitnessLabelTest(unittest.TestCase):
         self.assertEqual((c.status, c.detail["absent_with_facts"], c.detail["together_absent"]), ("fail", 1, 1))
         self.assertNotIn("reason", c.detail)
 
-    def test_the_closure_qty_has_no_statement_and_an_absence_there_has_facts(self):
-        _v, checks, conn = self.run_case({A: self.full({"P00008"})}, {QTY: {"P00007"}, A: {"P00008"}},
-                                         test_id=CLOSURE_PAIR)
+    def test_the_closure_qty_has_no_first_statement_and_an_absence_there_has_facts(self):
+        _v, checks, conn = self.run_case({QTY: self.full(), A: self.full({"P00008"})},
+                                         {QTY: {"P00007"}, A: {"P00008"}}, test_id=CLOSURE_PAIR)
         c = checks[CLOSURE_WID]
         self.assertEqual((c.status, c.config_ref), ("fail", "measures.firm_open"))
         self.assertEqual(c.detail, {"mode": "sampled",
                                     **counts(asked_keys=CAP, incomplete_keys=2, absent_with_facts=1, absent_no_facts=1)})
-        self.assertEqual(conn.witness, [(A, self.sample), (A, ["P00008"])], "no statement for the closure qty")
+        self.assertEqual(conn.witness, [(A, self.sample), (QTY, ["P00007"]), (A, ["P00008"])],
+                         "the key read is the closure qty's first read; its absent key is read again")
+        reread = next(s for s in conn.witness_sql() if '_closure" t' in s)
+        self.assertIn('FROM "sxc_out"."has_component_closure" t WHERE t."ancestor" IN (', reread)
+
+    def test_a_closure_key_gone_at_the_second_read_is_undecided(self):
+        _v, checks, _conn = self.run_case({QTY: self.full(), A: self.full()}, {QTY: {"P00007"}},
+                                          test_id=CLOSURE_PAIR, later={QTY: self.full({"P00007"})})
+        c = checks[CLOSURE_WID]
+        self.assertEqual((c.status, c.detail.get("reason"), c.detail["witness_changed"], c.detail["absent_with_facts"]),
+                         ("not_run", "witness_incomplete", 1, 0), "a closure rebuild during verify is not a fail")
 
     def test_every_key_answered_passes_with_nothing_absent(self):
         _v, checks, conn = self.run_case({A: self.full(), B: self.full()}, {})

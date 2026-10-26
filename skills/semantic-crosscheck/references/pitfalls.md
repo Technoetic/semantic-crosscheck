@@ -10,7 +10,8 @@ leave these sparse cases `not_run` too: independent existence evidence is requir
 from an incomplete response, and substituting NULL would hide that uncertainty. After 0.10.0 (unreleased),
 `verify.existence_witness = true` supplies that evidence as a separate check, `v3w:pair_witness:<member>+<member>`,
 read with the measure's own `where_sql`; it leaves `keys_not_answered` as it is and shares the configuration's
-filters, so a wrong filter in `crosscheck.toml` stays invisible to it.
+filters, so a wrong filter in `crosscheck.toml` stays invisible to it. It reads only the keys an alone answer left
+out: a key an alone answer holds without a qualifying row (a measure cube that dropped a filter) is not witnessed.
 
 Each layer has traps that make two correct-looking formulations disagree. The harness already avoids
 the ones listed here; this page explains them so a failing check can be traced to its cause, and so the

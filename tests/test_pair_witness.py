@@ -6,19 +6,28 @@
   WitnessLabelTest   sampled tests: absent_no_facts with an empty together value passes; absent_with_facts and
                      witness_value_mismatch fail; a key missing from the together answer, a failed cast and a change
                      between the two witness reads are undecided (not_run witness_incomplete) unless a known fail wins;
-                     the closure qty gets no statement (its key read is its witness); details hold counts only
+                     the closure qty gets no first statement (its key read is its first witness) but is read again
+                     after the Cube queries like every measure; details hold counts only, asked_keys,
+                     incomplete_keys, undecided_keys and together_absent per key, the other labels per key and
+                     measure an alone answer left out
   WitnessChunkTest   chunked tests read the witness of every key inside the key-read REPEATABLE READ transaction, in
                      slices of PAIR_KEY_CAP, and the second read after each chunk's Cube queries, for its absent keys only
-  WitnessScopeTest   the unfiltered path at or below the cap gets no witness, V4 replays run none, and a pair test that
-                     errors leaves the witness not_run
+  WitnessScopeTest   the unfiltered path at or below the cap gets no witness, not even when it errors, nor does a pair
+                     test whose key read failed; V4 replays run none, and a sampled or chunked pair test that errors
+                     after its key read leaves the witness not_run (pair_error)
+  WitnessFailureTest whatever the witness's own work raises (a failed statement, savepoint or second-read transaction,
+                     a lost connection, a key it cannot canonicalise) stays in the witness: the V3 check, its detail
+                     (elapsed_ms, which leaves the witness reads out, included) and the V4 baseline are the option-off
+                     run's
 """
 
 import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
-from pg8000.exceptions import DatabaseError
+from pg8000.exceptions import DatabaseError, InterfaceError
 
 import pgfixture
 from semantic_crosscheck import config, shape_q, stage_verify
@@ -34,10 +43,10 @@ CLOSURE_PAIR = f"pair:{QTY}+{A}"
 WID = f"v3w:pair_witness:{A}+{B}"
 CLOSURE_WID = f"v3w:pair_witness:{QTY}+{A}"
 RR_BEGIN = "BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY"
-# the demo measures' where_sql, told apart by their filter values
-MEASURE_OF = (("'FIRM'", A), ("'CONSIGN'", "m_consigned.value"), ("'MAIN'", B))
-COUNTS = ("asked_keys", "incomplete_keys", "absent_no_facts", "absent_with_facts", "witness_value_mismatch", "undecided",
-          "together_absent", "not_witnessed", "witness_type", "witness_error", "witness_changed")
+# the demo measures' where_sql, told apart by their filter values, and the closure qty's reread of its table
+MEASURE_OF = (('_closure" t', QTY), ("'FIRM'", A), ("'CONSIGN'", "m_consigned.value"), ("'MAIN'", B))
+COUNTS = ("asked_keys", "incomplete_keys", "undecided_keys", "together_absent", "absent_no_facts", "absent_with_facts",
+          "witness_value_mismatch", "not_witnessed", "witness_type", "witness_error", "witness_changed")
 
 
 def keys(n: int) -> list[str]:
@@ -53,9 +62,10 @@ class WitnessConn:
     """pair_keys from keys already in the md5 order, and the witness statements of the demo measures: a statement
     answers the asked keys that have qualifying rows (`facts`, per measure member; `later` from the first Cube query
     on, a change between the two reads), or raises the SQLSTATE `fail` names for its measure. Every statement goes to
-    `log`, shared with the client, so their order can be checked."""
+    `log`, shared with the client, so their order can be checked. `trap(conn, sql)` may return an exception for any
+    statement to raise instead of answering; `clock`, a FakeClock, advances one second per statement."""
 
-    def __init__(self, ordered: list, facts=None, later=None, fail=None, log=None):
+    def __init__(self, ordered: list, facts=None, later=None, fail=None, log=None, trap=None, clock=None):
         self.keys = list(ordered)
         self.facts = {m: set(v) for m, v in (facts or {}).items()}
         self.later = {m: set(v) for m, v in (later or {}).items()}
@@ -63,9 +73,15 @@ class WitnessConn:
         self.log = log if log is not None else []
         self.witness: list[tuple[str, list]] = []
         self.cube_started = lambda: False
+        self.trap, self.clock = trap, clock
 
     def run(self, sql, **params):
         self.log.append(("sql", sql))
+        if self.clock is not None:
+            self.clock.now += 1.0
+        error = self.trap(self, sql) if self.trap is not None else None
+        if error is not None:
+            raise error
         if sql.startswith(("BEGIN", "SET LOCAL", "ROLLBACK", "SAVEPOINT", "RELEASE")):
             return None
         if "count(DISTINCT" in sql:
@@ -136,9 +152,20 @@ def paired(conn: WitnessConn, client: WitnessClient):
     return conn, client
 
 
+class FakeClock:
+    """shape_q's time module in a test: monotonic() is `now`, which WitnessConn advances per statement."""
+
+    def __init__(self):
+        self.now = 0.0
+
+    def monotonic(self) -> float:
+        return self.now
+
+
 def run_v3(case: unittest.TestCase, conn, client, test_id: str = PAIR, budget: int | None = None,
-           witness: bool = True):
-    """_Verify.v3 of a demo pair test as the verify stage runs it: (the _Verify, {check id: check}, the test)."""
+           witness: bool = True, edit=None):
+    """_Verify.v3 of a demo pair test as the verify stage runs it: (the _Verify, {check id: check}, the test).
+    edit(test), when given, changes the test before it runs."""
     cfg = demo_cfg()
     cfg.verify.existence_witness = witness
     if budget is not None:
@@ -147,6 +174,8 @@ def run_v3(case: unittest.TestCase, conn, client, test_id: str = PAIR, budget: i
     case.addCleanup(tmp.cleanup)
     v = stage_verify._Verify(cfg, Path(tmp.name), demo_model(cfg), ["v3", "v4"])
     test = next(t for t in shape_q.tests(cfg, v.model) if t["id"] == test_id)
+    if edit is not None:
+        edit(test)
     v.v3(conn, client, test, None)
     return v, {c.id: c for c in v.res.checks}, test
 
@@ -166,10 +195,12 @@ class WitnessConfigTest(unittest.TestCase):
         self.assertIs(config.Verify().existence_witness, False)
         self.assertIs(demo_cfg().verify.existence_witness, False)
         self.assertIs(self.load("[verify]\nexistence_witness = true\n").verify.existence_witness, True)
-        for bad in ("1", '"true"', "0"):
-            with self.subTest(value=bad), self.assertRaises(StageError) as e:
-                self.load(f"[verify]\nexistence_witness = {bad}\n")
-            self.assertEqual(e.exception.exit_code, EXIT_CONFIG)
+        for bad in ("1", '"true"', "0", "[true]"):
+            with self.subTest(value=bad):
+                with self.assertRaises(StageError) as e:
+                    self.load(f"[verify]\nexistence_witness = {bad}\n")
+                self.assertEqual(e.exception.exit_code, EXIT_CONFIG)
+                self.assertIn("verify.existence_witness", str(e.exception))
 
 
 class WitnessOffTest(unittest.TestCase):
@@ -230,8 +261,10 @@ class WitnessLabelTest(unittest.TestCase):
         self.assertNotRegex(json.dumps(v.res.to_dict()), r"P\d{5}", "no key values in results")
         line = next(line for line in v.res.not_proven if line.startswith(f"{WID}: "))
         for phrase in ("where_sql", "crosscheck.toml", "not that the data is complete", "NULL key group",
-                       "bracket", "not shared"):
+                       "bracket", "not shared", "keys Cube left out of an alone answer have no qualifying row",
+                       "keys an alone answer holds are not witnessed"):
             self.assertIn(phrase, line)
+        self.assertNotIn("agree on which asked keys have qualifying rows", line, "the witness checks one direction")
 
     def test_absent_with_facts_fails(self):
         v, checks, _conn = self.run_case({A: self.full(), B: self.full()}, {A: {"P00007"}})
@@ -240,7 +273,7 @@ class WitnessLabelTest(unittest.TestCase):
         self.assertEqual(checks[f"v3:{PAIR}"].status, "not_run")
         action = stage_verify._next_action(v.res)
         self.assertIn(WID, action)
-        self.assertIn("absent_with_facts", action)
+        self.assertIn("1 key-measure absence(s), absent_with_facts", action)
 
     def test_a_non_empty_together_value_without_facts_is_a_mismatch(self):
         for value in ("0", "5"):
@@ -256,7 +289,7 @@ class WitnessLabelTest(unittest.TestCase):
         c = checks[WID]
         self.assertEqual((c.status, c.detail.get("reason")), ("not_run", "witness_incomplete"))
         self.assertEqual(c.detail, {"mode": "sampled", "reason": "witness_incomplete",
-                                    **counts(asked_keys=CAP, incomplete_keys=1, undecided=1, together_absent=1)})
+                                    **counts(asked_keys=CAP, incomplete_keys=1, undecided_keys=1, together_absent=1)})
         self.assertEqual(len(conn.witness), 2, "no second read without an alone absence")
 
     def test_a_failed_cast_is_undecided_and_the_other_measure_is_still_witnessed(self):
@@ -264,7 +297,7 @@ class WitnessLabelTest(unittest.TestCase):
                                          fail={A: "22P02"})
         c = checks[WID]
         self.assertEqual((c.status, c.detail.get("reason")), ("not_run", "witness_incomplete"))
-        self.assertEqual((c.detail["witness_type"], c.detail["undecided"], c.detail["absent_no_facts"]), (1, 1, 1))
+        self.assertEqual((c.detail["witness_type"], c.detail["undecided_keys"], c.detail["absent_no_facts"]), (1, 1, 1))
         self.assertEqual(conn.witness, [(A, self.sample), (B, self.sample), (B, ["P00011"])])
         sql = [s for kind, s in conn.log if kind == "sql"]
         self.assertIn("ROLLBACK TO SAVEPOINT sxc_witness", sql, "the failed statement does not abort the key read")
@@ -280,8 +313,21 @@ class WitnessLabelTest(unittest.TestCase):
             with self.subTest(pre_has_facts="P00007" in pre):
                 _v, checks, _conn = self.run_case({A: pre, B: self.full()}, {A: {"P00007"}}, later={A: post})
                 c = checks[WID]
-                self.assertEqual((c.status, c.detail["witness_changed"], c.detail["undecided"]),
+                self.assertEqual((c.status, c.detail["witness_changed"], c.detail["undecided_keys"]),
                                  ("not_run", 1, 1))
+
+    def test_undecided_keys_count_keys_and_the_labels_count_key_measure_absences(self):
+        v, checks, _conn = self.run_case({}, {A: {"P00007"}, B: {"P00007"}}, fail={A: "22P02", B: "22P02"},
+                                         together_missing={"P00009"})
+        c = checks[WID]
+        self.assertEqual(c.detail, {"mode": "sampled", "reason": "witness_incomplete",
+                                    **counts(asked_keys=CAP, incomplete_keys=2, undecided_keys=2, together_absent=1,
+                                             witness_type=2)},
+                         "P00007 is one undecided key with two undecided absences; P00009 is one key")
+        action = stage_verify._not_run_action(c)
+        for phrase in (f"{WID} left 2 key(s) undecided", "together_absent 1", "witness_type 2",
+                       "per key and measure an alone answer left out"):
+            self.assertIn(phrase, action)
 
     def test_a_known_fail_wins_over_undecided_keys(self):
         _v, checks, _conn = self.run_case({A: self.full(), B: self.full()}, {A: {"P00007"}},
@@ -290,14 +336,24 @@ class WitnessLabelTest(unittest.TestCase):
         self.assertEqual((c.status, c.detail["absent_with_facts"], c.detail["together_absent"]), ("fail", 1, 1))
         self.assertNotIn("reason", c.detail)
 
-    def test_the_closure_qty_has_no_statement_and_an_absence_there_has_facts(self):
-        _v, checks, conn = self.run_case({A: self.full({"P00008"})}, {QTY: {"P00007"}, A: {"P00008"}},
-                                         test_id=CLOSURE_PAIR)
+    def test_the_closure_qty_has_no_first_statement_and_an_absence_there_has_facts(self):
+        _v, checks, conn = self.run_case({QTY: self.full(), A: self.full({"P00008"})},
+                                         {QTY: {"P00007"}, A: {"P00008"}}, test_id=CLOSURE_PAIR)
         c = checks[CLOSURE_WID]
         self.assertEqual((c.status, c.config_ref), ("fail", "measures.firm_open"))
         self.assertEqual(c.detail, {"mode": "sampled",
                                     **counts(asked_keys=CAP, incomplete_keys=2, absent_with_facts=1, absent_no_facts=1)})
-        self.assertEqual(conn.witness, [(A, self.sample), (A, ["P00008"])], "no statement for the closure qty")
+        self.assertEqual(conn.witness, [(A, self.sample), (QTY, ["P00007"]), (A, ["P00008"])],
+                         "the key read is the closure qty's first read; its absent key is read again")
+        reread = next(s for s in conn.witness_sql() if '_closure" t' in s)
+        self.assertIn('FROM "sxc_out"."has_component_closure" t WHERE t."ancestor" IN (', reread)
+
+    def test_a_closure_key_gone_at_the_second_read_is_undecided(self):
+        _v, checks, _conn = self.run_case({QTY: self.full(), A: self.full()}, {QTY: {"P00007"}},
+                                          test_id=CLOSURE_PAIR, later={QTY: self.full({"P00007"})})
+        c = checks[CLOSURE_WID]
+        self.assertEqual((c.status, c.detail.get("reason"), c.detail["witness_changed"], c.detail["absent_with_facts"]),
+                         ("not_run", "witness_incomplete", 1, 0), "a closure rebuild during verify is not a fail")
 
     def test_every_key_answered_passes_with_nothing_absent(self):
         _v, checks, conn = self.run_case({A: self.full(), B: self.full()}, {})
@@ -365,12 +421,105 @@ class WitnessScopeTest(unittest.TestCase):
         self.assertEqual(conn.witness, before)
         self.assertEqual(len([s for kind, s in conn.log if kind == "sql"]), reads, "no key read either")
 
+    def test_an_unwitnessed_pair_test_that_errors_gets_no_witness_check(self):
+        small = keys(10)
+        conn, client = paired(WitnessConn(small, {A: set(small), B: set(small)}), WitnessClient(small, fail=True))
+        v, checks, _t = run_v3(self, conn, client)
+        self.assertEqual(checks[f"v3:{PAIR}"].status, "error")
+        self.assertEqual(list(checks), [f"v3:{PAIR}"], "the unfiltered path gets no witness, also when it errors")
+        self.assertFalse([line for line in v.res.not_proven if line.startswith("v3w:")])
+
+        def trap(_conn, sql):
+            if "count(DISTINCT" in sql:
+                return DatabaseError({"S": "ERROR", "C": "57014", "M": "canceling statement"})
+            return None
+        every = keys(CAP + 5)
+        conn, client = paired(WitnessConn(every, {A: set(every), B: set(every)}, trap=trap), WitnessClient(every))
+        _v, checks, _t = run_v3(self, conn, client)
+        self.assertEqual(checks[f"v3:{PAIR}"].status, "error")
+        self.assertEqual(list(checks), [f"v3:{PAIR}"], "a key read that failed armed no witness")
+        self.assertEqual(conn.witness, [])
+
     def test_a_pair_test_that_errors_leaves_the_witness_not_run(self):
         every = keys(CAP + 5)
         conn, client = paired(WitnessConn(every, {A: set(every), B: set(every)}), WitnessClient(every, fail=True))
         _v, checks, _t = run_v3(self, conn, client)
         self.assertEqual(checks[f"v3:{PAIR}"].status, "error")
         self.assertEqual((checks[WID].status, checks[WID].detail), ("not_run", {"reason": "pair_error"}))
+
+
+
+def dead_from_first_witness(conn, sql):
+    """The connection is lost at the first witness statement: it and every later statement raise InterfaceError."""
+    if sql.startswith("SELECT DISTINCT"):
+        conn.dead = True
+    return InterfaceError("network error") if getattr(conn, "dead", False) else None
+
+
+class WitnessFailureTest(unittest.TestCase):
+    every = keys(CAP + 5)
+
+    def same_as_off(self, trap, budget=None, edit=None):
+        """The demo pair test with P00007 missing from A's alone answer, off and on under the same trap and a fake
+        clock: asserts that the V3 check (elapsed_ms included), the V4 baseline and the other not_proven lines are
+        the option-off run's, and returns (the witness check of the on run, its V3 check)."""
+        facts = {A: set(self.every) - {"P00007"}, B: set(self.every)}
+        runs = {}
+        for witness in (False, True):
+            clock = FakeClock()
+            conn = WitnessConn(self.every, facts, trap=trap, clock=clock)
+            with mock.patch.object(shape_q, "time", clock):
+                runs[witness] = run_v3(self, *paired(conn, WitnessClient(self.every, {A: {"P00007"}})),
+                                       budget=budget, witness=witness, edit=edit)
+        (off_v, off, _t), (on_v, on, _t) = runs[False], runs[True]
+        pair = f"v3:{PAIR}"
+        self.assertEqual((on[pair].status, on[pair].detail), (off[pair].status, off[pair].detail))
+        self.assertEqual(on_v.baseline, off_v.baseline, "V4 sees the same V3 status")
+        self.assertEqual([line for line in on_v.res.not_proven if not line.startswith("v3w:")], off_v.res.not_proven)
+        self.assertNotRegex(json.dumps(on_v.res.to_dict()), r"P\d{5}", "no key values in results")
+        return on.get(WID), on[pair]
+
+    def test_a_lost_connection_during_the_witness_leaves_the_pair_test_as_off(self):
+        for mode, budget in (("sampled", None), ("chunked", 5000)):
+            with self.subTest(mode=mode):
+                w, pair = self.same_as_off(dead_from_first_witness, budget)
+                self.assertNotEqual(pair.status, "error")
+                self.assertEqual((w.status, w.detail["reason"], w.detail["witness_error"]),
+                                 ("not_run", "witness_incomplete", 1))
+
+    def test_a_failed_savepoint_is_a_witness_error(self):
+        def trap(_conn, sql):
+            if sql.startswith("SAVEPOINT"):
+                return DatabaseError({"S": "ERROR", "C": "25P02", "M": "current transaction is aborted"})
+            return None
+        for mode, budget in (("sampled", None), ("chunked", 5000)):
+            with self.subTest(mode=mode):
+                w, _pair = self.same_as_off(trap, budget)
+                self.assertEqual((w.status, w.detail["witness_error"], w.detail["absent_no_facts"]), ("not_run", 1, 0))
+
+    def test_a_second_read_that_cannot_begin_is_a_witness_error(self):
+        def trap(conn, sql):
+            if sql.startswith("BEGIN") and conn.cube_started():
+                return InterfaceError("network error")
+            return None
+        for mode, budget in (("sampled", None), ("chunked", 5000)):
+            with self.subTest(mode=mode):
+                w, _pair = self.same_as_off(trap, budget)
+                self.assertEqual((w.status, w.detail["witness_error"], w.detail["witness_changed"]), ("not_run", 1, 0))
+
+    def test_elapsed_ms_leaves_the_witness_reads_out(self):
+        w, pair = self.same_as_off(None, 5000)
+        self.assertEqual((pair.detail["mode"], w.status), ("chunked", "pass"))
+        self.assertGreater(pair.detail["elapsed_ms"], 0, "the fake clock moves with the key read")
+
+    def test_a_key_the_witness_cannot_canonicalise_errors_the_pair_test_as_off(self):
+        def edit(test):
+            test["kinds"][test["alone"][A]] = "no_such_kind"
+        for mode, budget in (("sampled", None), ("chunked", 5000)):
+            with self.subTest(mode=mode):
+                w, pair = self.same_as_off(None, budget, edit)
+                self.assertEqual((pair.status, pair.detail["error"]), ("error", "ValueError"))
+                self.assertEqual((w.status, w.detail), ("not_run", {"reason": "pair_error"}))
 
 
 if __name__ == "__main__":

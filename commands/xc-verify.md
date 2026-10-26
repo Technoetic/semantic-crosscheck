@@ -54,7 +54,8 @@ python "${CLAUDE_PLUGIN_ROOT}/skills/semantic-crosscheck/scripts/sxc.py" verify 
   (unreleased), `verify.existence_witness = true` adds `v3w:pair_witness:<member>+<member>` to every
   sampled or chunked pair test: each asked key the together answer holds but an alone answer leaves out
   is read in PostgreSQL with the measure's `where_sql` (in the key-read snapshot and again after the Cube
-  queries). The pair test's own status and V4 are unchanged; V4 replays run no witness.
+  queries). The pair test's own status and V4 are unchanged, also when the witness fails; V4 replays run
+  no witness. Pair tests of at most 2,000 keys compare every key unfiltered and get no witness check.
 - V4 patches copies of the model and serves each mutant in a fresh Cube process. Only suite items that
   pass against the unmutated model are replayed (V1, the first `verify.mutant_bindings` bindings per
   stratum, V3), and the suite stops at the first item that does not pass. Only a failing item kills a
@@ -114,13 +115,16 @@ that generated the model. Fix `crosscheck.toml` or the gold SQL file, never the 
   (`keys_not_answered`), `answered_keys` is below `compared_keys`: Cube's together or alone answers left keys
   out, and those keys were not compared.
 - `v3w:pair_witness:<member>+<member>` (after 0.10.0, unreleased, with `verify.existence_witness`)
-  fails: an alone answer left out a key the measure has rows for under `crosscheck.toml`'s filters
-  (`absent_with_facts`, also any absence from the closure `qty`), or a key without such rows had a
-  non-empty together value (`witness_value_mismatch`). Compare the generated measure cube with the
-  configuration and rerun `cube`. `not_run` (`witness_incomplete`) counts undecided keys: missing from
-  the together answer (`together_absent`), a failed cast (`witness_type`) or statement (`witness_error`),
-  or a change between the two reads (`witness_changed`). A pass means only that every key Cube left out
-  of an alone answer has no qualifying row under the same filters, not that the data is complete.
+  fails: an alone answer left out a key the measure has rows for under `crosscheck.toml`'s filters in
+  both reads (`absent_with_facts`; for the closure `qty`, a key the closure table still has), or a key
+  without such rows had a non-empty together value (`witness_value_mismatch`). Compare the generated
+  measure cube with the configuration and rerun `cube`. `not_run` (`witness_incomplete`): `undecided_keys`
+  keys stayed undecided, missing from the together answer (`together_absent`, counted per key) or with an
+  absence (counted per key and measure an alone answer left out) that a failed cast (`witness_type`),
+  another failed statement or a lost connection (`witness_error`) or a change between the two reads
+  (`witness_changed`) left open. `not_run` (`pair_error`): the witnessed pair test itself is an `error`.
+  A pass means only that every key Cube left out of an alone answer has no qualifying row under the same
+  filters, not that the data is complete; keys an alone answer holds are not witnessed.
 - `v4:<operator>:<target>` fails: a mutant that changes results on this data survived, so the gold suite
   cannot see that kind of error. Add a gold query, a mapped column or a stratum that would observe it,
   then rerun. Do not drop the operator from `verify.mutation_operators` to hide a survivor. When the

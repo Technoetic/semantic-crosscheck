@@ -25,15 +25,20 @@ All notable changes to this project are recorded here. The format follows
   the rule is right. With the option off nothing changes.
 - Opt-in `verify.existence_witness` (default `false`): each sampled or chunked V3 pair test gains a separate
   check `v3w:pair_witness:<member>+<member>`. For every asked key that Cube's together answer holds but an alone
-  answer leaves out, PostgreSQL is asked whether the measure has a row satisfying its configured `where_sql`, binding
-  the texts Cube's equals filter receives: once in the key-read REPEATABLE READ snapshot and again after the Cube
-  queries. Keys without such rows and with an empty (NULL) together value pass (`absent_no_facts`); keys with rows,
-  any absence from the closure `qty` and a non-empty together value fail (`absent_with_facts`,
-  `witness_value_mismatch`); a key missing from the together answer, a failed cast or a change between the two
-  reads leaves the check `not_run` (`witness_incomplete`). Details hold counts only. The pair test's own status,
-  detail, D95 bound and V4 role are unchanged, the unfiltered path at or below 2,000 keys gets no witness, and V4
-  replays do not run it. The witness shares the configuration's filters with the measure cubes, so it shows
-  agreement on key presence, not data completeness. With the option off every output is unchanged.
+  answer leaves out, PostgreSQL is asked whether the measure has a row satisfying its configured `where_sql` (for
+  the closure `qty`, whether the closure table still has the key), binding the texts Cube's equals filter receives:
+  once in the key-read REPEATABLE READ snapshot and again after the Cube queries. Keys without such rows and with
+  an empty (NULL) together value pass (`absent_no_facts`); keys with rows in both reads fail (`absent_with_facts`),
+  as do keys without rows but with a non-empty together value (`witness_value_mismatch`); a key missing from the
+  together answer, a failed cast, another failed statement (`witness_error`) or a change between the two reads
+  leaves the check `not_run` (`witness_incomplete`). Details hold counts only: `asked_keys`, `incomplete_keys`,
+  `undecided_keys` and `together_absent` count keys, the other labels count absences (one per key and measure an
+  alone answer left out). The pair test's own status, detail (the chunked `elapsed_ms` leaves the witness reads
+  out), D95 bound and V4 role are unchanged, also when the witness's statements or connection fail; the unfiltered
+  path at or below 2,000 keys gets no witness, not even when it errors, and V4 replays do not run it. The witness
+  shares the configuration's filters with the measure cubes and reads only the keys an alone answer left out, so a
+  pass shows that those keys have no qualifying row under the same filters; keys an alone answer holds are not
+  witnessed, and data completeness is not shown. With the option off every output is unchanged.
 
 ### Changed
 

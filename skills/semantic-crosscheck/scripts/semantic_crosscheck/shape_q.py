@@ -355,19 +355,25 @@ def pair_keys(conn, cfg, test: dict, budget: int | None = None,
     in one READ ONLY REPEATABLE READ transaction, so the count and the keys see the same rows. The keys are None when
     there are not more than PAIR_KEY_CAP, every key in the md5 order when there are not more than `budget` (the chunked
     baseline run), and otherwise a deterministic sample of PAIR_KEY_CAP of them: the first keys of that order. A
-    `witness` (verify.existence_witness) reads its first witness of those keys in the same transaction."""
+    `witness` (verify.existence_witness) reads its first witness of those keys in the same transaction; when one of
+    its savepoint commands failed, a failure to end the transaction afterwards is the witness's, not the key read's."""
     table, column = test["keys_from"]
     col, source = f"t.{ident.quote(column)}", ident.qualified(table)
-    with db.read_only(conn, cfg.source.statement_timeout_ms, isolation="repeatable read"):
-        total = int(db.scalar(conn, f"SELECT count(DISTINCT {col}) FROM {source} t") or 0)
-        if total <= PAIR_KEY_CAP:
-            return total, None
-        n = total if budget is not None and total <= budget else PAIR_KEY_CAP
-        rows = conn.run(f"SELECT s.k FROM (SELECT DISTINCT {col} AS k FROM {source} t WHERE {col} IS NOT NULL) s "
-                        f"ORDER BY {sweep.md5_order('s.k')} LIMIT :n", seed=str(cfg.verify.seed), n=n)
-        keys = [r[0] for r in rows or []]
-        if witness is not None:
-            witness.before(keys)
+    keys = None
+    try:
+        with db.read_only(conn, cfg.source.statement_timeout_ms, isolation="repeatable read"):
+            total = int(db.scalar(conn, f"SELECT count(DISTINCT {col}) FROM {source} t") or 0)
+            if total <= PAIR_KEY_CAP:
+                return total, None
+            n = total if budget is not None and total <= budget else PAIR_KEY_CAP
+            rows = conn.run(f"SELECT s.k FROM (SELECT DISTINCT {col} AS k FROM {source} t WHERE {col} IS NOT NULL) s "
+                            f"ORDER BY {sweep.md5_order('s.k')} LIMIT :n", seed=str(cfg.verify.seed), n=n)
+            keys = [r[0] for r in rows or []]
+            if witness is not None:
+                witness.before(keys)
+    except compare.expected_errors():
+        if keys is None or witness is None or not witness.broken:
+            raise
     return total, keys
 
 
@@ -448,8 +454,12 @@ def chunk_note(detail: dict) -> str:
             "shared with no other query and not with SQL")
 
 
-WITNESS_COUNTS = ("asked_keys", "incomplete_keys", "absent_no_facts", "absent_with_facts", "witness_value_mismatch",
-                  "undecided", "together_absent", "not_witnessed", "witness_type", "witness_error", "witness_changed")
+# per key: asked_keys, incomplete_keys, undecided_keys, together_absent; the other labels per key and measure whose
+# alone answer left the key out (one key missing from two alone answers is two absences)
+WITNESS_COUNTS = ("asked_keys", "incomplete_keys", "undecided_keys", "together_absent", "absent_no_facts",
+                  "absent_with_facts", "witness_value_mismatch", "not_witnessed", "witness_type", "witness_error",
+                  "witness_changed")
+_DECIDED = ("absent_no_facts", "absent_with_facts", "witness_value_mismatch")
 _SAVEPOINT = "sxc_witness"
 
 
@@ -470,27 +480,39 @@ class PairWitness:
     bound to the same texts Cube's equals filter receives (_filter_text) and sent untyped, as Cube's PostgreSQL
     driver sends them, so PostgreSQL casts them to the key column's type the same way; the answer is canonicalised
     with the alone dimension's kind. A statement that fails is undecided (witness_type for a failed cast, SQLSTATE
-    class 22, witness_error otherwise); it runs under a savepoint, so the transaction goes on. The closure cube's qty
-    gets no statement: its alone query reads the closure table by the column the keys were read from, in the key-read
-    snapshot every asked key has closure rows, so its key read is its witness and an absence there has facts.
+    class 22, witness_error otherwise, a lost connection included); it runs under a savepoint, so the transaction goes
+    on, and a failed savepoint command or second-read transaction leaves the keys it covers witness_error. The
+    witness catches whatever its own work raises (compare.expected_errors), so it never reaches the pair test, and
+    its reads are left out of the pair test's elapsed_ms. The closure cube's qty gets no first statement: its alone
+    query reads the closure table by the column the keys were read from (no filter), so in the key-read snapshot
+    every asked key has closure rows and the key read is its first read; its second read asks the closure table
+    again for the absent keys (SELECT DISTINCT t.<column> FROM <closure table> t WHERE t.<column> IN (...)), so a
+    closure rebuilt between the reads is witness_changed, not a fail.
 
     The first read (before) runs inside pair_keys's READ ONLY REPEATABLE READ transaction, over every asked key in
     slices of PAIR_KEY_CAP; the second (observe) runs after the sample's or the chunk's Cube queries in a new READ ONLY
     REPEATABLE READ transaction, for the absent keys only. A key is classified only when both reads agree
-    (otherwise witness_changed, undecided); Cube's queries each read their own snapshot, which the two reads bracket
-    but never share. Labels, per asked key and measure whose alone answer left the key out:
+    (otherwise witness_changed, undecided), the closure qty's included; Cube's queries each read their own snapshot,
+    which the two reads bracket but never share. Labels, counted per asked key and measure whose alone answer left
+    the key out (an absence):
 
       absent_no_facts         no witness row and the together value is empty (NULL, the value Cube gives a key
                               without facts, since count is re-aggregated as a sum: cube_gen.measure_cube)
       witness_value_mismatch  no witness row, but the together value is not empty
-      absent_with_facts       a witness row (or the closure qty): Cube left out a key the configuration has rows for
-      undecided               no witness statement (not_witnessed), a failed statement, or a change between reads
-    An asked key missing from the together answer is undecided once (together_absent): a fact-table witness cannot
-    tell why the together query left it out. The NULL key group is outside the witness (no equals filter asks it).
+      absent_with_facts       a witness row in both reads: Cube left out a key the configuration (or the closure
+                              table, for the closure qty) has rows for
+      undecided               no witness statement (not_witnessed), a failed statement (witness_type,
+                              witness_error), or a change between reads (witness_changed)
+    An asked key missing from the together answer is labelled once, per key (together_absent): a fact-table witness
+    cannot tell why the together query left it out. undecided_keys counts the keys with an undecided absence or
+    together_absent, once each; asked_keys and incomplete_keys count keys too. The NULL key group is outside the
+    witness (no equals filter asks it).
 
-    result() is the separate check: pass when every incompletely answered key is absent_no_facts, fail on any
-    absent_with_facts or witness_value_mismatch, otherwise not_run (witness_incomplete) when a key is undecided. The
-    detail holds counts only, never keys. The witness never changes the pair test's own status or detail."""
+    The witness checks one direction: a key an alone answer holds is not witnessed, even when no row qualifies.
+
+    result() is the separate check: pass when every absence is absent_no_facts, fail on any absent_with_facts or
+    witness_value_mismatch, otherwise not_run (witness_incomplete) when a key is undecided. The detail holds counts
+    only, never keys. The witness never changes the pair test's own status or detail."""
 
     def __init__(self, conn, cfg, test: dict):
         self.conn, self.cfg, self.test = conn, cfg, test
@@ -499,101 +521,124 @@ class PairWitness:
         self.pre: dict[str, dict] = {m: {} for m in test["measures"]}
         self.counts = dict.fromkeys(WITNESS_COUNTS, 0)
         self.armed = False
+        self.broken = False     # a savepoint command of the current transaction failed
+        self.seconds = 0.0      # time spent in before and observe, left out of the pair test's elapsed_ms
         self.mode = "sampled"   # _run_chunks makes it chunked
 
     def _spec(self, member: str):
-        """'closure' for a closure cube's measure, None when no configuration measure backs the member, otherwise
-        (statement head, alone dimension kind)."""
+        """None when no configuration measure backs the member, otherwise (statement head, alone dimension kind,
+        whether the key read is the first read: the closure cube's qty, read from the closure table)."""
         cube = member.split(".", 1)[0]
+        kind = self.kinds.get(self.test["alone"][member])
         if cube in {naming.cube_closure(h) for h in self.cfg.hierarchies}:
-            return "closure"
+            table, column = self.test["keys_from"]
+            col = f"t.{ident.quote(column)}"
+            return f"SELECT DISTINCT {col} FROM {ident.qualified(table)} t WHERE {col} IN ", kind, True
         m = next((m for m in self.cfg.measures.values()
                   if naming.cube_measure(m.name) == cube and not m.date_column), None)
         if m is None or member != _m(cube, naming.MEASURE_VALUE):
             return None
         table = ident.qualified(self.cfg.entity(m.entity, f"measures.{m.name}").table)
         by = f"t.{ident.quote(m.by)}"
-        head = f"SELECT DISTINCT {by} FROM {table} t WHERE {cube_gen.where_sql(m)} AND {by} IN "
-        return head, self.kinds.get(self.test["alone"][member])
+        return f"SELECT DISTINCT {by} FROM {table} t WHERE {cube_gen.where_sql(m)} AND {by} IN ", kind, False
 
     def _read(self, member: str, keys: list) -> dict:
         """{canonical alone key: True (a qualifying row) | False | a failure label} for keys, in slices of
-        PAIR_KEY_CAP, inside the caller's transaction; each statement under a savepoint."""
-        head, kind = self.specs[member]
+        PAIR_KEY_CAP, inside the caller's transaction; each statement under a savepoint. A failed statement labels
+        its slice (witness_type for SQLSTATE class 22, witness_error otherwise); once a savepoint command fails the
+        transaction cannot go on (broken), and the remaining slices are witness_error without a statement."""
+        head, kind, _key_read = self.specs[member]
         out = {}
         for i in range(0, len(keys), PAIR_KEY_CAP):
             part = keys[i:i + PAIR_KEY_CAP]
-            try:
-                canonical = [canon.canon(k, kind) for k in part]
-            except ValueError:
-                out.update({canon.key(k): "witness_type" for k in part})
+            canonical = [canon.canon(k, kind) for k in part]
+            if self.broken:
+                out.update(dict.fromkeys(canonical, "witness_error"))
                 continue
             params = {f"k{j}": _filter_text(k) for j, k in enumerate(part)}
             sql = head + "(" + ", ".join(f":{name}" for name in params) + ")"
-            self.conn.run(f"SAVEPOINT {_SAVEPOINT}")
+            if not self._savepoint("SAVEPOINT"):
+                out.update(dict.fromkeys(canonical, "witness_error"))
+                continue
             try:
                 rows = self.conn.run(sql, **params)
-                found = {canon.canon(r[0], kind) for r in rows or []}
-            except _database_errors() as e:
-                self.conn.run(f"ROLLBACK TO SAVEPOINT {_SAVEPOINT}")
-                label = "witness_type" if compare.error_detail(e).get("sqlstate", "").startswith("22") else "witness_error"
-                out.update(dict.fromkeys(canonical, label))
+            except compare.expected_errors() as e:
+                cast = compare.error_detail(e).get("sqlstate", "").startswith("22")
+                out.update(dict.fromkeys(canonical, "witness_type" if cast else "witness_error"))
+                self._savepoint("ROLLBACK TO SAVEPOINT")
                 continue
-            except ValueError:
-                self.conn.run(f"RELEASE SAVEPOINT {_SAVEPOINT}")
-                out.update(dict.fromkeys(canonical, "witness_type"))
-                continue
-            self.conn.run(f"RELEASE SAVEPOINT {_SAVEPOINT}")
+            found = {canon.canon(r[0], kind) for r in rows or []}
             out.update({k: k in found for k in canonical})
+            self._savepoint("RELEASE SAVEPOINT")
         return out
+
+    def _savepoint(self, command: str) -> bool:
+        """Runs a savepoint command; a failure marks the transaction broken (no more witness statements in it)."""
+        try:
+            self.conn.run(f"{command} {_SAVEPOINT}")
+        except compare.expected_errors():
+            self.broken = True
+            return False
+        return True
 
     def before(self, keys: list):
         """The first read, inside pair_keys's REPEATABLE READ transaction: every asked key of every measure with a
-        witness statement."""
-        self.armed = True
-        for m, spec in self.specs.items():
-            if isinstance(spec, tuple):
-                self.pre[m] = self._read(m, keys)
+        witness statement (the closure qty's first read is the key read itself). Nothing it raises reaches
+        pair_keys: a measure whose read did not finish has no first read for its keys (witness_error when they are
+        absent)."""
+        self.armed, self.broken = True, False
+        started = time.monotonic()
+        try:
+            for m, spec in self.specs.items():
+                if spec is not None and spec[2]:
+                    self.pre[m] = dict.fromkeys((canon.canon(k, spec[1]) for k in keys), True)
+                elif spec is not None:
+                    self.pre[m] = self._read(m, keys)
+        except compare.expected_errors():
+            # only an asked key that cannot be canonicalised (an unknown kind) gets here; _compare canonicalises the
+            # same keys with the same kinds before observe, so the pair test is an error either way
+            pass
+        finally:
+            self.seconds += time.monotonic() - started
 
     def observe(self, asked: list, together: dict, alones: dict):
-        """Classifies the asked keys of one sample or chunk once its Cube queries have answered (see the class)."""
+        """Classifies the asked keys of one sample or chunk once its Cube queries have answered (see the class). The
+        time it takes is left out of the pair test's elapsed_ms."""
+        started = time.monotonic()
+        try:
+            self._observe(asked, together, alones)
+        finally:
+            self.seconds += time.monotonic() - started
+
+    def _observe(self, asked: list, together: dict, alones: dict):
         group_kind = self.kinds.get(self.test["group_by"])
         c = self.counts
         c["asked_keys"] += len(asked)
-        absent: list[tuple] = []          # (measure, asked key, canonical alone key, together value)
-        for k in asked:
+        absent: list[tuple] = []          # (measure, asked key, canonical alone key, together value, asked index)
+        undecided: set[int] = set()       # asked indexes of the undecided keys
+        for i, k in enumerate(asked):
             tk = canon.canon(k, group_kind)
             missing = [(m, canon.canon(k, self.kinds.get(self.test["alone"][m]))) for m in self.test["measures"]]
             missing = [(m, ak) for m, ak in missing if ak not in alones[m]]
             if tk not in together:
                 c["incomplete_keys"] += 1
                 c["together_absent"] += 1
-                c["undecided"] += 1
+                undecided.add(i)
                 continue
             if missing:
                 c["incomplete_keys"] += 1
-            absent += [(m, k, ak, together[tk].get(m)) for m, ak in missing]
-        post: dict[str, dict] = {}
-        reread = {m: [k for mm, k, ak, _v in absent if mm == m and self.pre[m].get(ak) in (True, False)]
-                  for m, spec in self.specs.items() if isinstance(spec, tuple)}
-        if any(reread.values()):
-            with db.read_only(self.conn, self.cfg.source.statement_timeout_ms, isolation="repeatable read"):
-                for m, ks in reread.items():
-                    if ks:
-                        post[m] = self._read(m, ks)
-        for m, _k, ak, value in absent:
-            spec = self.specs[m]
-            if spec == "closure":
-                c["absent_with_facts"] += 1
-                continue
-            if spec is None:
+            absent += [(m, k, ak, together[tk].get(m), i) for m, ak in missing]
+        reread = {m: [k for mm, k, ak, _v, _i in absent if mm == m and self.pre[m].get(ak) in (True, False)]
+                  for m, spec in self.specs.items() if spec is not None}
+        post = self._second_read({m: ks for m, ks in reread.items() if ks})
+        for m, _k, ak, value, i in absent:
+            if self.specs[m] is None:
                 label = "not_witnessed"
             else:
-                pre, after = self.pre[m].get(ak), post.get(m, {}).get(ak)
+                pre = self.pre[m].get(ak, "witness_error")   # no entry: the first read did not finish
+                after = post.get(m, {}).get(ak, "witness_error") if isinstance(pre, bool) else pre
                 if isinstance(pre, str) or isinstance(after, str):
                     label = pre if isinstance(pre, str) else after
-                elif pre is None or after is None:
-                    label = "not_witnessed"
                 elif pre != after:
                     label = "witness_changed"
                 elif pre:
@@ -601,38 +646,50 @@ class PairWitness:
                 else:
                     label = "absent_no_facts" if canon.canon(value) is None else "witness_value_mismatch"
             c[label] += 1
-            if label not in ("absent_with_facts", "absent_no_facts", "witness_value_mismatch"):
-                c["undecided"] += 1
+            if label not in _DECIDED:
+                undecided.add(i)
+        c["undecided_keys"] += len(undecided)
+
+    def _second_read(self, reread: dict) -> dict:
+        """{measure: _read of its keys} in a new READ ONLY REPEATABLE READ transaction. A transaction that cannot
+        begin, be set up or end leaves the measures it has not read out (their keys are witness_error); what it read
+        before stays, since each statement answered from the transaction's one snapshot."""
+        post: dict[str, dict] = {}
+        if not reread:
+            return post
+        self.broken = False
+        try:
+            with db.read_only(self.conn, self.cfg.source.statement_timeout_ms, isolation="repeatable read"):
+                for m, ks in reread.items():
+                    post[m] = self._read(m, ks)
+        except compare.expected_errors():
+            pass
+        return post
 
     def result(self, pair_status: str) -> tuple[str, dict] | None:
-        """(status, detail) of the separate check, or None for a pair test that compared unfiltered (no key read
-        asked for keys, so there is nothing to witness). A pair test that could not run leaves it not_run."""
-        if pair_status == "error":
-            return "not_run", {"reason": "pair_error"}
+        """(status, detail) of the separate check, or None for a pair test the witness never armed for: one that
+        compared unfiltered (no key read asked for keys, so there is nothing to witness) or whose key read failed,
+        whatever its status. A witnessed pair test that could not run leaves it not_run (pair_error), discarding
+        what earlier chunks found: the pair test's error already makes verify an error."""
         if not self.armed:
             return None
+        if pair_status == "error":
+            return "not_run", {"reason": "pair_error"}
         mode = self.mode
         detail = {"mode": mode, **self.counts}
         if detail["absent_with_facts"] or detail["witness_value_mismatch"]:
             return "fail", detail
-        if detail["undecided"]:
+        if detail["undecided_keys"]:
             return "not_run", {"mode": mode, "reason": "witness_incomplete", **self.counts}
         return "pass", detail
-
-
-def _database_errors() -> tuple:
-    try:
-        from pg8000.exceptions import DatabaseError
-    except ImportError:
-        return ()
-    return (DatabaseError,)
 
 
 def witness_note() -> str:
     """The not_proven text of a pair test's existence witness (PairWitness)."""
     return ("the existence witness reuses crosscheck.toml's where_sql (cube_gen.where_sql) for every measure, so it "
-            "shows that Cube and the source SQL agree on which asked keys have qualifying rows, not that the data is "
-            "complete or the filters are right; the NULL key group is outside it; its two reads (one in the key-read "
+            "shows only that the asked keys Cube left out of an alone answer have no qualifying row under the same "
+            "filters, not that the data is complete or the filters are right; it checks one direction: keys an alone "
+            "answer holds are not witnessed; the NULL key group is outside it; its two reads (one in the key-read "
             "REPEATABLE READ snapshot, one after the Cube queries) bracket the per-query Cube snapshots, which are not "
             "shared with them, so a change undone between the two reads is not seen")
 
@@ -868,8 +925,9 @@ def _run_chunks(client, test: dict, total: int, keys: list, started: float,
     except compare.expected_errors() as e:
         return "error", {**compare.error_detail(e), **mode, "chunks_compared": done, "total_keys": total}
     _add(summed, null)
+    witnessed = witness.seconds if witness is not None else 0.0   # the witness reads are not the pair test's time
     detail = {**summed, **mode, "compared_keys": len(keys), "total_keys": total, "null_key_group": null,
-              "elapsed_ms": int((time.monotonic() - started) * 1000)}
+              "elapsed_ms": int((time.monotonic() - started - witnessed) * 1000)}
     if summed["mismatched"] or summed["duplicate_keys"]:
         return "fail", detail
     if summed["answered_keys"] < len(keys):

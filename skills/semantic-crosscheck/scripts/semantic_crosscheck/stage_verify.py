@@ -486,10 +486,12 @@ def _not_run_action(c: Check) -> str:
         return f"{c.id} has no binding (every stratum is empty): check the params of {c.config_ref} or the data"
     if why == "witness_incomplete":
         d = c.detail
-        return (f"{c.id} left {d.get('undecided')} absent key(s) undecided (together_absent {d.get('together_absent')}, "
-                f"witness_type {d.get('witness_type')}, witness_error {d.get('witness_error')}, witness_changed "
-                f"{d.get('witness_changed')}): rerun verify while the source data is not changing, and check that the "
-                f"key columns of {c.config_ref} accept the key values Cube's equals filter receives")
+        return (f"{c.id} left {d.get('undecided_keys')} key(s) undecided (together_absent {d.get('together_absent')} "
+                f"key(s); undecided absences, per key and measure an alone answer left out: not_witnessed "
+                f"{d.get('not_witnessed')}, witness_type {d.get('witness_type')}, witness_error "
+                f"{d.get('witness_error')}, witness_changed {d.get('witness_changed')}): rerun verify while the source "
+                f"data is not changing, and check that the key columns of {c.config_ref} accept the key values Cube's "
+                "equals filter receives")
     if why == "pair_error":
         return f"{c.id} did not run because its pair test could not run: fix that error first, then rerun verify"
     if why == "keys_not_answered":
@@ -520,9 +522,10 @@ def _next_action(res: Result) -> str:
                 "query, a mapped column or a stratum that would, then rerun verify (do not drop the operator)")
     if st == "fail" and first.id.startswith("v3w:"):
         d = first.detail
-        return (f"{first.id}: Cube's standalone answers left out {d.get('absent_with_facts')} key(s) that have "
-                f"qualifying source rows under crosscheck.toml's filters (absent_with_facts), or a key without such "
-                f"rows had a non-empty together value ({d.get('witness_value_mismatch')}, witness_value_mismatch); "
+        return (f"{first.id}: Cube's standalone answers left out keys that have qualifying source rows under "
+                f"crosscheck.toml's filters ({d.get('absent_with_facts')} key-measure absence(s), absent_with_facts), "
+                f"or left out keys without such rows that had a non-empty together value "
+                f"({d.get('witness_value_mismatch')}, witness_value_mismatch); "
                 f"compare the generated measure cubes of {first.config_ref} with crosscheck.toml, rerun cube, then "
                 "rerun verify")
     if st == "fail" and first.id.startswith("v3:closure_oracle:"):

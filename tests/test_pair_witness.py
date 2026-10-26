@@ -259,8 +259,10 @@ class WitnessLabelTest(unittest.TestCase):
         self.assertNotRegex(json.dumps(v.res.to_dict()), r"P\d{5}", "no key values in results")
         line = next(line for line in v.res.not_proven if line.startswith(f"{WID}: "))
         for phrase in ("where_sql", "crosscheck.toml", "not that the data is complete", "NULL key group",
-                       "bracket", "not shared"):
+                       "bracket", "not shared", "keys Cube left out of an alone answer have no qualifying row",
+                       "keys an alone answer holds are not witnessed"):
             self.assertIn(phrase, line)
+        self.assertNotIn("agree on which asked keys have qualifying rows", line, "the witness checks one direction")
 
     def test_absent_with_facts_fails(self):
         v, checks, _conn = self.run_case({A: self.full(), B: self.full()}, {A: {"P00007"}})

@@ -508,6 +508,8 @@ class PairWitness:
     together_absent, once each; asked_keys and incomplete_keys count keys too. The NULL key group is outside the
     witness (no equals filter asks it).
 
+    The witness checks one direction: a key an alone answer holds is not witnessed, even when no row qualifies.
+
     result() is the separate check: pass when every absence is absent_no_facts, fail on any absent_with_facts or
     witness_value_mismatch, otherwise not_run (witness_incomplete) when a key is undecided. The detail holds counts
     only, never keys. The witness never changes the pair test's own status or detail."""
@@ -685,8 +687,9 @@ class PairWitness:
 def witness_note() -> str:
     """The not_proven text of a pair test's existence witness (PairWitness)."""
     return ("the existence witness reuses crosscheck.toml's where_sql (cube_gen.where_sql) for every measure, so it "
-            "shows that Cube and the source SQL agree on which asked keys have qualifying rows, not that the data is "
-            "complete or the filters are right; the NULL key group is outside it; its two reads (one in the key-read "
+            "shows only that the asked keys Cube left out of an alone answer have no qualifying row under the same "
+            "filters, not that the data is complete or the filters are right; it checks one direction: keys an alone "
+            "answer holds are not witnessed; the NULL key group is outside it; its two reads (one in the key-read "
             "REPEATABLE READ snapshot, one after the Cube queries) bracket the per-query Cube snapshots, which are not "
             "shared with them, so a change undone between the two reads is not seen")
 

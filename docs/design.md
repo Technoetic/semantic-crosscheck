@@ -541,6 +541,44 @@ The completeness contract is intentionally conservative: standalone measure cube
 keys with no matching fact rows. Above the sampling cap, such sparse data can therefore become `not_run` even
 without a Cube defect. The harness cannot distinguish legitimate absence from a missing answer without independent
 existence evidence. It does not restore a pass by substituting NULL; the unfiltered path at or below the cap is unchanged.
+The opt-in existence witness below supplies that evidence as a separate check; the pair test's own status stays.
+
+**Existence witness** (after 0.10.0, unreleased; limitation M5). With `verify.existence_witness = true` (default
+`false`, which changes no output) the baseline V3 run gives every sampled or chunked pair test a separate check
+`v3w:pair_witness:<member>+<member>` (`shape_q.PairWitness`). An alone query reads the measure cube by its own key
+column (`SELECT by, agg(column) FROM table t WHERE where_sql GROUP BY by`, no join), so its answer has a row for a
+key exactly when a source row with that key satisfies `cube_gen.where_sql(m)`. The witness asks PostgreSQL that
+condition directly: `SELECT DISTINCT t.<by> FROM <table> t WHERE <where_sql> AND t.<by> IN (:k0, ...)`, binding
+the texts Cube's `equals` filter receives, untyped as Cube's PostgreSQL driver sends them, so PostgreSQL casts them
+to the key column's type as it does for Cube (`'01'` finds the integer 1); answers are canonicalised with the alone
+dimension's kind. The first read runs in the key-read `READ ONLY REPEATABLE READ` transaction of `pair_keys`, one
+statement per alone measure and slice of 2,000 asked keys, each under a savepoint so a failed statement does not
+abort the key read. The second runs after the sample's or chunk's Cube queries, in a new read-only `REPEATABLE
+READ` transaction, for the absent keys only. The closure cube's `qty` gets no statement: its alone query reads the
+closure table by the column the keys came from, so in the key-read snapshot every asked key has closure rows and
+the key read is its witness. Only asked keys present in the together answer and missing from an alone answer are
+classified, per key and measure: `absent_no_facts` (no row in either read and an empty together value),
+`witness_value_mismatch` (no row but a non-empty together value), `absent_with_facts` (a row in both reads, or an
+absence from the closure `qty`) and undecided (`witness_type`: a failed cast, SQLSTATE class 22;
+`witness_error`: another failed statement; `witness_changed`: the two reads disagree; `not_witnessed`: no
+configuration measure backs the member). An asked key missing from the together answer is undecided once
+(`together_absent`): a fact-table witness cannot tell why the together query left it out. The empty together value
+is NULL for every aggregate, since count is re-aggregated as a sum of per-key counts (`cube_gen.measure_cube`);
+`tests/test_pair_witness_pg.py` pins it through Cube 1.8.3 and PostgreSQL for sum and count measures on a node pair
+and on the closure pair (a row with a NULL value, and no alone row). The check passes when every incompletely
+answered key is `absent_no_facts` (with nothing absent it passes with zero counts), fails on any
+`absent_with_facts` or `witness_value_mismatch`, and is otherwise `not_run` (`witness_incomplete`) when a key is
+undecided; a known failure wins. A pair test that is an `error` leaves it `not_run` (`pair_error`). Its detail holds
+`mode` (`sampled` or `chunked`) and counts only (`asked_keys`, `incomplete_keys`, the labels, `undecided` and its
+reasons), never keys. Its `not_proven` line says that the witness reuses `crosscheck.toml`'s `where_sql`, so it shows
+agreement between Cube and the source SQL on key presence, not that the data is complete or the filters right
+(common mode); that the NULL key group is outside it; and that the two reads bracket the per-query Cube snapshots
+without sharing them, so a change undone between the reads is not seen. The pair test's status, reason, counts, D95
+bound and V4 baseline are unchanged; the witness does not restore D95 (a later decision). The unfiltered path at or
+below the cap gets no witness (it already compares an absence as NULL). V4 replays run no witness and keep
+treating `not_run` as an error, not a kill; reusing the first read in V4 replays is left for later. In chunked mode
+the witness adds about ceil(N / 2,000) statements per measure to the key read and one per measure and chunk with
+absent keys afterwards.
 
 **Chunked pair tests** (since 0.9.0). `verify.pair_key_budget` (default 2000, at least the cap) is the
 largest key count the baseline V3 run compares in full; the default keeps the sample above the cap. A pair test with

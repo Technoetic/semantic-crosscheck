@@ -454,8 +454,12 @@ def chunk_note(detail: dict) -> str:
             "shared with no other query and not with SQL")
 
 
-WITNESS_COUNTS = ("asked_keys", "incomplete_keys", "absent_no_facts", "absent_with_facts", "witness_value_mismatch",
-                  "undecided", "together_absent", "not_witnessed", "witness_type", "witness_error", "witness_changed")
+# per key: asked_keys, incomplete_keys, undecided_keys, together_absent; the other labels per key and measure whose
+# alone answer left the key out (one key missing from two alone answers is two absences)
+WITNESS_COUNTS = ("asked_keys", "incomplete_keys", "undecided_keys", "together_absent", "absent_no_facts",
+                  "absent_with_facts", "witness_value_mismatch", "not_witnessed", "witness_type", "witness_error",
+                  "witness_changed")
+_DECIDED = ("absent_no_facts", "absent_with_facts", "witness_value_mismatch")
 _SAVEPOINT = "sxc_witness"
 
 
@@ -489,21 +493,24 @@ class PairWitness:
     slices of PAIR_KEY_CAP; the second (observe) runs after the sample's or the chunk's Cube queries in a new READ ONLY
     REPEATABLE READ transaction, for the absent keys only. A key is classified only when both reads agree
     (otherwise witness_changed, undecided), the closure qty's included; Cube's queries each read their own snapshot,
-    which the two reads bracket but never share. Labels, per asked key and measure whose alone answer left the key
-    out:
+    which the two reads bracket but never share. Labels, counted per asked key and measure whose alone answer left
+    the key out (an absence):
 
       absent_no_facts         no witness row and the together value is empty (NULL, the value Cube gives a key
                               without facts, since count is re-aggregated as a sum: cube_gen.measure_cube)
       witness_value_mismatch  no witness row, but the together value is not empty
       absent_with_facts       a witness row in both reads: Cube left out a key the configuration (or the closure
                               table, for the closure qty) has rows for
-      undecided               no witness statement (not_witnessed), a failed statement, or a change between reads
-    An asked key missing from the together answer is undecided once (together_absent): a fact-table witness cannot
-    tell why the together query left it out. The NULL key group is outside the witness (no equals filter asks it).
+      undecided               no witness statement (not_witnessed), a failed statement (witness_type,
+                              witness_error), or a change between reads (witness_changed)
+    An asked key missing from the together answer is labelled once, per key (together_absent): a fact-table witness
+    cannot tell why the together query left it out. undecided_keys counts the keys with an undecided absence or
+    together_absent, once each; asked_keys and incomplete_keys count keys too. The NULL key group is outside the
+    witness (no equals filter asks it).
 
-    result() is the separate check: pass when every incompletely answered key is absent_no_facts, fail on any
-    absent_with_facts or witness_value_mismatch, otherwise not_run (witness_incomplete) when a key is undecided. The
-    detail holds counts only, never keys. The witness never changes the pair test's own status or detail."""
+    result() is the separate check: pass when every absence is absent_no_facts, fail on any absent_with_facts or
+    witness_value_mismatch, otherwise not_run (witness_incomplete) when a key is undecided. The detail holds counts
+    only, never keys. The witness never changes the pair test's own status or detail."""
 
     def __init__(self, conn, cfg, test: dict):
         self.conn, self.cfg, self.test = conn, cfg, test
@@ -605,23 +612,24 @@ class PairWitness:
         group_kind = self.kinds.get(self.test["group_by"])
         c = self.counts
         c["asked_keys"] += len(asked)
-        absent: list[tuple] = []          # (measure, asked key, canonical alone key, together value)
-        for k in asked:
+        absent: list[tuple] = []          # (measure, asked key, canonical alone key, together value, asked index)
+        undecided: set[int] = set()       # asked indexes of the undecided keys
+        for i, k in enumerate(asked):
             tk = canon.canon(k, group_kind)
             missing = [(m, canon.canon(k, self.kinds.get(self.test["alone"][m]))) for m in self.test["measures"]]
             missing = [(m, ak) for m, ak in missing if ak not in alones[m]]
             if tk not in together:
                 c["incomplete_keys"] += 1
                 c["together_absent"] += 1
-                c["undecided"] += 1
+                undecided.add(i)
                 continue
             if missing:
                 c["incomplete_keys"] += 1
-            absent += [(m, k, ak, together[tk].get(m)) for m, ak in missing]
-        reread = {m: [k for mm, k, ak, _v in absent if mm == m and self.pre[m].get(ak) in (True, False)]
+            absent += [(m, k, ak, together[tk].get(m), i) for m, ak in missing]
+        reread = {m: [k for mm, k, ak, _v, _i in absent if mm == m and self.pre[m].get(ak) in (True, False)]
                   for m, spec in self.specs.items() if spec is not None}
         post = self._second_read({m: ks for m, ks in reread.items() if ks})
-        for m, _k, ak, value in absent:
+        for m, _k, ak, value, i in absent:
             if self.specs[m] is None:
                 label = "not_witnessed"
             else:
@@ -636,8 +644,9 @@ class PairWitness:
                 else:
                     label = "absent_no_facts" if canon.canon(value) is None else "witness_value_mismatch"
             c[label] += 1
-            if label not in ("absent_with_facts", "absent_no_facts", "witness_value_mismatch"):
-                c["undecided"] += 1
+            if label not in _DECIDED:
+                undecided.add(i)
+        c["undecided_keys"] += len(undecided)
 
     def _second_read(self, reread: dict) -> dict:
         """{measure: _read of its keys} in a new READ ONLY REPEATABLE READ transaction. A transaction that cannot
@@ -668,7 +677,7 @@ class PairWitness:
         detail = {"mode": mode, **self.counts}
         if detail["absent_with_facts"] or detail["witness_value_mismatch"]:
             return "fail", detail
-        if detail["undecided"]:
+        if detail["undecided_keys"]:
             return "not_run", {"mode": mode, "reason": "witness_incomplete", **self.counts}
         return "pass", detail
 

@@ -235,7 +235,7 @@ class WitnessCubeTest(unittest.TestCase):
                     asked = b.detail.get("compared_keys", b.detail.get("sampled_keys"))
                     self.assertEqual((w.status, d["mode"], d["asked_keys"]), ("pass", mode, asked), (w.id, d))
                     self.assertEqual(d["incomplete_keys"], asked - b.detail["answered_keys"], w.id)
-                    self.assertEqual((d["absent_with_facts"], d["witness_value_mismatch"], d["undecided"]), (0, 0, 0))
+                    self.assertEqual((d["absent_with_facts"], d["witness_value_mismatch"], d["undecided_keys"]), (0, 0, 0))
                     self.assertGreaterEqual(d["absent_no_facts"], d["incomplete_keys"], w.id)
                     seen += d["absent_no_facts"]
                     self.assertTrue(any(line.startswith(f"{w.id}: ") for line in runs[True].not_proven), w.id)
@@ -282,7 +282,7 @@ class WitnessCubeTest(unittest.TestCase):
                 for c in witnesses:
                     self.assertEqual(c.status, "pass", c.id)
                     self.assertEqual((c.detail["mode"], c.detail["incomplete_keys"], c.detail["absent_no_facts"],
-                                      c.detail["absent_with_facts"], c.detail["undecided"]), (mode, 0, 0, 0, 0), c.id)
+                                      c.detail["absent_with_facts"], c.detail["undecided_keys"]), (mode, 0, 0, 0, 0), c.id)
 
 
 def without_elapsed(detail: dict) -> dict:

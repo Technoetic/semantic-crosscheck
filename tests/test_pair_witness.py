@@ -7,7 +7,9 @@
                      witness_value_mismatch fail; a key missing from the together answer, a failed cast and a change
                      between the two witness reads are undecided (not_run witness_incomplete) unless a known fail wins;
                      the closure qty gets no first statement (its key read is its first witness) but is read again
-                     after the Cube queries like every measure; details hold counts only
+                     after the Cube queries like every measure; details hold counts only, asked_keys,
+                     incomplete_keys, undecided_keys and together_absent per key, the other labels per key and
+                     measure an alone answer left out
   WitnessChunkTest   chunked tests read the witness of every key inside the key-read REPEATABLE READ transaction, in
                      slices of PAIR_KEY_CAP, and the second read after each chunk's Cube queries, for its absent keys only
   WitnessScopeTest   the unfiltered path at or below the cap gets no witness, not even when it errors, nor does a pair
@@ -43,8 +45,8 @@ CLOSURE_WID = f"v3w:pair_witness:{QTY}+{A}"
 RR_BEGIN = "BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY"
 # the demo measures' where_sql, told apart by their filter values, and the closure qty's reread of its table
 MEASURE_OF = (('_closure" t', QTY), ("'FIRM'", A), ("'CONSIGN'", "m_consigned.value"), ("'MAIN'", B))
-COUNTS = ("asked_keys", "incomplete_keys", "absent_no_facts", "absent_with_facts", "witness_value_mismatch", "undecided",
-          "together_absent", "not_witnessed", "witness_type", "witness_error", "witness_changed")
+COUNTS = ("asked_keys", "incomplete_keys", "undecided_keys", "together_absent", "absent_no_facts", "absent_with_facts",
+          "witness_value_mismatch", "not_witnessed", "witness_type", "witness_error", "witness_changed")
 
 
 def keys(n: int) -> list[str]:
@@ -267,7 +269,7 @@ class WitnessLabelTest(unittest.TestCase):
         self.assertEqual(checks[f"v3:{PAIR}"].status, "not_run")
         action = stage_verify._next_action(v.res)
         self.assertIn(WID, action)
-        self.assertIn("absent_with_facts", action)
+        self.assertIn("1 key-measure absence(s), absent_with_facts", action)
 
     def test_a_non_empty_together_value_without_facts_is_a_mismatch(self):
         for value in ("0", "5"):
@@ -283,7 +285,7 @@ class WitnessLabelTest(unittest.TestCase):
         c = checks[WID]
         self.assertEqual((c.status, c.detail.get("reason")), ("not_run", "witness_incomplete"))
         self.assertEqual(c.detail, {"mode": "sampled", "reason": "witness_incomplete",
-                                    **counts(asked_keys=CAP, incomplete_keys=1, undecided=1, together_absent=1)})
+                                    **counts(asked_keys=CAP, incomplete_keys=1, undecided_keys=1, together_absent=1)})
         self.assertEqual(len(conn.witness), 2, "no second read without an alone absence")
 
     def test_a_failed_cast_is_undecided_and_the_other_measure_is_still_witnessed(self):
@@ -291,7 +293,7 @@ class WitnessLabelTest(unittest.TestCase):
                                          fail={A: "22P02"})
         c = checks[WID]
         self.assertEqual((c.status, c.detail.get("reason")), ("not_run", "witness_incomplete"))
-        self.assertEqual((c.detail["witness_type"], c.detail["undecided"], c.detail["absent_no_facts"]), (1, 1, 1))
+        self.assertEqual((c.detail["witness_type"], c.detail["undecided_keys"], c.detail["absent_no_facts"]), (1, 1, 1))
         self.assertEqual(conn.witness, [(A, self.sample), (B, self.sample), (B, ["P00011"])])
         sql = [s for kind, s in conn.log if kind == "sql"]
         self.assertIn("ROLLBACK TO SAVEPOINT sxc_witness", sql, "the failed statement does not abort the key read")
@@ -307,8 +309,21 @@ class WitnessLabelTest(unittest.TestCase):
             with self.subTest(pre_has_facts="P00007" in pre):
                 _v, checks, _conn = self.run_case({A: pre, B: self.full()}, {A: {"P00007"}}, later={A: post})
                 c = checks[WID]
-                self.assertEqual((c.status, c.detail["witness_changed"], c.detail["undecided"]),
+                self.assertEqual((c.status, c.detail["witness_changed"], c.detail["undecided_keys"]),
                                  ("not_run", 1, 1))
+
+    def test_undecided_keys_count_keys_and_the_labels_count_key_measure_absences(self):
+        v, checks, _conn = self.run_case({}, {A: {"P00007"}, B: {"P00007"}}, fail={A: "22P02", B: "22P02"},
+                                         together_missing={"P00009"})
+        c = checks[WID]
+        self.assertEqual(c.detail, {"mode": "sampled", "reason": "witness_incomplete",
+                                    **counts(asked_keys=CAP, incomplete_keys=2, undecided_keys=2, together_absent=1,
+                                             witness_type=2)},
+                         "P00007 is one undecided key with two undecided absences; P00009 is one key")
+        action = stage_verify._not_run_action(c)
+        for phrase in (f"{WID} left 2 key(s) undecided", "together_absent 1", "witness_type 2",
+                       "per key and measure an alone answer left out"):
+            self.assertIn(phrase, action)
 
     def test_a_known_fail_wins_over_undecided_keys(self):
         _v, checks, _conn = self.run_case({A: self.full(), B: self.full()}, {A: {"P00007"}},

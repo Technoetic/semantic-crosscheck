@@ -10,6 +10,12 @@ which, per shape, per hierarchy and per defined class.
                       are all compared. Shapes without a SHACL form are listed in not_proven: they are checked only
                       in SQL. A shape whose view build did not produce is not_run; a shape whose value group pySHACL
                       could not validate is error.
+  shacl:pair:<shape>  optional verify.shacl_pairs: a shape whose sql_violation is exactly t.<a> <op> t.<b> (op > >= < <=)
+                      is translated to sh:lessThan or sh:lessThanOrEquals in a pair shapes graph generated here (never
+                      in shapes.ttl) and pySHACL's focus nodes on a separate pair export equal the keys in
+                      v_shape_<shape>. not_run unless both columns are smallint, integer, bigint or numeric without
+                      NaN or infinities and the target keys are unique (pySHACL orders such values unlike SHACL and
+                      PostgreSQL); off, nothing of it runs and every other output is unchanged
   owl:consistency     HermiT finds the ontology of owl.py consistent (detail: individuals, edges, hermit_ms)
   v5:closure:<h>      the OWL closure pairs equal the closure table. not_run unless build's closure:<h> passed with no
                       cycle edges dropped: otherwise the table describes another graph than the one OWL reasons on
@@ -39,7 +45,11 @@ from .result import EXIT_CONFIG, EXIT_ENV, Result, StageError, require_stage
 PARTS = ("shacl", "owl")
 INSTALL = '<python> -m pip install -r "<plugin>/requirements/reason.txt"'
 META_ID = "shacl:meta:generated"
-BUILD_REASONS = ("shape_not_built", "view_missing", "closure_not_passed", "closure_table_missing")
+BUILD_REASONS = ("shape_not_built", "view_missing", "view_stale", "closure_not_passed", "closure_table_missing")
+PAIR_PREFIX = "shacl:pair:"
+PAIR_NOTE = ("shacl:pair: a pass means pySHACL and the SQL view flag the same keys on this snapshot for a predicate "
+             "t.<a> <op> t.<b> over smallint, integer, bigint or numeric columns without NaN, infinities or repeated "
+             "keys; it does not show that the rule itself is right, and Jena does not run in reason")
 WHY = {   # why the closure table cannot be compared with OWL ({h}: the hierarchy)
     "closure_not_passed": "closure:{h} did not pass in build",
     "cycle_edges_dropped": "build left the edges inside cycles out of the closure of {h} (on_cycle = report), while OWL "
@@ -55,11 +65,12 @@ def run(cfg, args, out: Path) -> Result:
         raise StageError("--synthetic-witnesses requires a configured [ontology] hierarchy", EXIT_CONFIG)
     build = require_stage(out, "build")
     planned, skipped = shacl_check.plan(cfg) if "shacl" in only else ([], {})
+    pairs = shacl_check.pair_plan(cfg) if "shacl" in only and cfg.verify.shacl_pairs else []
     use_owl = "owl" in only and bool(cfg.ontology.hierarchy)
     if use_owl:
         owl.check_config(cfg)
-    ttl = shapes_ttl(cfg, out) if planned else ""
-    java = components(bool(planned), use_owl)
+    ttl = shapes_ttl(cfg, out) if planned or pairs else ""
+    java = components(bool(planned) or bool(pairs), use_owl)
     res = Result("reason")
     shacl_ready = bool(planned) and _generated_shapes_preflight(ttl, res)
     if planned and not shacl_ready:
@@ -67,17 +78,20 @@ def run(cfg, args, out: Path) -> Result:
             res.add(f"shacl:{s.id}", "not_run", shapes.config_ref(cfg, s), reason="generated_shapes_invalid")
         res.not_proven.append("SHACL row comparisons did not run because generated shapes did not pass the "
                               "shacl-shacl syntax preflight")
+    pair_ttl = shapes.pair_shapes_ttl(cfg, pairs) if pairs else ""
+    pairs_ready = bool(pairs) and _pair_preflight(cfg, pairs, pair_ttl, res)
     if "shacl" in only:
         _shacl_not_proven(cfg, skipped, res)
     if "owl" in only and not use_owl:
         res.not_proven.append("owl: the configuration has no [ontology] section; the OWL checks were not run")
-    if shacl_ready or use_owl:
+    if shacl_ready or use_owl or pairs_ready:
         conn = db.connect(cfg.source.dsn_env)
         try:
             if use_owl:
                 check_owl_sources(conn, cfg)
-            if shacl_ready:
-                _shacl(conn, cfg, build, planned, ttl, res)
+            exported = _shacl(conn, cfg, build, planned, ttl, res) if shacl_ready else 0
+            if pairs_ready:
+                _shacl_pairs(conn, cfg, build, out, pairs, pair_ttl, exported, res)
             if use_owl:
                 _owl(conn, cfg, build, java, res)
                 if getattr(args, "synthetic_witnesses", False):
@@ -198,7 +212,9 @@ def _shacl_not_proven(cfg, skipped: dict, res: Result) -> None:
             res.not_proven.append(f"shacl:{s.id}: no SHACL form ({skipped[s.id]}); checked only in SQL (shape:{s.id} in build)")
 
 
-def _shacl(conn, cfg, build: dict, planned: list, ttl: str, res: Result) -> None:
+def _shacl(conn, cfg, build: dict, planned: list, ttl: str, res: Result) -> int:
+    """The shape comparisons; returns the rows they counted against verify.shacl_max_rows (0 after a database
+    error), to which the property-pair export adds its own."""
     try:
         compared = shacl_check.run(conn, cfg, ttl)
     except shacl_check.TooManyRows as e:
@@ -207,12 +223,12 @@ def _shacl(conn, cfg, build: dict, planned: list, ttl: str, res: Result) -> None
                     reason="resource_limit", rows=e.rows, limit=e.limit)
         res.not_proven.append(f"shacl: {e.rows} rows to export exceed verify.shacl_max_rows = {e.limit}; no shape was "
                               "compared with SHACL")
-        return
+        return e.rows
     except Exception as e:  # noqa: BLE001 - database errors become error checks with their SQLSTATE
         code = _db_error(e)
         for s in planned:
             res.add(f"shacl:{s.id}", "error", shapes.config_ref(cfg, s), sqlstate=code)
-        return
+        return 0
     for s in planned:
         ref, got = shapes.config_ref(cfg, s), compared[s.id]
         if "validation_error" in got:   # only the shapes of the value group pySHACL could not validate
@@ -234,6 +250,91 @@ def _shacl(conn, cfg, build: dict, planned: list, ttl: str, res: Result) -> None
                 shacl_focus_nodes=len(flagged), shacl_only=len(flagged - viewed), sql_only=len(viewed - flagged),
                 severity=s.severity, kind=shapes.kind(s), rows_exported=got["rows"], value_group=got["group"],
                 group_rows=got["group_rows"], view=naming.shape_view(cfg, s.id))
+    return next(iter(compared.values()))["rows"] if compared else 0
+
+
+# ---- property pairs (verify.shacl_pairs) -------------------------------------------------------------------
+def _pair_base(s) -> dict:
+    _a, op, _b = shapes.pair_form(s)
+    path, param, other = shapes.pair_constraint(s)
+    return {"op": op, "constraint": param, "path_column": path, "compare_column": other}
+
+
+def _pair_not_run(cfg, s, res: Result, reason: str, **detail) -> None:
+    res.add(f"shacl:pair:{s.id}", "not_run", shapes.config_ref(cfg, s), reason=reason, **detail, **_pair_base(s))
+    res.not_proven.append(f"{PAIR_PREFIX}{s.id}: not compared ({reason}); shacl:{s.id} stays checked only in SQL")
+
+
+def _pair_preflight(cfg, pairs: list, pair_ttl: str, res: Result) -> bool:
+    """The generated pair shapes through the same shacl-shacl preflight as shapes.ttl. On failure every pair check
+    is not_run (generated_shapes_invalid) and no pair row is read; shacl:meta:generated stays about shapes.ttl."""
+    try:
+        conforms, count = shacl_check.validate_generated_shapes(pair_ttl)
+        detail = {"meta_violations": count}
+    except Exception:  # noqa: BLE001 - a fixed code, never the engine's message
+        conforms, detail = False, {"meta_error": "meta_validation_error"}
+    if not conforms:
+        for s in pairs:
+            _pair_not_run(cfg, s, res, "generated_shapes_invalid", **detail)
+    return conforms
+
+
+def _build_sql(out: Path) -> str:
+    """build/build.sql as written (no newline translation), '' when absent."""
+    f = Path(out) / "build" / "build.sql"
+    return f.read_bytes().decode("utf-8") if f.is_file() else ""
+
+
+def _view_statement(cfg, s) -> str:
+    """The statement build records in build.sql when it creates the shape's view from the configuration as it is now."""
+    return f"CREATE OR REPLACE VIEW {ident.qualified(naming.shape_view(cfg, s.id))} AS\n{shapes.violation_sql(cfg, s)};"
+
+
+def _shacl_pairs(conn, cfg, build: dict, out: Path, pairs: list, pair_ttl: str, rows_before: int, res: Result) -> None:
+    """One shacl:pair:<id> check per shape with a pair form, in configuration order, after the shape comparisons.
+    A shape is compared only when build created its view from the predicate as configured now (shape_not_built,
+    view_stale otherwise); run_pairs decides the rest in its own read-only snapshot, so a pair query can never turn
+    a shacl:<id> check into an error. A database error there, even on one entity, makes every shape that reached
+    run_pairs an error with its SQLSTATE, as _shacl does for the shape comparisons. The not-proven line of a shape
+    changes only when its pair check passed or failed."""
+    recorded, decided, eligible = _build_sql(out), {}, []
+    for s in pairs:
+        built = _build_check(build, f"shape:{s.id}").get("status")
+        if built not in ("pass", "fail"):
+            decided[s.id] = {"reason": "shape_not_built", "build_status": built or "absent"}
+        elif _view_statement(cfg, s) not in recorded:
+            decided[s.id] = {"reason": "view_stale", "build_status": built}
+        else:
+            eligible.append(s)
+    try:
+        decided.update(shacl_check.run_pairs(conn, cfg, eligible, pair_ttl, rows_before) if eligible else {})
+    except Exception as e:  # noqa: BLE001 - database errors become error checks with their SQLSTATE
+        code = _db_error(e)
+        decided.update({s.id: {"sqlstate": code} for s in eligible})
+    compared = False
+    for s in pairs:
+        cid, ref, got = f"shacl:pair:{s.id}", shapes.config_ref(cfg, s), decided[s.id]
+        if "reason" in got:
+            _pair_not_run(cfg, s, res, **got)
+        elif "sqlstate" in got:
+            res.add(cid, "error", ref, sqlstate=got["sqlstate"], **_pair_base(s))
+        elif "validation_error" in got:
+            res.add(cid, "error", ref, reason="validation_failure", exception=got["validation_error"], **_pair_base(s))
+        else:
+            flagged, viewed = got["shacl_keys"], got["sql_keys"]
+            base = _pair_base(s)
+            res.add(cid, "pass" if flagged == viewed else "fail", ref, **base, column_types=got["column_types"],
+                    violations=len(viewed), shacl_focus_nodes=len(flagged), shacl_only=len(flagged - viewed),
+                    sql_only=len(viewed - flagged), rows_exported=got["rows"], severity=s.severity,
+                    view=naming.shape_view(cfg, s.id))
+            a, op, b = shapes.pair_form(s)
+            old = f"shacl:{s.id}: no SHACL form (sql_violation); checked only in SQL (shape:{s.id} in build)"
+            new = (f"shacl:{s.id}: no SHACL form in build/shapes.ttl (sql_violation); its predicate t.{a} {op} t.{b} "
+                   f"was compared with pySHACL as sh:{base['constraint']} by {cid}")
+            res.not_proven[:] = [new if line == old else line for line in res.not_proven]
+            compared = True
+    if compared:
+        res.not_proven.append(PAIR_NOTE)
 
 
 # ---- OWL and V5 -------------------------------------------------------------------------------------------
@@ -322,6 +423,9 @@ def _error_action(c) -> str:
     if c.detail.get("reason") == "reasoner_error":
         return ("HermiT did not run: check Java with `sxc.py doctor --require reason` (SXC_JAVA or java on PATH, Java 11 "
                 "or later), then rerun reason")
+    if c.id.startswith(PAIR_PREFIX):
+        return (f"{c.id}: pySHACL could not validate the property-pair shapes generated by reason: rerun reason, and "
+                "report a defect with the exception type if it persists (verify.shacl_pairs = false leaves them out)")
     return f"{c.id}: pySHACL could not validate build/shapes.ttl: rerun build, then reason"
 
 
@@ -378,4 +482,11 @@ def next_action(cfg, res: Result) -> str:
     if narrowed:
         return ("--only left a part of reason out (the scope:* check): rerun reason without --only before reporting a "
                 "result")
+    # last: the causes of these stay in the data or the schema, so they would hide every clause after them on each run
+    pair_reasons = {c.detail.get("reason") for c in checks if c.status == "not_run" and c.id.startswith(PAIR_PREFIX)}
+    if pair_reasons:
+        return (f"some shacl:pair checks could not compare their predicate with SHACL ({', '.join(sorted(pair_reasons))}): "
+                "those rules stay checked only in SQL and reason cannot pass while they are not_run; see each check's "
+                "reason (column types, NaN or infinities, repeated keys, the pair-shape preflight), or set "
+                "verify.shacl_pairs = false, then rerun reason")
     return "run `sxc.py cube` to generate the Cube model and check that Cube serves it"

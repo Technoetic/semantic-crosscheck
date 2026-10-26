@@ -120,6 +120,12 @@ def rdf_bound_shape(cfg, shape_id: str) -> str:
     return f"{_iri(cfg)}shape/{ident.check(shape_id)}/b"
 
 
+def rdf_pair_shape(cfg, shape_id: str) -> str:
+    """Property shape of a shape's sql_violation translated to sh:lessThan or sh:lessThanOrEquals (verify.shacl_pairs,
+    generated at reason time, never in shapes.ttl); its results map back to the shape id."""
+    return f"{_iri(cfg)}shape/{ident.check(shape_id)}/pair"
+
+
 # ---- OWL ------------------------------------------------------------------------------------------
 def owl_edge_property(h: str) -> str:
     """Object property asserted for every (parent, child) edge."""

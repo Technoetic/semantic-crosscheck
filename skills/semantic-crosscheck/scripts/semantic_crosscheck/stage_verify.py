@@ -391,13 +391,23 @@ class _Verify:
         if gate:
             self._gated(cid, gate)
             return
-        st, detail = shape_q.run_test(conn, client, self.cfg, self.model, t, budget=self.cfg.verify.pair_key_budget)
+        witness = (shape_q.PairWitness(conn, self.cfg, t)
+                   if self.cfg.verify.existence_witness and t["kind"] == "pair" else None)
+        st, detail = shape_q.run_test(conn, client, self.cfg, self.model, t, budget=self.cfg.verify.pair_key_budget,
+                                      **({"witness": witness} if witness is not None else {}))
         self.baseline[cid] = st
         self.res.add(cid, st, t.get("config_ref", ""), **detail)
         if "sampled_keys" in detail:
             self.res.not_proven.append(f"{cid}: {shape_q.sample_note(detail)}")
         elif detail.get("mode") == "chunked" and st != "error":
             self.res.not_proven.append(f"{cid}: {shape_q.chunk_note(detail)}")
+        outcome = witness.result(st) if witness is not None else None
+        if outcome is not None:
+            # a separate check: the pair test's own status, detail and V4 baseline stay as they are
+            wid = shape_q.witness_id(t)
+            self.res.add(wid, outcome[0], t.get("config_ref", ""), **outcome[1])
+            if outcome[1].get("reason") != "pair_error":
+                self.res.not_proven.append(f"{wid}: {shape_q.witness_note()}")
 
     def v4(self, conn):
         items = [(iid, fn) for iid, _cid, fn in self.items if self.baseline.get(iid) == "pass"]
@@ -474,6 +484,16 @@ def _not_run_action(c: Check) -> str:
         return "V4 needs suite items that pass on the unmutated model: fix the V1-V3 checks first, then rerun verify"
     if why == "no_binding":
         return f"{c.id} has no binding (every stratum is empty): check the params of {c.config_ref} or the data"
+    if why == "witness_incomplete":
+        d = c.detail
+        return (f"{c.id} left {d.get('undecided_keys')} key(s) undecided (together_absent {d.get('together_absent')} "
+                f"key(s); undecided absences, per key and measure an alone answer left out: not_witnessed "
+                f"{d.get('not_witnessed')}, witness_type {d.get('witness_type')}, witness_error "
+                f"{d.get('witness_error')}, witness_changed {d.get('witness_changed')}): rerun verify while the source "
+                f"data is not changing, and check that the key columns of {c.config_ref} accept the key values Cube's "
+                "equals filter receives")
+    if why == "pair_error":
+        return f"{c.id} did not run because its pair test could not run: fix that error first, then rerun verify"
     if why == "keys_not_answered":
         d = c.detail
         return (f"{c.id} was not judged (keys_not_answered): Cube's together answers held {d.get('answered_keys')} of "
@@ -500,6 +520,14 @@ def _next_action(res: Result) -> str:
     if st == "fail" and first.id.startswith("v4:"):
         return (f"{first.id} survived: no gold query observes this kind of error in {first.config_ref}; add a gold "
                 "query, a mapped column or a stratum that would, then rerun verify (do not drop the operator)")
+    if st == "fail" and first.id.startswith("v3w:"):
+        d = first.detail
+        return (f"{first.id}: Cube's standalone answers left out keys that have qualifying source rows under "
+                f"crosscheck.toml's filters ({d.get('absent_with_facts')} key-measure absence(s), absent_with_facts), "
+                f"or left out keys without such rows that had a non-empty together value "
+                f"({d.get('witness_value_mismatch')} key-measure absence(s), witness_value_mismatch); "
+                f"compare the generated measure cubes of {first.config_ref} with crosscheck.toml, rerun cube, then "
+                "rerun verify")
     if st == "fail" and first.id.startswith("v3:closure_oracle:"):
         return (f"{first.id}: raw-edge expectations disagree with the generated closure in {first.config_ref}; "
                 "inspect the source edges and generated closure, rerun build and cube, then rerun verify")

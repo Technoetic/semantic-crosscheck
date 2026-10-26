@@ -40,6 +40,8 @@ Run the stages in this order; each one reads what the earlier ones wrote:
 5. `verify` — V1 strict compare, V2 strata sweep, V3 query shapes, V4 mutation tests ([xc-verify](../../commands/xc-verify.md))
 6. `report` — the verdict over every stage ([xc-report](../../commands/xc-report.md))
 
+- Since 0.11.0, two opt-in checks are off by default: `verify.shacl_pairs` adds `shacl:pair:<id>` to `reason` (an `sql_violation` of exactly `t.<a> <op> t.<b>` compared as a pySHACL `sh:lessThan` or `sh:lessThanOrEquals` property shape), and `verify.existence_witness` adds `v3w:pair_witness:<member>+<member>` to sampled or chunked V3 pair tests in `verify`. Their limits and `not_run` cases are in [references/config.md](references/config.md). A pass of either does not prove the rule or data completeness.
+
 For the demo, `demo` comes first, because the source tables exist only after it: `demo`
 ([xc-demo](../../commands/xc-demo.md)) → `doctor` with `--config` → `build` → `reason` → `cube` →
 `verify` → `report`. `doctor` without `--config` can run before `demo` to check the environment alone.

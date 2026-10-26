@@ -67,10 +67,13 @@ _ABSENT = ('absent',)
 # property shapes with one IRI sh:path reached by sh:property from a sh:targetClass node shape; the suite reaches
 # the same components on IRI focus nodes through sh:targetNode, implicit class targets (a shape that is an
 # rdfs:Class) and node-level constraints, which count as inside the profile. sh:datatype, sh:maxExclusive,
-# sh:minCount and sh:maxCount stay outside because the exporter never emits them.
+# sh:minCount and sh:maxCount stay outside because the exporter never emits them. The property-pair parameters
+# sh:lessThan and sh:lessThanOrEquals that reason generates for verify.shacl_pairs (shapes.pair_shapes_ttl) are in
+# the profile on property shapes only (SHACL 4.5: node shapes cannot have them) and with an IRI value.
 _CONSTRAINTS = ('class', 'minExclusive', 'minInclusive', 'maxInclusive')
+_PAIRS = ('lessThan', 'lessThanOrEquals')
 _NODE_KEYS = frozenset(('targetClass', 'targetNode', 'property', 'severity') + _CONSTRAINTS)
-_PROPERTY_KEYS = frozenset(('path', 'targetClass', 'targetNode', 'severity') + _CONSTRAINTS)
+_PROPERTY_KEYS = frozenset(('path', 'targetClass', 'targetNode', 'severity') + _CONSTRAINTS + _PAIRS)
 _NUMERIC = frozenset(XSD + name for name in ('decimal', 'integer', 'int', 'long'))
 _SEVERITIES = frozenset(SH + name for name in ('Violation', 'Warning'))
 _SPARQL = frozenset(('sparql', 'select', 'ask', 'construct', 'update', 'declare', 'prefixes', 'target',
@@ -640,7 +643,7 @@ def _w3c_profile(graph):
             flag('unsupported_value', 'path')
         if any(not isinstance(node, URIRef) for node in graph.objects(shape, sh('targetNode'))):
             flag('non_iri_focus', 'targetNode')
-        for name in ('targetClass', 'class'):
+        for name in ('targetClass', 'class') + _PAIRS:
             if any(not isinstance(value, URIRef) for value in graph.objects(shape, sh(name))):
                 flag('unsupported_value', name)
         for name in _CONSTRAINTS[1:]:

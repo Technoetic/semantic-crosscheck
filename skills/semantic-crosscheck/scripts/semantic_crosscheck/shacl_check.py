@@ -331,8 +331,9 @@ def run(conn, cfg, shapes_ttl_text: str) -> dict[str, dict]:
 # ---- property pairs (verify.shacl_pairs) ----------------------------------------------------------------
 # A shape whose sql_violation is exactly t.<a> <op> t.<b> (shapes.pair_form) is compared with SHACL 4.5 property
 # pairs on a separate data graph and shapes graph built at reason time (shapes.pair_shapes_ttl), never with
-# build's shapes.ttl. pySHACL 0.40.1 compares rdflib Literals: NaN counts as less than everything and literals of
-# unrelated datatypes are ordered by datatype IRI, so it agrees with SHACL and PostgreSQL only on finite numbers.
+# build's shapes.ttl. pySHACL 0.40.1 compares rdflib Literals: rdflib orders any comparison involving NaN as
+# less-than in both directions (so a NaN pair never violates) and literals of unrelated datatypes by datatype IRI,
+# so it agrees with SHACL and PostgreSQL only on finite numbers.
 # The preconditions keep everything else out (not_run, never pass): both columns of base type smallint, integer,
 # bigint or numeric (column_type), no NaN or infinity in either column (non_finite_values) and no repeated target
 # key (duplicate_keys: one RDF node would carry the values of several rows and pair them across rows).

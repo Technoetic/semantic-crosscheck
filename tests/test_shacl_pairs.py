@@ -141,9 +141,10 @@ class PairOptionTest(unittest.TestCase):
 @unittest.skipUnless(HAVE_SHACL, "rdflib and pyshacl are not installed")
 class PinnedPyShaclPairBehaviourTest(unittest.TestCase):
     """The pySHACL 0.40.1 / rdflib 7.6.0 behaviour the preconditions exist for (cases of the C26 lab). SHACL 2017
-    4.5.3-4.5.4 makes incomparable values a violation; pySHACL compares rdflib Literals, so NaN counts as less than
-    everything and literals of unrelated datatypes are ordered by datatype IRI. If any of these change, the
-    preconditions (numeric base types only, no NaN or infinities) must be reviewed before relaxing them."""
+    4.5.3-4.5.4 makes incomparable values a violation; pySHACL compares rdflib Literals, and rdflib orders any
+    comparison involving NaN as less-than in both directions (so a NaN pair never violates) and literals of unrelated
+    datatypes by datatype IRI. If any of these change, the preconditions (numeric base types only, no NaN or
+    infinities) must be reviewed before relaxing them."""
 
     PREFIX = (f"@prefix ex: <http://example.org/lab#> .\n@prefix xsd: <{XSD}> .\n@prefix sh: <{SH}> .\n")
 

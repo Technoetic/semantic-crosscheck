@@ -6,6 +6,25 @@ All notable changes to this project are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Opt-in `verify.shacl_pairs = true` (default `false`): `reason` translates a shape whose `sql_violation` is
+  exactly `t.<a> <op> t.<b>` (`>`, `>=`, `<`, `<=`; no comment, cast, parenthesis, constant, `=` or `<>`, and no
+  `path`, `class` or bound on the shape) into a SHACL property-pair shape (`a > b` as `sh:lessThanOrEquals`,
+  `a >= b` as `sh:lessThan`, `<` and `<=` with the columns swapped) and adds the separate check
+  `shacl:pair:<id>`: pass when pySHACL's focus nodes on a separate pair export equal the keys in `v_shape_<id>`.
+  The pair shapes are generated at reason time and pass the generated-shape preflight; `build/shapes.ttl`, its
+  comparison and every existing check stay unchanged. Both columns must be `smallint`, `integer`, `bigint` or
+  `numeric` without NaN or infinities and the target keys unique, otherwise the check is `not_run`
+  (`column_type`, `non_finite_values`, `duplicate_keys`), because pySHACL 0.40.1 orders NaN and mixed datatypes
+  unlike SHACL and PostgreSQL. The pair rows count against `verify.shacl_max_rows` after the shape export.
+  A pass shows agreement on one snapshot, not that the rule is right. With the option off nothing changes.
+- `shacl-corpus --w3c-suite` profile: `sh:lessThan` and `sh:lessThanOrEquals` with an IRI value on property
+  shapes (the parameters `verify.shacl_pairs` generates). On the pinned suite `core/property/lessThan-001`,
+  `lessThan-002` and `lessThanOrEquals-001` are now in profile (9 of 98 instead of 6), and pySHACL 0.40.1 and
+  Apache Jena 6.2.0 both match their expected reports (observed 2026-10-26). This changes the stage's result on
+  the pinned suite (six more passing checks); it still cannot pass as a whole.
+
 ## [0.10.0] - 2026-10-25
 
 Release notes: [docs/releases/v0.10.0.md](docs/releases/v0.10.0.md).

@@ -248,7 +248,8 @@ Cube (see `cube_gen.py` for the exact model):
 
 RDF/SHACL: `naming.rdf_*` helpers define the IRIs of entity classes, rows (reversible key encoding of
 `canon.key` values, so two text keys never share an IRI), predicates (`<iri><entity>.<column>`), node shapes and
-property shapes (`<iri>shape/<id>/p`).
+property shapes (`<iri>shape/<id>/p`; `<iri>shape/<id>/b` for the bounds of a shape with class and bounds;
+`<iri>shape/<id>/pair` for the reason-time property-pair shape of `verify.shacl_pairs`).
 
 ## 6. Check catalogue
 
@@ -307,6 +308,7 @@ configuration ids; `<member>` is a Cube member (`cube.member`); `<stratum>` is a
 | build | `closure_apply:<h>` | after the MERGE the table equals the recomputation in both directions | `fail` |
 | reason | `shacl:<id>` | pySHACL's focus nodes equal the keys in `v_shape_<id>` | `fail` (`shacl_only`, `sql_only`); `error` (SQLSTATE or `validation_failure`); `not_run` (`shape_not_built`, `view_missing`, `resource_limit`) |
 | reason | `shacl:meta:generated` | since 0.10.0, generated shapes conform to the pinned shacl-shacl syntax subset before source export | `fail` for nonconformance, sanitized `error` for parse/engine/report failure; affected comparisons `not_run` (`generated_shapes_invalid`), independent OWL may proceed |
+| reason | `shacl:pair:<id>` | after 0.10.0 (unreleased), opt-in `verify.shacl_pairs`: for a shape whose `sql_violation` is exactly `t.<a> <op> t.<b>`, pySHACL's focus nodes for the generated `sh:lessThan` or `sh:lessThanOrEquals` property shape equal the keys in `v_shape_<id>` | `fail` (`shacl_only`, `sql_only`); `error` (SQLSTATE or `validation_failure`); `not_run` (`generated_shapes_invalid`, `shape_not_built`, `view_stale`, `view_missing`, `column_type`, `non_finite_values`, `duplicate_keys`, `resource_limit`) |
 | reason | `owl:consistency` | HermiT finds the ontology consistent | `fail`; `error` (SQLSTATE or `reasoner_error`); `not_run` (`resource_limit`) |
 | reason | `v5:closure:<h>` | the OWL closure pairs equal the closure table | `fail`; `not_run` (`closure_not_passed`, `cycle_edges_dropped`, `closure_table_missing`, `inconsistent`, `owl_not_run`, `resource_limit`) |
 | reason | `v5:defined:<name>` | the members of the defined class equal its SQL definition (a class without members on either side passes and is listed in `not_proven`) | `fail`; `not_run` (as `v5:closure:<h>`; `contains_class` reads the closure table) |
@@ -361,7 +363,8 @@ share a mistake with the fixed corpus. Both engines validate the suite's own sha
 checks engine conformance on the components sxc emits, not sxc's exporter, so it complements the fixed corpus
 (run both) and says so in `not_proven`. Only approved entries inside the sxc profile run: the components and
 severities `shapes.shapes_ttl()` emits (sh:class and the three numeric bounds, one Violation or Warning
-severity) on IRI focus nodes, through sh:targetClass, sh:targetNode, implicit class targets or node-level
+severity; after 0.10.0, unreleased, also sh:lessThan and sh:lessThanOrEquals with an IRI value on property shapes,
+which `reason` generates for `verify.shacl_pairs`) on IRI focus nodes, through sh:targetClass, sh:targetNode, implicit class targets or node-level
 shapes, with no path or one IRI path; everything else is `not_run` with a reason id. The suite is pinned by a
 SHA-256 over the sorted relative paths and bytes of the files read; a different digest runs no engine unless
 `--allow-unpinned-suite`, and then the `not_run` check `w3c:suite` keeps the stage from passing. It is read
@@ -690,6 +693,44 @@ One kind of shape is not compared and is listed in `not_proven` instead ("checke
 
 - `sql_violation`: any shape with an `sql_violation` predicate, also when it has `class` or bounds as well
   (no SHACL form).
+
+**Property pairs (opt-in, after 0.10.0, unreleased).** With `verify.shacl_pairs = true`, a shape whose only
+constraint is an `sql_violation` that is, as a whole, `t.<a> <op> t.<b>` (op `>`, `>=`, `<` or `<=`; SQL
+whitespace only; two different identifiers that pass `ident.check`) is also compared with SHACL 2017 section 4.5.
+Anything else keeps the line above: comments, parentheses, casts, constants, quoted or upper-case names, `=`, `<>`
+and `!=` (`sh:equals` and `sh:disjoint` are never used), and shapes that also have `path`, `class` or bounds. The
+violation predicate maps to the property shape the valid rows satisfy (`shapes.PAIR_OPS`): `a > b` to `sh:path`
+V(a) with `sh:lessThanOrEquals` V(b), `a >= b` to V(a) `sh:lessThan` V(b), `a < b` to V(b) `sh:lessThanOrEquals`
+V(a) and `a <= b` to V(b) `sh:lessThan` V(a), where V(c) is the value predicate `<iri><entity>.<c>/value`, which
+carries literals only. The pair shapes graph (node shape `<iri>shape/<id>`, property shape `<iri>shape/<id>/pair`,
+the shape's severity) is generated at reason time and never written to `shapes.ttl`, so build's output, the
+`shapes.ttl` comparison and every `shacl:<id>` check are unchanged; it passes the same shacl-shacl preflight first
+(failure: every pair check `not_run`, `generated_shapes_invalid`). A pair check needs a view that build created
+from the predicate as configured now: `shape:<id>` passed or failed (else `shape_not_built`) and `build/build.sql`
+holds the view statement the configuration generates now (else `view_stale`).
+
+`shacl_check.run_pairs` then reads, in its own read-only `REPEATABLE READ` transaction (after the shape
+comparison's, so a pair query can never turn a `shacl:<id>` check into an error): the view keys (`view_missing`
+when the view is gone); both column types from `pg_attribute`, which must be the base types `smallint`, `integer`,
+`bigint` or `numeric` (`column_type` otherwise, with the type names; `real`, `double precision`, text, dates and
+booleans included); the rows holding NaN or an infinity in a numeric column (`non_finite_values`); and the rows
+repeating a target key (`duplicate_keys`). pySHACL 0.40.1 compares rdflib Literals: NaN counts as less than every
+value, so a NaN pair never violates, while SHACL makes an incomparable pair a violation and PostgreSQL orders NaN
+above every number; literals of unrelated datatypes are ordered by datatype IRI (an `xsd:date` against an
+`xsd:integer` conforms one way round and violates the other). `tests/test_shacl_pairs.py` pins these behaviours
+so a pySHACL change is noticed before the preconditions are relaxed. A repeated key would give one RDF node the
+values of several rows and pair them across rows. NULL needs no rule: no triple, no pair, no violation, as the SQL
+predicate is unknown there. The target rows of the remaining shapes are counted; the rows the shape comparison
+counted plus these may not exceed `verify.shacl_max_rows` (else every remaining pair check is `not_run`,
+`resource_limit`, while the `shacl:<id>` checks keep their own outcome). The rows are exported as one pair data
+graph (`rdf:type` and the non-NULL literals of the compared columns, `literal()` typing), a key repeated among the
+exported RDF nodes is still `duplicate_keys`, and pySHACL validates it without inference after the transaction.
+`shacl:pair:<id>` passes iff the focus-node keys of `<iri>shape/<id>/pair` equal the keys in `v_shape_<id>`; its
+detail holds the operator, constraint, column names and types, counts (`violations`, `shacl_focus_nodes`,
+`shacl_only`, `sql_only`, `rows_exported`), severity and view, never a value. Only when it passes or fails does the
+shape's not-proven line change to name the pair check, with one note that a pass shows agreement on this snapshot,
+not that the rule is right; a `not_run` keeps the line and adds its reason. `reason` runs pySHACL only (Jena runs in
+`shacl-corpus`). With the option off none of this runs.
 
 Releases up to 0.3.0 left every shape on a column shared by two value kinds uncompared (`shared_path`); value
 groups replace that exclusion. Releases up to 0.5.0 also left a shape combining `class` with bounds uncompared

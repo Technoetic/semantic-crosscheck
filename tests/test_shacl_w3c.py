@@ -216,6 +216,27 @@ class W3CSuiteTests(unittest.TestCase):
             with self.subTest(case=case.id):
                 self.assertIsNone(case.expected)
 
+    def test_property_pairs_are_inside_the_profile_only_on_property_shapes_with_iri_values(self):
+        # reason generates sh:lessThan / sh:lessThanOrEquals for verify.shacl_pairs on property shapes with IRIs.
+        cases = {
+            'pairlt': ('ex:S sh:targetNode ex:part_1 ; sh:property [ sh:path ex:qty_open ; sh:lessThan ex:qty_total ] .',
+                       ''),
+            'pairle': ('ex:S sh:targetNode ex:part_1 ; sh:property [ sh:path ex:qty_open ; '
+                       'sh:lessThanOrEquals ex:qty_total ] .', ''),
+            'pairnode': ('ex:S sh:targetNode ex:part_1 ; sh:lessThan ex:qty_total .', 'unsupported_component'),
+            'pairliteral': ('ex:S sh:targetNode ex:part_1 ; sh:property [ sh:path ex:qty_open ; sh:lessThan "x" ] .',
+                            'unsupported_value'),
+            'pairblank': ('ex:S sh:targetNode ex:part_1 ; sh:property [ sh:path ex:qty_open ; '
+                          'sh:lessThanOrEquals _:b ] .', 'unsupported_value'),
+            'pairequals': ('ex:S sh:targetNode ex:part_1 ; sh:property [ sh:path ex:qty_open ; sh:equals ex:qty_total ] .',
+                           'unsupported_component'),
+        }
+        files = {'manifest.ttl': manifest(*[name + '.ttl' for name in cases])}
+        for name, (body, _reason) in cases.items():
+            files[name + '.ttl'] = test_file(name, body)
+        reasons = self.reasons(self.suite(files))
+        self.assertEqual(reasons, {'core/' + name: reason for name, (_body, reason) in cases.items()})
+
     def test_one_violation_or_warning_severity_stays_inside_the_profile(self):
         # shapes_ttl() writes one sh:severity on every shape, so an explicit Violation or Warning is in the profile.
         files = {'manifest.ttl': manifest('warning-001.ttl', 'violation-001.ttl'),
@@ -475,21 +496,26 @@ class W3CSuiteTests(unittest.TestCase):
 
 
 # Observed on 2026-10-24 with pySHACL 0.40.1, RDFLib 7.6.0 and Apache Jena 6.2.0 (Java 21) on the pinned suite:
-# both engines match every in-profile expected report. A change in either direction (a new failure, a case
+# both engines match every in-profile expected report. The three property-pair cases (sh:lessThan,
+# sh:lessThanOrEquals) entered the profile after 0.10.0 and were observed passing on both engines on 2026-10-26. A change in either direction (a new failure, a case
 # entering or leaving the profile, a different number of expected results) fails this test.
 OBSERVED = {
     'core/node/class-001': ('pass', 'pass'),
     'core/node/class-003': ('pass', 'pass'),
     'core/property/class-001': ('pass', 'pass'),
+    'core/property/lessThan-001': ('pass', 'pass'),
+    'core/property/lessThan-002': ('pass', 'pass'),
+    'core/property/lessThanOrEquals-001': ('pass', 'pass'),
     'core/property/maxInclusive-001': ('pass', 'pass'),
     'core/property/minExclusive-001': ('pass', 'pass'),
     'core/property/minExclusive-002': ('pass', 'pass'),
 }
 OBSERVED_RESULTS = {'core/node/class-001': 2, 'core/node/class-003': 5, 'core/property/class-001': 2,
-                    'core/property/maxInclusive-001': 2, 'core/property/minExclusive-001': 2,
+                    'core/property/lessThan-001': 3, 'core/property/lessThan-002': 4,
+                    'core/property/lessThanOrEquals-001': 2, 'core/property/maxInclusive-001': 2, 'core/property/minExclusive-001': 2,
                     'core/property/minExclusive-002': 2}
-# Not-run checks by reason (two engines per entry): 92 of the 98 approved core entries are outside the profile.
-OBSERVED_NOT_RUN = {'unsupported_component': 106, 'non_iri_focus': 36, 'complex_path': 28, 'unsupported_target': 8,
+# Not-run checks by reason (two engines per entry): 89 of the 98 approved core entries are outside the profile.
+OBSERVED_NOT_RUN = {'unsupported_component': 100, 'non_iri_focus': 36, 'complex_path': 28, 'unsupported_target': 8,
                     'closed_shape': 4, 'sparql': 2}
 
 

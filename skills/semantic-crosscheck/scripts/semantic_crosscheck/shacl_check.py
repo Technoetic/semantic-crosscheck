@@ -17,7 +17,8 @@ documents:
     reference with the bounds. Both property shapes map back to the shape (focus_keys), so its SHACL keys are the
     union of their focus nodes
   - NULL gives no triple: never a violation, as the views test IS NOT NULL
-Only shapes with an sql_violation have no SHACL form and are not compared (plan()).
+Only shapes with an sql_violation have no SHACL form and are not compared (plan()); with verify.shacl_pairs, those
+whose predicate is exactly t.<a> <op> t.<b> are compared separately as SHACL property pairs (run_pairs, below).
 One RDF predicate carries one kind of value. Shapes on the same target column can need different kinds (a class and
 a bound, or two class entities), and in one graph each value would violate the other shape's constraint. So the
 compared shapes are split into value groups (groups()): each shape goes, in configuration order, to the first group
@@ -325,3 +326,170 @@ def run(conn, cfg, shapes_ttl_text: str) -> dict[str, dict]:
         for s in members:
             out[s.id] = dict(entry, shacl_keys=found.get(s.id), sql_keys=sql[s.id])
     return {s.id: out[s.id] for s in planned}
+
+
+# ---- property pairs (verify.shacl_pairs) ----------------------------------------------------------------
+# A shape whose sql_violation is exactly t.<a> <op> t.<b> (shapes.pair_form) is compared with SHACL 4.5 property
+# pairs on a separate data graph and shapes graph built at reason time (shapes.pair_shapes_ttl), never with
+# build's shapes.ttl. pySHACL 0.40.1 compares rdflib Literals: NaN counts as less than everything and literals of
+# unrelated datatypes are ordered by datatype IRI, so it agrees with SHACL and PostgreSQL only on finite numbers.
+# The preconditions keep everything else out (not_run, never pass): both columns of base type smallint, integer,
+# bigint or numeric (column_type), no NaN or infinity in either column (non_finite_values) and no repeated target
+# key (duplicate_keys: one RDF node would carry the values of several rows and pair them across rows).
+PAIR_TYPES = ("smallint", "integer", "bigint", "numeric")
+_PAIR_TYPE_SQL = (
+    "SELECT format_type(a.atttypid, NULL), "
+    "a.atttypid IN ('pg_catalog.int2'::regtype::oid, 'pg_catalog.int4'::regtype::oid, 'pg_catalog.int8'::regtype::oid, "
+    "'pg_catalog.numeric'::regtype::oid), a.atttypid = 'pg_catalog.numeric'::regtype::oid "
+    "FROM pg_catalog.pg_attribute a WHERE a.attrelid = to_regclass(:t) AND a.attname = :c AND a.attnum > 0 "
+    "AND NOT a.attisdropped")
+
+
+def pair_plan(cfg) -> list:
+    """The shapes with a pair_form, in configuration order (whether or not verify.shacl_pairs is set)."""
+    return [s for s in cfg.shapes if shapes.pair_form(s) is not None]
+
+
+def pair_columns(pairs, entity: str) -> list[str]:
+    """Columns of an entity the pair shapes compare, in shape order and predicate order (a, then b), each once: the
+    order of the columns after the key columns in the pair export."""
+    out = {}
+    for s in pairs:
+        if s.target == entity:
+            a, _op, b = shapes.pair_form(s)
+            out.setdefault(a)
+            out.setdefault(b)
+    return list(out)
+
+
+def build_pair_graph(cfg, pairs, target_rows: dict):
+    """The pair data graph. target_rows: {entity: rows as [*key values, *values in pair_columns() order]}. Every row
+    gets rdf:type of its entity class, every non-NULL value its literal (literal()) on the column's value
+    predicate, which carries nothing else; NULL gives no triple, so the pair has no value and no violation, as the
+    SQL predicate is unknown there."""
+    import rdflib
+    from rdflib import URIRef
+    g = rdflib.Graph()
+    rdf_type = URIRef(RDF_TYPE)
+    for entity, rows in target_rows.items():
+        n = len(cfg.entities[entity].key)
+        cls = URIRef(naming.rdf_entity_class(cfg, entity))
+        preds = [(n + i, URIRef(naming.rdf_value_predicate(cfg, entity, c)))
+                 for i, c in enumerate(pair_columns(pairs, entity))]
+        for row in rows:
+            node = URIRef(naming.rdf_node(cfg, entity, list(row[:n])))
+            g.add((node, rdf_type, cls))
+            for i, pred in preds:
+                if row[i] is not None:
+                    g.add((node, pred, literal(row[i])))
+    return g
+
+
+def pair_focus_keys(cfg, pairs, results) -> dict[str, set]:
+    """{shape id: key tuples (canon.key form) of the focus nodes} of the pair property shapes (sh:sourceShape
+    naming.rdf_pair_shape); results of other shapes are ignored."""
+    from rdflib import URIRef
+    by_source = {naming.rdf_pair_shape(cfg, s.id): s for s in pairs}
+    keys = {s.id: set() for s in pairs}
+    for r in results.subjects(URIRef(RDF_TYPE), URIRef(shapes.SH + "ValidationResult")):
+        s = by_source.get(str(results.value(r, URIRef(shapes.SH + "sourceShape"))))
+        if s is not None:
+            focus = str(results.value(r, URIRef(shapes.SH + "focusNode")))
+            keys[s.id].add(tuple(naming.rdf_key(cfg, s.target, focus)))
+    return keys
+
+
+def _column_type(conn, cfg, entity: str, column: str) -> tuple[str, bool, bool]:
+    """(type name as format_type prints it without modifiers, or "absent"; one of PAIR_TYPES as a base type;
+    numeric)."""
+    r = conn.run(_PAIR_TYPE_SQL, t=ident.qualified(cfg.entities[entity].table), c=ident.check(column)) or []
+    return (str(r[0][0]), bool(r[0][1]), bool(r[0][2])) if r else ("absent", False, False)
+
+
+def _non_finite_rows(conn, cfg, entity: str, numeric: list[str]) -> int:
+    """Rows of the entity with NaN or an infinity in one of the numeric columns (integer types have neither)."""
+    if not numeric:
+        return 0
+    cond = " OR ".join(f"t.{ident.quote(c)} IN ('NaN', 'Infinity', '-Infinity')" for c in numeric)
+    return int(db.scalar(conn, f"SELECT count(*) FROM {ident.qualified(cfg.entities[entity].table)} t WHERE {cond}"))
+
+
+def _duplicate_key_rows(conn, cfg, entity: str) -> int:
+    """Rows beyond the first of every key value the entity's table repeats (0 when the key is unique)."""
+    ent = cfg.entities[entity]
+    keys = ", ".join(f"t.{ident.quote(k)}" for k in ent.key)
+    return int(db.scalar(conn, f"SELECT coalesce(sum(n - 1), 0) FROM (SELECT count(*) AS n FROM "
+                               f"{ident.qualified(ent.table)} t GROUP BY {keys} HAVING count(*) > 1) d"))
+
+
+def run_pairs(conn, cfg, pairs, pair_ttl: str, rows_before: int = 0) -> dict[str, dict]:
+    """Per pair shape, in the given order, one of:
+      {"reason": not_run reason, ...}: view_missing, column_type (column_types), non_finite_values
+        (non_finite_rows), duplicate_keys (duplicate_key_rows) or resource_limit (rows, limit);
+      {"validation_error": exception type name, ...} when pySHACL could not validate the pair graph;
+      {"shacl_keys": set, "sql_keys": set, "rows": rows exported, "column_types": [type of a, type of b]}.
+
+    One read-only REPEATABLE READ transaction reads the views, checks the preconditions, counts the target rows of
+    the shapes that meet them (rows_before, the rows the shape comparison counted, plus these may not exceed
+    verify.shacl_max_rows, else every one is resource_limit) and exports them; pySHACL then validates the pair data
+    graph with pair_ttl (inference none) after the transaction. A key repeated in the exported rows (one RDF node)
+    is duplicate_keys even where SQL grouping saw none. Database errors are raised."""
+    out, live, dup = {}, [], {}
+    with db.read_only(conn, cfg.source.statement_timeout_ms, isolation="repeatable read"):
+        for s in pairs:
+            a, _op, b = shapes.pair_form(s)
+            sql = sql_keys(conn, cfg, s)
+            if sql is None:
+                out[s.id] = {"reason": "view_missing"}
+                continue
+            found = [_column_type(conn, cfg, s.target, c) for c in (a, b)]
+            types = [name for name, _ok, _numeric in found]
+            if not all(ok for _name, ok, _numeric in found):
+                out[s.id] = {"reason": "column_type", "column_types": types}
+                continue
+            bad = _non_finite_rows(conn, cfg, s.target, [c for c, f in zip((a, b), found) if f[2]])
+            if bad:
+                out[s.id] = {"reason": "non_finite_values", "column_types": types, "non_finite_rows": bad}
+                continue
+            if s.target not in dup:
+                dup[s.target] = _duplicate_key_rows(conn, cfg, s.target)
+            if dup[s.target]:
+                out[s.id] = {"reason": "duplicate_keys", "column_types": types, "duplicate_key_rows": dup[s.target]}
+                continue
+            live.append((s, types, sql))
+        live_shapes = [s for s, _t, _q in live]
+        entities = list(dict.fromkeys(s.target for s in live_shapes))
+        counted = {e: int(db.scalar(conn, f"SELECT count(*) FROM {ident.qualified(cfg.entities[e].table)}"))
+                   for e in entities}
+        rows = sum(counted.values())
+        if rows_before + rows > cfg.verify.shacl_max_rows:
+            for s, types, _sql in live:
+                out[s.id] = {"reason": "resource_limit", "column_types": types, "rows": rows_before + rows,
+                             "limit": cfg.verify.shacl_max_rows}
+            return {s.id: out[s.id] for s in pairs}
+        fetched = {}
+        for e in entities:
+            ent = cfg.entities[e]
+            cols = ", ".join(f"t.{ident.quote(c)}" for c in ent.key + pair_columns(live_shapes, e))
+            fetched[e] = conn.run(f"SELECT {cols} FROM {ident.qualified(ent.table)} t") or []
+    for e, data in list(fetched.items()):
+        n = len(cfg.entities[e].key)
+        repeated = len(data) - len({naming.rdf_node(cfg, e, list(r[:n])) for r in data})
+        if repeated:
+            for s, types, _sql in live:
+                if s.target == e:
+                    out[s.id] = {"reason": "duplicate_keys", "column_types": types, "duplicate_key_rows": repeated}
+            del fetched[e]
+    live = [entry for entry in live if entry[0].target in fetched]
+    if live:
+        live_shapes = [s for s, _t, _q in live]
+        try:
+            found = pair_focus_keys(cfg, live_shapes, validate(build_pair_graph(cfg, live_shapes, fetched), pair_ttl))
+        except Exception as e:  # noqa: BLE001 - the type name only: messages can quote values
+            error = str(e) if isinstance(e, ValidationError) else type(e).__name__
+            for s, types, _sql in live:
+                out[s.id] = {"validation_error": error, "column_types": types, "rows": rows}
+        else:
+            for s, types, sql in live:
+                out[s.id] = {"shacl_keys": found[s.id], "sql_keys": sql, "rows": rows, "column_types": types}
+    return {s.id: out[s.id] for s in pairs}

@@ -47,6 +47,14 @@ listed as not proven, "checked only in SQL":
 - `sql_violation`: a shape with an `sql_violation` predicate, also combined with `class` or bounds (no
   SHACL form).
 
+After 0.10.0 (unreleased), `verify.shacl_pairs = true` in `crosscheck.toml` adds `shacl:pair:<id>` for a shape
+whose only constraint is an `sql_violation` of exactly the form `t.<a> <op> t.<b>` (`>`, `>=`, `<`, `<=`):
+the predicate becomes a `sh:lessThan` or `sh:lessThanOrEquals` property shape generated at reason time (never in
+`build/shapes.ttl`), and pySHACL's focus nodes must equal the keys in `v_shape_<id>`. It is `not_run` unless both
+columns are `smallint`, `integer`, `bigint` or `numeric` without NaN or infinities and the target keys are unique
+(`column_type`, `non_finite_values`, `duplicate_keys`), or when the view is not the one the predicate generates
+now (`view_stale`: rerun build). A pass means agreement on this snapshot, not that the rule is right.
+
 A shape that combines `class` with bounds is compared: its node shape has two property shapes, `sh:class`
 on the column and the bounds on the same value written as a number on `<entity>.<column>/value`, and its
 SHACL keys are the rows either one flags (releases up to 0.5.0 listed it as `class_and_bounds`, checked
@@ -83,6 +91,8 @@ Fix `crosscheck.toml` (or the data), never `shapes.ttl` or the generated views.
   [references/pitfalls.md](../skills/semantic-crosscheck/references/pitfalls.md).
 - `shacl:<id>` is `not_run`: `shape:<id>` did not pass or fail in build, or its view does not exist;
   rerun [/xc-build](xc-build.md).
+- `shacl:pair:<id>` fails: pySHACL and the view flag different rows for the same column comparison; compare
+  the keys in `v_shape_<id>` with the rule. `not_run`: see its `reason`; the rule stays checked only in SQL.
 - `owl:consistency` fails: the data contradicts an axiom, for example an item whose class is listed in
   `ontology.no_children` has a child. Fix the data or the `ontology` entry. While the ontology is
   inconsistent the V5 checks cannot prove anything and are `not_run` (`inconsistent`).

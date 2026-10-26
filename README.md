@@ -703,7 +703,7 @@ Cube의 기본 오류 로그에는 오류 클래스·코드·대략적인 범주
 | [GitHub Actions](https://github.com/Technoetic/semantic-crosscheck/actions/workflows/tests.yml) | 6개 OS/Python 단위 작업 + PostgreSQL·HermiT·Cube 통합 + 보안 검사 = 8개 작업 |
 | 엄격한 통합 runner | 미실행 검사·빈 suite·실패·오류가 있으면 CI 실패 |
 | 실제 runtime 선택 모드 | 완전 실행 환경의 성공·설정 변경·근거 누락 시 PASS 차단을 실행하는 통합 CI |
-| 릴리스 전 로컬 소스 검증 | Windows x64·Python 3.12.10·PostgreSQL 17.5·Java 21(Temurin 21.0.12.1)·Cube 1.8.3·Apache Jena 6.2.0·z3-solver 4.15.3.0·W3C data-shapes 고정 커밋 `1dfcd9f`에서 모든 실제 엔진을 켜고 1,109개 실행·통과 1,109·제외 0·실패/오류 0 · 소스 커밋 `588092a`의 전체 테스트이며 최종 공개 커밋의 CI와 구분 |
+| 릴리스 전 로컬 소스 검증 | Windows x64·Python 3.12.10·PostgreSQL 17.5·Java 21(Temurin 21.0.12.1)·Cube 1.8.3·Apache Jena 6.2.0·z3-solver 4.15.3.0·W3C data-shapes 고정 커밋 `1dfcd9f`에서 모든 실제 엔진을 켜고 1,174개 실행·통과 1,174·제외 0·실패/오류 0 · 릴리스 메타데이터까지 들어간 릴리스 브랜치 커밋 `5a02628`의 전체 테스트이며(이후 커밋은 이 집계 기록만) 최종 공개 커밋의 CI와 구분 |
 | 릴리스 배포 파일 | [소스 ZIP](https://github.com/Technoetic/semantic-crosscheck/releases/download/v0.11.0/semantic-crosscheck-0.11.0.zip) · [SHA256SUMS](https://github.com/Technoetic/semantic-crosscheck/releases/download/v0.11.0/SHA256SUMS) |
 
 최종 공개 커밋·CI 작업 URL·실제 집계는 릴리스와 함께 제공하는 **v0.11.0 검증 JSON**에서 확인합니다. 원시 CI 로그에서 읽은 집계만 공개 커밋의 근거로 사용하며, 이전 로컬 검증과 전체 엔진 통합 CI를 구분합니다.

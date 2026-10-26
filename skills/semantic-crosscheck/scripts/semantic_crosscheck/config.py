@@ -223,6 +223,7 @@ class Verify:
     owl_max_individuals: int = 50000
     pair_key_budget: int = PAIR_KEY_CAP   # keys a V3 pair test may compare in full, in chunks of PAIR_KEY_CAP
     shacl_pairs: bool = False      # opt-in: compare sql_violation t.<a> <op> t.<b> with SHACL property pairs
+    existence_witness: bool = False       # opt-in v3w:pair_witness checks of sampled and chunked pair tests
 
 
 @dataclass
@@ -440,6 +441,8 @@ def _load(path: str | Path) -> Config:
     _int("verify.pair_key_budget", verify.pair_key_budget, PAIR_KEY_CAP)
     if type(verify.shacl_pairs) is not bool:
         _err("verify.shacl_pairs", "must be a boolean (true or false)")
+    if type(verify.existence_witness) is not bool:
+        _err("verify.existence_witness", "must be a boolean (true or false)")
     ops = verify.mutation_operators
     if ops != "default" and not (isinstance(ops, list) and all(isinstance(op, str) for op in ops)):
         _err("verify.mutation_operators", 'use "default" or a list of operator names')

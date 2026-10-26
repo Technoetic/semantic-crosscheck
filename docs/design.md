@@ -224,7 +224,7 @@ parameters are ignored.
 | `cube_client` | `CubeClient.load(query) -> list[dict]` (polls "Continue wait", explicit limit 50,000, never `renewQuery`, no proxies), `meta()` |
 | `compare` | `run_binding(conn, client, cfg, gold, params, cache=None, types=None)`, `compare_rows(gold, g_rows, c_rows, types=None)`, `member_kinds(model)`, `gold_kinds(gold, kinds)` |
 | `sweep` | `bindings(conn, cfg, gold)`, `strata_names(gold)`, `md5_order(column)` |
-| `shape_q` | `tests(cfg, model)`, `run_test(..., budget=None)` (the baseline V3 run passes `verify.pair_key_budget`), `pair_keys(conn, cfg, test, budget=None)`, `sampled(test)`, `d95_keys(sampled, total)`, `sample_note(detail)`, `chunk_note(detail)`, `PAIR_KEY_CAP = 2000` (defined in `config`), `join_path(cubes, measure_cube, dim_cube)`, `additive_path(steps)`, `null_group_sql(cfg, test)`, `not_applicable(cfg, model)` |
+| `shape_q` | `tests(cfg, model)`, `run_test(..., budget=None, witness=None)` (the baseline V3 run passes `verify.pair_key_budget` and, with `verify.existence_witness`, a `PairWitness` of each pair test), `pair_keys(conn, cfg, test, budget=None, witness=None)`, `PairWitness(conn, cfg, test)` (`result(pair_status)`), `witness_id(test)`, `witness_note()`, `sampled(test)`, `d95_keys(sampled, total)`, `sample_note(detail)`, `chunk_note(detail)`, `PAIR_KEY_CAP = 2000` (defined in `config`), `join_path(cubes, measure_cube, dim_cube)`, `additive_path(steps)`, `null_group_sql(cfg, test)`, `not_applicable(cfg, model)` |
 | `mutate` | `OPERATORS`, `CLOSURE_OPERATORS`, `OUTCOMES`, `selected(cfg)`, `run_mutants(cfg, out, conn, model, suite, closure=None, sampled_items=())`, `verdict(status, item)`, `closure_status(cfg, out)` |
 | `demo` | `build(dirty, seed, scale) -> {"parts","edges","orders","stock","malformed","expected"}`, `load(conn, data)`, `reference(expected, variant, seed, scale)`, `TABLES`, `TableMismatch` |
 | `cube_replay` | `run(None, args, out) -> Result('cube_replay')`: actual model generation, named mutation, original/gold agreement and mutant/gold disagreement on owned synthetic schemas; hash-bound replay and scoped cleanup |
@@ -322,6 +322,7 @@ configuration ids; `<member>` is a Cube member (`cube.member`); `<stratum>` is a
 | verify | `v3:total:<member>` | the Cube total equals SQL computed from the configuration (or the closure table) | `fail`; `error`; `not_run` (`closure_not_passed`) |
 | verify | `v3:additive:<member>:<member>` | the groups of the measure by the ontology class column of a cube joined through many_to_one / one_to_one steps only, the NULL group included, add up to its total, and the NULL group equals independent SQL over the measure source (`null_group_equal`: an anti-join, or the matched rows without a class when Cube roots the query at the dimension's cube) | as `v3:total:<member>`; a join path with a one_to_many or unknown step gets no check, only a `not_proven` line (not applicable) |
 | verify | `v3:pair:<member>+<member>` | the two measures queried together equal the same measures queried alone, per key | as `v3:total:<member>`; since 0.9.0 also `not_run` (`keys_not_answered`): a chunked test whose Cube answers left out keys it asked for |
+| verify | `v3w:pair_witness:<member>+<member>` | after 0.10.0 (unreleased), opt-in (`verify.existence_witness`), for a sampled or chunked `v3:pair:<member>+<member>` test: every asked key the together answer holds but an alone answer leaves out has no row satisfying the measure's `cube_gen.where_sql` in two PostgreSQL reads that bracket Cube's queries, and its together value is NULL (`absent_no_facts`); passes with nothing absent when every key was answered | `fail` (`absent_with_facts`: a witness row, or an absence from the closure `qty`; `witness_value_mismatch`: no row but a non-empty together value); `not_run` (`witness_incomplete`: a key missing from the together answer, a failed cast or statement, a change between the two reads; `pair_error`: the pair test is an `error`). The pair test's own status, detail and V4 role are unchanged; an unfiltered pair test gets no witness |
 | verify | `v3:closure_oracle:<h>` | raw edges independently recomputed in Python match every stored closure pair's exact quantity, logical path count and minimum/maximum depth in one read-only REPEATABLE READ snapshot | `fail` on differences, error-mode cycles or an exceeded configured depth; `error` on query failure or an internal oracle defect (`scc_removal_left_cycle`); `not_run` for a failed build gate, unsupported keys/quantities or exceeded resource bounds. In `on_cycle = report` mode the oracle removes the edges inside strongly connected components itself and records `cycle_handling`, `dropped_cycle_edges` and `cycle_nodes` (informational, never compared with build's statistics); a pass that removed edges is listed in `not_proven` |
 | verify | `v4:<operator>:<target>` | the mutant was killed: a suite item failed against it (`killed_by`) | `fail` (it survived); `error` (`suite_error`, `startup`, `cube`, `write`, `model_mismatch`, `witness`); `not_run` (`closure_not_passed`, `suite_incomplete`). Equivalent and not applicable mutants get no check, only a `not_proven` line |
 | verify | `v4:suite` | never passes | `not_run` (`no_passing_suite_item`): no suite item passes on the unmutated model |
@@ -543,6 +544,44 @@ The completeness contract is intentionally conservative: standalone measure cube
 keys with no matching fact rows. Above the sampling cap, such sparse data can therefore become `not_run` even
 without a Cube defect. The harness cannot distinguish legitimate absence from a missing answer without independent
 existence evidence. It does not restore a pass by substituting NULL; the unfiltered path at or below the cap is unchanged.
+The opt-in existence witness below supplies that evidence as a separate check; the pair test's own status stays.
+
+**Existence witness** (after 0.10.0, unreleased; limitation M5). With `verify.existence_witness = true` (default
+`false`, which changes no output) the baseline V3 run gives every sampled or chunked pair test a separate check
+`v3w:pair_witness:<member>+<member>` (`shape_q.PairWitness`). An alone query reads the measure cube by its own key
+column (`SELECT by, agg(column) FROM table t WHERE where_sql GROUP BY by`, no join), so its answer has a row for a
+key exactly when a source row with that key satisfies `cube_gen.where_sql(m)`. The witness asks PostgreSQL that
+condition directly: `SELECT DISTINCT t.<by> FROM <table> t WHERE <where_sql> AND t.<by> IN (:k0, ...)`, binding
+the texts Cube's `equals` filter receives, untyped as Cube's PostgreSQL driver sends them, so PostgreSQL casts them
+to the key column's type as it does for Cube (`'01'` finds the integer 1); answers are canonicalised with the alone
+dimension's kind. The first read runs in the key-read `READ ONLY REPEATABLE READ` transaction of `pair_keys`, one
+statement per alone measure and slice of 2,000 asked keys, each under a savepoint so a failed statement does not
+abort the key read. The second runs after the sample's or chunk's Cube queries, in a new read-only `REPEATABLE
+READ` transaction, for the absent keys only. The closure cube's `qty` gets no statement: its alone query reads the
+closure table by the column the keys came from, so in the key-read snapshot every asked key has closure rows and
+the key read is its witness. Only asked keys present in the together answer and missing from an alone answer are
+classified, per key and measure: `absent_no_facts` (no row in either read and an empty together value),
+`witness_value_mismatch` (no row but a non-empty together value), `absent_with_facts` (a row in both reads, or an
+absence from the closure `qty`) and undecided (`witness_type`: a failed cast, SQLSTATE class 22;
+`witness_error`: another failed statement; `witness_changed`: the two reads disagree; `not_witnessed`: no
+configuration measure backs the member). An asked key missing from the together answer is undecided once
+(`together_absent`): a fact-table witness cannot tell why the together query left it out. The empty together value
+is NULL for every aggregate, since count is re-aggregated as a sum of per-key counts (`cube_gen.measure_cube`);
+`tests/test_pair_witness_pg.py` pins it through Cube 1.8.3 and PostgreSQL for sum and count measures on a node pair
+and on the closure pair (a row with a NULL value, and no alone row). The check passes when every incompletely
+answered key is `absent_no_facts` (with nothing absent it passes with zero counts), fails on any
+`absent_with_facts` or `witness_value_mismatch`, and is otherwise `not_run` (`witness_incomplete`) when a key is
+undecided; a known failure wins. A pair test that is an `error` leaves it `not_run` (`pair_error`). Its detail holds
+`mode` (`sampled` or `chunked`) and counts only (`asked_keys`, `incomplete_keys`, the labels, `undecided` and its
+reasons), never keys. Its `not_proven` line says that the witness reuses `crosscheck.toml`'s `where_sql`, so it shows
+agreement between Cube and the source SQL on key presence, not that the data is complete or the filters right
+(common mode); that the NULL key group is outside it; and that the two reads bracket the per-query Cube snapshots
+without sharing them, so a change undone between the reads is not seen. The pair test's status, reason, counts, D95
+bound and V4 baseline are unchanged; the witness does not restore D95 (a later decision). The unfiltered path at or
+below the cap gets no witness (it already compares an absence as NULL). V4 replays run no witness and keep
+treating `not_run` as an error, not a kill; reusing the first read in V4 replays is left for later. In chunked mode
+the witness adds about ceil(N / 2,000) statements per measure to the key read and one per measure and chunk with
+absent keys afterwards.
 
 **Chunked pair tests** (since 0.9.0). `verify.pair_key_budget` (default 2000, at least the cap) is the
 largest key count the baseline V3 run compares in full; the default keeps the sample above the cap. A pair test with

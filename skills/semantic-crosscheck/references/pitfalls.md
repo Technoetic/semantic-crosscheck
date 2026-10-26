@@ -7,7 +7,10 @@ correct syntax does not establish the intended rule. `tlp --oracle norec` compar
 it is not full result-set equivalence and its replay must use the same oracle.
 Standalone measure queries can legitimately omit keys with no fact rows. Requested-key comparisons conservatively
 leave these sparse cases `not_run` too: independent existence evidence is required to distinguish legitimate absence
-from an incomplete response, and substituting NULL would hide that uncertainty.
+from an incomplete response, and substituting NULL would hide that uncertainty. After 0.10.0 (unreleased),
+`verify.existence_witness = true` supplies that evidence as a separate check, `v3w:pair_witness:<member>+<member>`,
+read with the measure's own `where_sql`; it leaves `keys_not_answered` as it is and shares the configuration's
+filters, so a wrong filter in `crosscheck.toml` stays invisible to it.
 
 Each layer has traps that make two correct-looking formulations disagree. The harness already avoids
 the ones listed here; this page explains them so a failing check can be traced to its cause, and so the

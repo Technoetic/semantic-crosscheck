@@ -39,8 +39,8 @@ python "${CLAUDE_PLUGIN_ROOT}/skills/semantic-crosscheck/scripts/sxc.py" reason 
 
 ## Success
 
-Exit code 0 with `shacl:<id>`, `owl:consistency`, `v5:closure:<h>` and `v5:defined:<name>` passing (after
-0.10.0, unreleased, with `verify.shacl_pairs = true` also `shacl:pair:<id>`).
+Exit code 0 with `shacl:<id>`, `owl:consistency`, `v5:closure:<h>` and `v5:defined:<name>` passing (since
+0.11.0, with `verify.shacl_pairs = true` also `shacl:pair:<id>`).
 A passing `shacl:<id>` means SHACL and SQL agree on which rows violate the shape, not that there are
 no violations (that is `shape:<id>` in `build`). One kind of shape is not compared with SHACL and is
 listed as not proven, "checked only in SQL":
@@ -48,7 +48,7 @@ listed as not proven, "checked only in SQL":
 - `sql_violation`: a shape with an `sql_violation` predicate, also combined with `class` or bounds (no
   SHACL form).
 
-After 0.10.0 (unreleased), `verify.shacl_pairs = true` in `crosscheck.toml` adds `shacl:pair:<id>` for a shape
+Since 0.11.0, `verify.shacl_pairs = true` in `crosscheck.toml` adds `shacl:pair:<id>` for a shape
 whose only constraint is an `sql_violation` of exactly the form `t.<a> <op> t.<b>` (`>`, `>=`, `<`, `<=`):
 the predicate becomes a `sh:lessThan` or `sh:lessThanOrEquals` property shape generated at reason time (never in
 `build/shapes.ttl`), and pySHACL's focus nodes must equal the keys in `v_shape_<id>`. It is `not_run` unless both

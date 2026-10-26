@@ -7,7 +7,7 @@ correct syntax does not establish the intended rule. `tlp --oracle norec` compar
 it is not full result-set equivalence and its replay must use the same oracle.
 Standalone measure queries can legitimately omit keys with no fact rows. Requested-key comparisons conservatively
 leave these sparse cases `not_run` too: independent existence evidence is required to distinguish legitimate absence
-from an incomplete response, and substituting NULL would hide that uncertainty. After 0.10.0 (unreleased),
+from an incomplete response, and substituting NULL would hide that uncertainty. Since 0.11.0,
 `verify.existence_witness = true` supplies that evidence as a separate check, `v3w:pair_witness:<member>+<member>`,
 read with the measure's own `where_sql`; it leaves `keys_not_answered` as it is and shares the configuration's
 filters, so a wrong filter in `crosscheck.toml` stays invisible to it. It reads only the keys an alone answer left
@@ -159,7 +159,7 @@ gold SQL and `crosscheck.toml` avoid them too.
   Each extra group exports its target rows again, and `verify.shacl_max_rows` limits the sum over all
   groups, so splitting one column across value kinds can push a large export over the limit (every SHACL
   check is then `not_run`).
-- **Property pairs compare finite numbers only.** After 0.10.0 (unreleased), `verify.shacl_pairs = true`
+- **Property pairs compare finite numbers only.** Since 0.11.0, `verify.shacl_pairs = true`
   compares a rule `t.<a> <op> t.<b>` as `sh:lessThan` or `sh:lessThanOrEquals` (`shacl:pair:<id>`). pySHACL
   compares rdflib literals, not as SHACL or PostgreSQL do: rdflib orders any comparison involving NaN as
   less-than in both directions, so a NaN pair never violates (PostgreSQL orders NaN above every number, SHACL

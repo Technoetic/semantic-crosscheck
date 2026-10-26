@@ -6,6 +6,10 @@ All notable changes to this project are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-10-27
+
+Release notes: [docs/releases/v0.11.0.md](docs/releases/v0.11.0.md).
+
 ### Added
 
 - Opt-in `verify.shacl_pairs = true` (default `false`): `reason` translates a shape whose `sql_violation` is
@@ -406,3 +410,4 @@ First release. Release notes: [docs/releases/v0.1.0.md](docs/releases/v0.1.0.md)
 [0.1.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.1.0
 
 [0.10.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.10.0
+[0.11.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.11.0

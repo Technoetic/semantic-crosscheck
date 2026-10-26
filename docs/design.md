@@ -249,7 +249,7 @@ Cube (see `cube_gen.py` for the exact model):
 RDF/SHACL: `naming.rdf_*` helpers define the IRIs of entity classes, rows (reversible key encoding of
 `canon.key` values, so two text keys never share an IRI), predicates (`<iri><entity>.<column>`), node shapes and
 property shapes (`<iri>shape/<id>/p`; `<iri>shape/<id>/b` for the bounds of a shape with class and bounds;
-after 0.10.0, unreleased, `<iri>shape/<id>/pair` for the reason-time property-pair shape of `verify.shacl_pairs`).
+since 0.11.0, `<iri>shape/<id>/pair` for the reason-time property-pair shape of `verify.shacl_pairs`).
 
 ## 6. Check catalogue
 
@@ -308,7 +308,7 @@ configuration ids; `<member>` is a Cube member (`cube.member`); `<stratum>` is a
 | build | `closure_apply:<h>` | after the MERGE the table equals the recomputation in both directions | `fail` |
 | reason | `shacl:<id>` | pySHACL's focus nodes equal the keys in `v_shape_<id>` | `fail` (`shacl_only`, `sql_only`); `error` (SQLSTATE or `validation_failure`); `not_run` (`shape_not_built`, `view_missing`, `resource_limit`) |
 | reason | `shacl:meta:generated` | since 0.10.0, generated shapes conform to the pinned shacl-shacl syntax subset before source export | `fail` for nonconformance, sanitized `error` for parse/engine/report failure; affected comparisons `not_run` (`generated_shapes_invalid`), independent OWL may proceed |
-| reason | `shacl:pair:<id>` | after 0.10.0 (unreleased), opt-in `verify.shacl_pairs`: for a shape whose `sql_violation` is exactly `t.<a> <op> t.<b>`, pySHACL's focus nodes for the generated `sh:lessThan` or `sh:lessThanOrEquals` property shape equal the keys in `v_shape_<id>` | `fail` (`shacl_only`, `sql_only`); `error` (SQLSTATE or `validation_failure`); `not_run` (`generated_shapes_invalid`, `shape_not_built`, `view_stale`, `view_missing`, `column_type`, `non_finite_values`, `duplicate_keys`, `resource_limit`) |
+| reason | `shacl:pair:<id>` | since 0.11.0, opt-in `verify.shacl_pairs`: for a shape whose `sql_violation` is exactly `t.<a> <op> t.<b>`, pySHACL's focus nodes for the generated `sh:lessThan` or `sh:lessThanOrEquals` property shape equal the keys in `v_shape_<id>` | `fail` (`shacl_only`, `sql_only`); `error` (SQLSTATE or `validation_failure`); `not_run` (`generated_shapes_invalid`, `shape_not_built`, `view_stale`, `view_missing`, `column_type`, `non_finite_values`, `duplicate_keys`, `resource_limit`) |
 | reason | `owl:consistency` | HermiT finds the ontology consistent | `fail`; `error` (SQLSTATE or `reasoner_error`); `not_run` (`resource_limit`) |
 | reason | `v5:closure:<h>` | the OWL closure pairs equal the closure table | `fail`; `not_run` (`closure_not_passed`, `cycle_edges_dropped`, `closure_table_missing`, `inconsistent`, `owl_not_run`, `resource_limit`) |
 | reason | `v5:defined:<name>` | the members of the defined class equal its SQL definition (a class without members on either side passes and is listed in `not_proven`) | `fail`; `not_run` (as `v5:closure:<h>`; `contains_class` reads the closure table) |
@@ -322,7 +322,7 @@ configuration ids; `<member>` is a Cube member (`cube.member`); `<stratum>` is a
 | verify | `v3:total:<member>` | the Cube total equals SQL computed from the configuration (or the closure table) | `fail`; `error`; `not_run` (`closure_not_passed`) |
 | verify | `v3:additive:<member>:<member>` | the groups of the measure by the ontology class column of a cube joined through many_to_one / one_to_one steps only, the NULL group included, add up to its total, and the NULL group equals independent SQL over the measure source (`null_group_equal`: an anti-join, or the matched rows without a class when Cube roots the query at the dimension's cube) | as `v3:total:<member>`; a join path with a one_to_many or unknown step gets no check, only a `not_proven` line (not applicable) |
 | verify | `v3:pair:<member>+<member>` | the two measures queried together equal the same measures queried alone, per key | as `v3:total:<member>`; since 0.9.0 also `not_run` (`keys_not_answered`): a chunked test whose Cube answers left out keys it asked for |
-| verify | `v3w:pair_witness:<member>+<member>` | after 0.10.0 (unreleased), opt-in (`verify.existence_witness`), for a sampled or chunked `v3:pair:<member>+<member>` test: every asked key the together answer holds but an alone answer leaves out has no row satisfying the measure's `cube_gen.where_sql` in two PostgreSQL reads that bracket Cube's queries, and its together value is NULL (`absent_no_facts`); passes with nothing absent when every key was answered | `fail` (`absent_with_facts`: a row in both reads, for the closure `qty` a closure row; `witness_value_mismatch`: no row but a non-empty together value); `not_run` (`witness_incomplete`: a key missing from the together answer, a failed cast or statement, a change between the two reads; `pair_error`: the witnessed pair test is an `error` after its key read). The pair test's own status, detail and V4 role are unchanged, also when the witness fails; an unfiltered pair test (or one whose key read failed) gets no witness, not even when it errors |
+| verify | `v3w:pair_witness:<member>+<member>` | since 0.11.0, opt-in (`verify.existence_witness`), for a sampled or chunked `v3:pair:<member>+<member>` test: every asked key the together answer holds but an alone answer leaves out has no row satisfying the measure's `cube_gen.where_sql` in two PostgreSQL reads that bracket Cube's queries, and its together value is NULL (`absent_no_facts`); passes with nothing absent when every key was answered | `fail` (`absent_with_facts`: a row in both reads, for the closure `qty` a closure row; `witness_value_mismatch`: no row but a non-empty together value); `not_run` (`witness_incomplete`: a key missing from the together answer, a failed cast or statement, a change between the two reads; `pair_error`: the witnessed pair test is an `error` after its key read). The pair test's own status, detail and V4 role are unchanged, also when the witness fails; an unfiltered pair test (or one whose key read failed) gets no witness, not even when it errors |
 | verify | `v3:closure_oracle:<h>` | raw edges independently recomputed in Python match every stored closure pair's exact quantity, logical path count and minimum/maximum depth in one read-only REPEATABLE READ snapshot | `fail` on differences, error-mode cycles or an exceeded configured depth; `error` on query failure or an internal oracle defect (`scc_removal_left_cycle`); `not_run` for a failed build gate, unsupported keys/quantities or exceeded resource bounds. In `on_cycle = report` mode the oracle removes the edges inside strongly connected components itself and records `cycle_handling`, `dropped_cycle_edges` and `cycle_nodes` (informational, never compared with build's statistics); a pass that removed edges is listed in `not_proven` |
 | verify | `v4:<operator>:<target>` | the mutant was killed: a suite item failed against it (`killed_by`) | `fail` (it survived); `error` (`suite_error`, `startup`, `cube`, `write`, `model_mismatch`, `witness`); `not_run` (`closure_not_passed`, `suite_incomplete`). Equivalent and not applicable mutants get no check, only a `not_proven` line |
 | verify | `v4:suite` | never passes | `not_run` (`no_passing_suite_item`): no suite item passes on the unmutated model |
@@ -364,7 +364,7 @@ share a mistake with the fixed corpus. Both engines validate the suite's own sha
 checks engine conformance on the components sxc emits, not sxc's exporter, so it complements the fixed corpus
 (run both) and says so in `not_proven`. Only approved entries inside the sxc profile run: the components and
 severities `shapes.shapes_ttl()` emits (sh:class and the three numeric bounds, one Violation or Warning
-severity; after 0.10.0, unreleased, also sh:lessThan and sh:lessThanOrEquals with an IRI value on property shapes,
+severity; since 0.11.0, also sh:lessThan and sh:lessThanOrEquals with an IRI value on property shapes,
 which `reason` generates for `verify.shacl_pairs`) on IRI focus nodes, through sh:targetClass, sh:targetNode, implicit class targets or node-level
 shapes, with no path or one IRI path; everything else is `not_run` with a reason id. The suite is pinned by a
 SHA-256 over the sorted relative paths and bytes of the files read; a different digest runs no engine unless
@@ -546,7 +546,7 @@ without a Cube defect. The harness cannot distinguish legitimate absence from a 
 existence evidence. It does not restore a pass by substituting NULL; the unfiltered path at or below the cap is unchanged.
 The opt-in existence witness below supplies that evidence as a separate check; the pair test's own status stays.
 
-**Existence witness** (after 0.10.0, unreleased; limitation M5). With `verify.existence_witness = true` (default
+**Existence witness** (since 0.11.0; limitation M5). With `verify.existence_witness = true` (default
 `false`, which changes no output) the baseline V3 run gives every sampled or chunked pair test a separate check
 `v3w:pair_witness:<member>+<member>` (`shape_q.PairWitness`). An alone query reads the measure cube by its own key
 column (`SELECT by, agg(column) FROM table t WHERE where_sql GROUP BY by`, no join), so its answer has a row for a
@@ -612,7 +612,7 @@ makes it an `error` whose detail says `mode`, `chunks` and `chunks_compared` (th
 when the NULL key group failed). The detail of a finished comparison gains `mode = "chunked"`, `chunks`,
 `compared_keys` (the keys the chunks asked for), `answered_keys`, `total_keys`, `null_key_group` (the NULL key group's
 own `keys`, `mismatched`, `duplicate_keys` and `alone_only_keys`, which the top-level counts include) and `elapsed_ms`
-(from the key read to the last answer; after 0.10.0, unreleased, without the existence witness's reads), and
+(from the key read to the last answer; since 0.11.0, without the existence witness's reads), and
 carries no `sampled_keys`, `d95_keys` or `d95_rate`. The alone queries are filtered to the chunk's keys, so the chunked `alone_only_keys` count keys of the key table only, and
 `duplicate_keys` counts duplicates within one chunk (two keys equal in canonical form in different chunks are each
 compared with their own alone value). Its `not_proven` line says that every key was compared in C chunks plus the
@@ -744,7 +744,7 @@ One kind of shape is not compared and is listed in `not_proven` instead ("checke
 - `sql_violation`: any shape with an `sql_violation` predicate, also when it has `class` or bounds as well
   (no SHACL form).
 
-**Property pairs (opt-in, after 0.10.0, unreleased).** With `verify.shacl_pairs = true`, a shape whose only
+**Property pairs (opt-in, since 0.11.0).** With `verify.shacl_pairs = true`, a shape whose only
 constraint is an `sql_violation` that is, as a whole, `t.<a> <op> t.<b>` (op `>`, `>=`, `<` or `<=`; SQL
 whitespace only; two different identifiers that pass `ident.check`) is also compared with SHACL 2017 section 4.5.
 Anything else keeps the line above: comments, parentheses, casts, constants, quoted or upper-case names, `=`, `<>`

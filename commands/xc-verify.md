@@ -50,8 +50,8 @@ python "${CLAUDE_PLUGIN_ROOT}/skills/semantic-crosscheck/scripts/sxc.py" verify 
   `d95_keys`); a key Cube leaves out of a chunk's together or (since 0.10.0) alone answer is not fully compared, so such a test is
   `not_run` (`keys_not_answered`) unless it fails. Not proven says that each Cube query reads its own
   snapshot, shared with no other query and not with SQL. Above the budget the sample stays and not
-  proven names the budget. V4 still replays the 2,000-key sample, the first chunk. After 0.10.0
-  (unreleased), `verify.existence_witness = true` adds `v3w:pair_witness:<member>+<member>` to every
+  proven names the budget. V4 still replays the 2,000-key sample, the first chunk. Since 0.11.0,
+  `verify.existence_witness = true` adds `v3w:pair_witness:<member>+<member>` to every
   sampled or chunked pair test: each asked key the together answer holds but an alone answer leaves out
   is read in PostgreSQL with the measure's `where_sql` (in the key-read snapshot and again after the Cube
   queries). The pair test's own status and V4 are unchanged, also when the witness fails; V4 replays run
@@ -114,7 +114,7 @@ that generated the model. Fix `crosscheck.toml` or the gold SQL file, never the 
   when it is `error`, `chunks_compared` says how many chunks finished, and when it is `not_run`
   (`keys_not_answered`), `answered_keys` is below `compared_keys`: Cube's together or alone answers left keys
   out, and those keys were not compared.
-- `v3w:pair_witness:<member>+<member>` (after 0.10.0, unreleased, with `verify.existence_witness`)
+- `v3w:pair_witness:<member>+<member>` (since 0.11.0, with `verify.existence_witness`)
   fails: an alone answer left out a key the measure has rows for under `crosscheck.toml`'s filters in
   both reads (`absent_with_facts`; for the closure `qty`, a key the closure table still has), or a key
   without such rows had a non-empty together value (`witness_value_mismatch`). Compare the generated

@@ -133,7 +133,7 @@ The profile follows sxc's exporter: the constraint components and severities
 
 | Feature | Inside the profile |
 | --- | --- |
-| Constraints | `sh:class` (IRI), `sh:minExclusive`, `sh:minInclusive`, `sh:maxInclusive` (`xsd:decimal`, `xsd:integer`, `xsd:int` or `xsd:long` value); after 0.10.0 (unreleased) `sh:lessThan` and `sh:lessThanOrEquals` with an IRI value on property shapes only (on a node shape: `unsupported_component`) |
+| Constraints | `sh:class` (IRI), `sh:minExclusive`, `sh:minInclusive`, `sh:maxInclusive` (`xsd:decimal`, `xsd:integer`, `xsd:int` or `xsd:long` value); since 0.11.0 `sh:lessThan` and `sh:lessThanOrEquals` with an IRI value on property shapes only (on a node shape: `unsupported_component`) |
 | Severity | at most one `sh:severity`, `sh:Violation` or `sh:Warning` |
 | Shapes | node shapes with `sh:property`; property shapes with exactly one IRI `sh:path` and no nested `sh:property` |
 | Targets | `sh:targetClass`, `sh:targetNode` with IRI values, implicit class targets (a shape that is an `rdfs:Class`) |
@@ -150,7 +150,7 @@ core entries that use only those constraints (such as
 `core/property/maxExclusive-001`, `core/property/minCount-001` and
 `core/targets/targetClass-001`) are `not_run` (`unsupported_component`) rather
 than compared. The profile widens only when the exporter emits a constraint:
-after 0.10.0 (unreleased), `reason` generates `sh:lessThan` and
+since 0.11.0, `reason` generates `sh:lessThan` and
 `sh:lessThanOrEquals` property shapes for `verify.shacl_pairs`, so those two
 parameters are inside the profile on property shapes with an IRI value.
 Known gap: the fixed corpus has no property-pair case (adding one would change
@@ -240,7 +240,7 @@ checksum in the workflow.
 On 2026-10-24, with pySHACL 0.40.1, RDFLib 7.6.0, Apache Jena 6.2.0 and Temurin
 Java 21 on the pinned suite, 6 of the 98 core entries were inside the profile and
 both engines matched all of their expected reports (12 checks passed, 184
-not_run). After 0.10.0 (unreleased), the property-pair parameters bring three
+not_run). Since 0.11.0, the property-pair parameters bring three
 more entries into the profile; on 2026-10-26, with the same pySHACL, RDFLib,
 Jena and Java, 9 of the 98 entries are inside it and both engines match all of
 their expected reports (18 checks pass, 178 not_run):

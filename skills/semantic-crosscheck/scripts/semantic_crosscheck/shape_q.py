@@ -483,11 +483,11 @@ class PairWitness:
     class 22, witness_error otherwise, a lost connection included); it runs under a savepoint, so the transaction goes
     on, and a failed savepoint command or second-read transaction leaves the keys it covers witness_error. The
     witness catches whatever its own work raises (compare.expected_errors), so it never reaches the pair test, and
-    its reads are left out of the pair test's elapsed_ms. The closure cube's qty
-    gets no first statement: its alone query reads the closure table by the column the keys were read from (no
-    filter), so in the key-read snapshot every asked key has closure rows and the key read is its first read; its
-    second read asks the closure table again for the absent keys (SELECT DISTINCT t.<column> FROM <closure table> t
-    WHERE t.<column> IN (...)), so a closure rebuilt between the reads is witness_changed, not a fail.
+    its reads are left out of the pair test's elapsed_ms. The closure cube's qty gets no first statement: its alone
+    query reads the closure table by the column the keys were read from (no filter), so in the key-read snapshot
+    every asked key has closure rows and the key read is its first read; its second read asks the closure table
+    again for the absent keys (SELECT DISTINCT t.<column> FROM <closure table> t WHERE t.<column> IN (...)), so a
+    closure rebuilt between the reads is witness_changed, not a fail.
 
     The first read (before) runs inside pair_keys's READ ONLY REPEATABLE READ transaction, over every asked key in
     slices of PAIR_KEY_CAP; the second (observe) runs after the sample's or the chunk's Cube queries in a new READ ONLY

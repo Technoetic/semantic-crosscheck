@@ -59,8 +59,18 @@ def _csv(value: str) -> list[str]:
     return [v.strip() for v in value.split(",") if v.strip()]
 
 
-def parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="sxc.py", description="Cross-check a PostgreSQL 17 closure, SHACL rules, OWL reasoning and a Cube semantic layer.")
+class _AuditUsageError(Exception):
+    """An audit parser error whose untrusted argparse message is never rendered."""
+
+
+class _AuditParser(argparse.ArgumentParser):
+    def error(self, _message):
+        raise _AuditUsageError()
+
+
+def parser(*, audit_errors=False) -> argparse.ArgumentParser:
+    parser_type = _AuditParser if audit_errors else argparse.ArgumentParser
+    p = parser_type(prog="sxc.py", description="Cross-check a PostgreSQL 17 closure, SHACL rules, OWL reasoning and a Cube semantic layer.")
     p.add_argument("--version", action="version", version=f"semantic-crosscheck {VERSION}")
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--config", default=None, help="path to crosscheck.toml; it must exist when given (default: "
@@ -268,8 +278,71 @@ def discard_report_files(out: Path | None) -> None:
             (out / name).unlink(missing_ok=True)
 
 
+def _audit_cli_inputs(argv, cli):
+    """Identify accepted audit spellings and cleanup paths without typed parsing.
+
+    Resolve exact options and unambiguous argparse abbreviations using the same
+    command option catalog. No argument error text or input values are rendered.
+    """
+    if not argv or argv[0] != 'counterexample':
+        return None
+    command = next(action for action in cli._actions if isinstance(action, argparse._SubParsersAction)).choices['counterexample']
+    options = command._option_string_actions
+    tokens = argv[1:]
+    if '--' in tokens:
+        tokens = tokens[:tokens.index('--')]
+
+    def resolve(token):
+        name = token.split('=', 1)[0]
+        if name in options:
+            return options[name]
+        matches = [action for option, action in options.items() if name.startswith('--') and option.startswith(name)]
+        return matches[0] if len(matches) == 1 else None
+
+    actions = [resolve(token) for token in tokens]
+    if not any(action is not None and action.dest == 'constraint_audit' for action in actions):
+        return None
+    fields = ('constraint_audit', 'out', 'constraints', 'witness_schema', 'reference_sql', 'candidate_sql',
+              'replay', 'config', 'gold_sql', 'metamorphic_sql')
+    values = dict.fromkeys(fields)
+    values['quiet'] = False
+    for index, (token, action) in enumerate(zip(tokens, actions)):
+        if action is None:
+            continue
+        if action.dest == 'quiet':
+            values['quiet'] = True
+        if action.dest not in fields:
+            continue
+        if '=' in token:
+            values[action.dest] = token.split('=', 1)[1]
+        elif index + 1 < len(tokens):
+            value = tokens[index + 1]
+            if not value.startswith('-') or value == '-' or command._negative_number_matcher.match(value):
+                values[action.dest] = value
+    return argparse.Namespace(**values)
+
+
+def _audit_usage_failure(args):
+    from semantic_crosscheck import constraint_audit
+    out = Path(args.out) if args.out else Path.cwd() / '.sxc'
+    try:
+        constraint_audit.prepare_run(args, out)
+    except StageError:
+        out = None  # Unsafe aliases or output errors must not overwrite a source.
+    res = Result('counterexample', inputs={'constraint_audit': {'mode': 'constraint_audit'}})
+    res.add('stage', 'error', '', reason='invalid_constraint_audit_arguments')
+    print(_summary(res, _write(res, out), args.quiet), file=sys.stderr)
+    return EXIT_CONFIG
+
+
 def main(argv=None) -> int:
-    args = parser().parse_args(argv)
+    argv = list(sys.argv[1:] if argv is None else argv)
+    cli = parser()
+    audit_inputs = _audit_cli_inputs(argv, cli)
+    try:
+        args = (parser(audit_errors=True) if audit_inputs is not None else cli).parse_args(argv)
+    except _AuditUsageError:
+        return _audit_usage_failure(audit_inputs)
     stage = args.stage
     audit_mode = stage == "counterexample" and args.constraint_audit is not None
     if stage == "counterexample" and args.scenario is None and args.mutation_operator is None and args.witness_schema is None and args.constraint_audit is None:
@@ -286,7 +359,7 @@ def main(argv=None) -> int:
             from semantic_crosscheck import constraint_audit
             out = out if out is not None else Path.cwd() / ".sxc"
             try:
-                constraint_audit.validate_output_paths(args, out)
+                args._constraint_audit_replay_raw = constraint_audit.prepare_run(args, out)
             except StageError:
                 out = None  # Writing an error result must not overwrite the aliased source.
                 raise

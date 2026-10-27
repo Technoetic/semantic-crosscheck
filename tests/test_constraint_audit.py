@@ -412,6 +412,88 @@ class ConstraintAuditTest(AuditInputs):
             self.assertEqual(sxc.main(argv), 2)
         self.assertEqual(target.read_bytes(), b'SELECT 42 AS n')
 
+    def test_audit_parser_errors_are_sanitized_for_every_accepted_audit_spelling(self):
+        sentinel = 'D:/PRIVATE-PARSER-VALUE'
+        for flag in ('--constraint-audit', '--constraint-aud'):
+            for audit_option in ([flag, 'audit.json'], [flag + '=audit.json']):
+                for invalid in (['--seed', sentinel], ['--shrink-strategy', sentinel],
+                                ['--UNKNOWN-' + sentinel], ['--seed']):
+                    output = io.StringIO()
+                    with self.subTest(option=audit_option, invalid=invalid), \
+                            contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
+                        try:
+                            code = sxc.main(['counterexample', *audit_option, '--out', str(self.root), *invalid])
+                        except SystemExit as error:
+                            code = error.code
+                    self.assertEqual(code, 2)
+                    self.assertNotIn(sentinel, output.getvalue())
+                    self.assertNotIn(str(self.root), output.getvalue())
+
+    def test_ordinary_parser_errors_keep_their_existing_output_and_system_exit(self):
+        output = io.StringIO()
+        with contextlib.redirect_stderr(output), self.assertRaises(SystemExit) as caught:
+            sxc.main(['counterexample', '--seed', 'ORDINARY-PARSER-VALUE'])
+        self.assertEqual(caught.exception.code, 2)
+        self.assertIn('ORDINARY-PARSER-VALUE', output.getvalue())
+
+    def test_cli_preflight_and_parser_failure_clear_all_prior_witness_outputs(self):
+        manifest = str(self.root / 'audit.json')
+        for audit_option in (['--constraint-audit', manifest], ['--constraint-audit=' + manifest],
+                             ['--constraint-aud', manifest], ['--constraint-aud=' + manifest]):
+            for invalid in (['--config', 'unused.toml'], ['--seed', 'PRIVATE'],
+                            ['--shrink-strategy', 'PRIVATE'], ['--UNKNOWN-PRIVATE']):
+                previous = self.run_fake(answer=lambda *_a, **_kw: {'equal': False})
+                previous.write(self.root)
+                self.assertTrue(any(c.detail.get('found') for c in previous.checks))
+                ordinary = self.root / 'counterexample/fixture.json'
+                ordinary.write_bytes(b'{"old":true}')
+                self.assertTrue(self.artifact('declared').exists())
+                self.assertTrue(self.artifact('relaxed').exists())
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
+                    try:
+                        code = sxc.main(['counterexample', *audit_option, '--ou', str(self.root), *invalid])
+                    except SystemExit as error:
+                        code = error.code
+                self.assertEqual(code, 2)
+                self.assertFalse(ordinary.exists())
+                self.assertFalse(self.artifact('declared').exists())
+                self.assertFalse(self.artifact('relaxed').exists())
+                self.assertNotIn('PRIVATE', output.getvalue())
+                result = json.loads((self.root / 'counterexample/result.json').read_text())
+                self.assertEqual(result['status'], 'error')
+                self.assertFalse(any(c['detail'].get('found') for c in result['checks']))
+
+    def test_parse_error_cleanup_preserves_aliased_source_and_recognizes_abbreviated_out(self):
+        ordinary = self.root / 'counterexample/fixture.json'
+        ordinary.parent.mkdir(parents=True, exist_ok=True)
+        source = b'SELECT 42 AS n'
+        ordinary.write_bytes(source)
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
+            try:
+                code = sxc.main(['counterexample', '--constraint-aud=audit.json', '--ou', str(self.root),
+                                 '--ref', str(ordinary), '--seed', 'PRIVATE'])
+            except SystemExit as error:
+                code = error.code
+        self.assertEqual(code, 2)
+        self.assertEqual(ordinary.read_bytes(), source)
+        self.assertNotIn('PRIVATE', output.getvalue())
+
+    def test_cli_same_output_replay_survives_early_cleanup(self):
+        self.run_fake()
+        argv = ['counterexample', '--constraint-audit', str(self.root / 'audit.json'), '--constraints', str(self.root / 'constraints.json'),
+                '--witness-schema', str(self.root / 'schema.json'), '--reference-sql', str(self.root / 'reference.sql'),
+                '--candidate-sql', str(self.root / 'candidate.sql'), '--out', str(self.root), '--max-examples', '24',
+                '--max-shrink-steps', '128', '--solver-timeout-ms', '3000', '--statement-timeout-ms', '1000',
+                '--replay', str(self.artifact())]
+        with patch.object(ce.db, 'connect', return_value=SimpleNamespace(close=lambda: None)), \
+                patch.object(ce, 'evaluate', return_value={'equal': False}), \
+                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(sxc.main(argv), 1)
+        payload = json.loads(self.artifact().read_text())
+        self.assertEqual(payload['classification'], 'outside_declared_domain')
+
 
 if __name__ == '__main__':
     unittest.main()

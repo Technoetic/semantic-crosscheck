@@ -65,11 +65,32 @@ def validate_output_paths(args, out):
         generated += [directory / 'audit' / (name + suffix)
                       for name in ('declared-fixture.json', 'relaxed-fixture.json', 'relaxed-constraints.json')
                       for suffix in ('', '.part')]
-        protected = [Path(value).resolve() for name in ('constraints', 'constraint_audit', 'witness_schema', 'reference_sql', 'candidate_sql')
+        protected = [Path(value).resolve() for name in ('constraints', 'constraint_audit', 'witness_schema', 'reference_sql', 'candidate_sql',
+                                                     'config', 'gold_sql', 'metamorphic_sql')
                      if (value := getattr(args, name, None)) is not None]
         if any(path.resolve() in protected for path in generated):
             raise ValueError('Output aliases input')
     except (OSError, ValueError, TypeError):
+        raise _bad() from None
+
+
+def prepare_run(args, out):
+    """Capture same-output replay, then remove stale evidence before preflight."""
+    try:
+        validate_output_paths(args, out)
+        replay_raw = None
+        if args.replay:
+            try:
+                replay_raw = _read(args.replay, REPLAY_LIMIT)
+            except (OSError, ValueError, TypeError):
+                pass  # Later validation rejects it; stale evidence is still removed.
+        directory = Path(out) / 'counterexample'
+        for path in [directory / 'fixture.json', directory / 'fixture.json.part', directory / 'result.json', directory / 'result.json.part',
+                     directory / 'audit/declared-fixture.json', directory / 'audit/relaxed-fixture.json',
+                     directory / 'audit/declared-fixture.json.part', directory / 'audit/relaxed-fixture.json.part']:
+            path.unlink(missing_ok=True)
+        return replay_raw
+    except (StageError, OSError, ValueError, TypeError):
         raise _bad() from None
 
 
@@ -314,21 +335,12 @@ def _arm(args, arm, profile, plan, spec, reference, candidate, digests, bounds, 
 def run(args, out):
     """Two equally bounded searches; fixture bytes publish only after stable input checks."""
     directory = Path(out) / 'counterexample' / 'audit'
-    replay_raw = None
     try:
-        # Preserve replay bytes when its input coincides with our previous output.
-        if args.replay:
-            replay_raw = _read(args.replay, REPLAY_LIMIT)
-    except (OSError, ValueError, TypeError):
-        pass  # Cleanup still runs before the sanitized rejection below.
-    try:
-        validate_output_paths(args, out)
+        # The CLI may already have prepared before parser/config preflight.
+        # Direct API callers retain the same capture-before-cleanup protection.
+        replay_raw = (args._constraint_audit_replay_raw if hasattr(args, '_constraint_audit_replay_raw')
+                      else prepare_run(args, out))
         directory.mkdir(parents=True, exist_ok=True)
-        stale = [directory.parent / 'fixture.json', directory.parent / 'result.json',
-                 directory / 'declared-fixture.json', directory / 'relaxed-fixture.json',
-                 directory / 'declared-fixture.json.part', directory / 'relaxed-fixture.json.part']
-        for path in stale:
-            path.unlink(missing_ok=True)
         if (any(getattr(args, name, None) is not None for name in ('scenario', 'metamorphic_sql', 'mutation_operator', 'gold_sql'))
                 or any(getattr(args, name, None) is None for name in ('constraints', 'witness_schema', 'reference_sql', 'candidate_sql'))
                 or getattr(args, 'shrink_strategy', 'rows') != 'rows'

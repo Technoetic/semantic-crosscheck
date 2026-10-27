@@ -52,7 +52,21 @@
 
 ### Task 3: Integration and independent verification
 
-- [ ] Review each task's full diff against its brief, fix substantive findings and re-review.
-- [ ] Run the complete provisioned test suite without skips, compile, CLI/docs/package checks and leak/whitespace scans.
-- [ ] Have an independent reviewer inspect the integrated diff and rerun the important feature checks.
-- [ ] Record evidence and unresolved limits, commit the implementation locally and update the vault handoff. No remote push or release.
+- [x] Review each task's full diff against its brief, fix substantive findings and re-review.
+- [x] Run the complete provisioned test suite without skips, compile, CLI/docs/package checks and leak/whitespace scans.
+- [x] Have an independent reviewer inspect the integrated diff and rerun the important feature checks.
+- [x] Record evidence and unresolved limits, commit the implementation locally and update the vault handoff. No remote push or release.
+
+## Verification outcome
+
+The provisioned full run executed 1,218 tests with zero skips. All functional and engine checks passed;
+three subtest failures in one documentation-catalogue method exposed missing audit ID entries. The final
+correction changes only `docs/design.md`; catalogue 6, CLI documentation 11 and executable quick-start 4
+tests pass afterwards. The original failed full-run log and the targeted correction evidence are retained;
+this is composite verification, not a claim that one complete 1,218-test run was all green.
+
+Independent verification reran the new boundary 8 and audit 36 tests, including real PostgreSQL/Cube use.
+The public COUNT example and two same-output CLI replays reproduce the same conditional witness.
+Task reviews, the scoped parser/cleanup fixes and the final whole-branch review leave no open findings.
+Default search remains unchanged; audit v1 is opt-in, rows-only and bounded, with outside-domain evidence
+reported as diagnostic rather than equivalence or an automatic production defect.

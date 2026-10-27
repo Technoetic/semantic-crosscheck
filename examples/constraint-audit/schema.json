@@ -1,0 +1,1 @@
+{"version":1,"tables":{"items":{"rows":[0,2],"columns":[{"name":"id","type":"integer","values":[1,2]},{"name":"qty","type":"integer","values":[null,0]}]}}}

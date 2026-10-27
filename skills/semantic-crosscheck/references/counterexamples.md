@@ -26,6 +26,28 @@ globally smallest fixture or minimality under value changes. A budget limit leav
 Query errors never establish a counterexample and are not accepted as shrink witnesses.
 If a deletion cannot execute, the valid witness is retained and minimality stays unproven.
 
+## Optional constraint sensitivity audit
+
+`--constraint-audit FILE` requires a version 1 manifest binding the exact original
+constraint file, exhaustive caller-declared provenance and explicit source
+declarations to relax. With `--witness-schema` and `--constraints`, it runs the
+same pair over the declared domain and the relaxed domain **outside** the full
+declared profile. Each arm receives the configured budgets; total work can
+approach twice one search. Only row shrinking is supported, preserving finite
+values, all row bounds and outside-domain status. Incompatible modes and
+structured shrinking are rejected before connection.
+
+A declared witness is `fail` / `declared_domain_disagreement`; an outside witness
+is diagnostic `not_run` / `outside_declared_domain`, with exit 1. Bounded
+no-witness/incomplete searches are also `not_run`, never pass or equivalence.
+Provenance is not verified truth; outside evidence does not automatically prove
+the constraint wrong or production defective. Arm prefixes differ and do not
+establish causal necessity. Replay uses the distinct version 1 audit format and
+validates exact SQL/spec/profile/manifest/projection/options bindings.
+
+See [the full audit contract and synthetic COUNT example](../../../docs/constraint-audit.md).
+Ordinary invocation/replay remains unchanged without the flag.
+
 ## Optional integrity profile
 
 Add `--constraints examples/counterexamples/constraints.json` to enforce a declared domain. The

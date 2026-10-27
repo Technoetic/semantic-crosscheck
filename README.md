@@ -420,7 +420,7 @@ python skills/semantic-crosscheck/scripts/sxc.py <stage> [--config PATH] [--out 
 | `verify` | V1·V2·V3·V4 검증 | `--only v1,v2,v3,v4`, `--gold ID` | `verify/result.json`, `verify/server.log`, `verify/mutants/*/` |
 | `report` | 필수 단계의 실행·최신성·통과 여부 종합 | 별도 옵션 없음 | `report/result.json`, `report.md`, `report.json` |
 | `cube-install` | 사용자별 고정 Cube 어댑터 설치 | `--home DIR`, `--native-file PATH`, `--force` | `cube_install/result.json`, `cube_install/npm-ci.log`, `cube_install/smoke.log` |
-| `counterexample` | 합성 데이터에서 SQL의 차이·BOM 변환 관계를 검사하고 축소·재현 | `--reference-sql FILE`, `--candidate-sql FILE`, `--metamorphic-sql FILE`, `--mutation-operator NAME`, `--gold-sql FILE`, `--scenario nulls`, `--seed N`, `--max-examples N`, `--max-shrink-steps N`, `--shrink-strategy structured`, `--witness-schema FILE`, `--solver-timeout-ms N`, `--dsn-env NAME`, `--statement-timeout-ms N`, `--constraints FILE`, `--replay FILE` | `counterexample/result.json`, `counterexample/fixture.json` |
+| `counterexample` | 합성 데이터에서 SQL의 차이·BOM 변환 관계를 검사하고 축소·재현 | `--reference-sql FILE`, `--candidate-sql FILE`, `--metamorphic-sql FILE`, `--mutation-operator NAME`, `--gold-sql FILE`, `--scenario nulls`, `--seed N`, `--max-examples N`, `--max-shrink-steps N`, `--shrink-strategy structured`, `--witness-schema FILE`, `--solver-timeout-ms N`, `--dsn-env NAME`, `--statement-timeout-ms N`, `--constraints FILE`, `--constraint-audit FILE`, `--replay FILE` | `counterexample/result.json`, `counterexample/fixture.json` |
 | `cube-replay` | 고정 합성 데이터를 실제 Cube 원형·변형 모델과 독립 gold SQL로 비교 | `--mutation-operator NAME`, `--allow-scratch-schema`, `--seed N`, `--dsn-env NAME`, `--statement-timeout-ms N`, `--replay FILE` | `cube_replay/result.json`, `cube_replay/fixture.json` |
 | `tlp` | 참·거짓·NULL 분할 검사. 0.10.0부터 선택형 NoREC 조건 건수 비교 | `--spec FILE`, `--oracle tlp\|norec`, `--dsn-env NAME`, `--seed N`, `--max-examples N`, `--statement-timeout-ms N`, `--replay FILE` | `tlp/result.json`, `tlp/fixture.json` |
 | `shacl-corpus` | 독립 기대 결과와 pySHACL·Apache Jena의 합성 보고서 비교. 0.9.0부터는 W3C SHACL 시험 모음 core의 프로필 안 사례도 W3C 기대 보고서와 비교 | `--jena-home DIR`, `--timeout-ms N`, `--w3c-suite [DIR]`, `--allow-unpinned-suite` | `shacl_corpus/result.json` |
@@ -453,6 +453,8 @@ NULL·중복 조인·BOM 다중 경로·날짜 경계를 생성하고, 결과 �
 
 두 SQL 파일 비교에서는 `--shrink-strategy structured`로 FK 의존 행 묶음 삭제와 비키 값 단순화를
 선택할 수 있습니다. 기본은 기존 `rows`이며, 실제 불일치와 무결성을 유지한 변환만 수용합니다.
+선택 기능 [`--constraint-audit FILE`](docs/constraint-audit.md)은 같은 SQL 쌍을 선언된 제약과 명시적으로 완화한 제약 밖에서 각각 유한 탐색합니다. 제약 밖 불일치는 `not_run` 진단이며, 제약 오류나 운영 결함을 자동으로 뜻하지 않습니다. [합성 COUNT 예제](examples/constraint-audit/)와 전용 재현 형식이 제공됩니다.
+
 `--witness-schema FILE`은 사용자가 선언한 타입·유한 값 목록·행 수 범위에서 시험 데이터를 생성합니다.
 `python -m pip install -r requirements/witness.txt`로 선택 의존성을 설치하고
 `--solver-timeout-ms 3000`으로 전체 생성 시간을 제한합니다. 실제 PostgreSQL 비교로 반례를 확인하며,

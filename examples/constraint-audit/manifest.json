@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "constraints_sha256": "e9b824807f319d64ba73013dbfd1466e6e2cc12c5de3287b2945ce32c217b46f",
+  "provenance": [
+    {
+      "rule": "/tables/items/primary_key",
+      "source": "catalog"
+    },
+    {
+      "rule": "/tables/items/not_null/0",
+      "source": "observed"
+    }
+  ],
+  "relax": [
+    "/tables/items/not_null/0"
+  ]
+}

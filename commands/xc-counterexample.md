@@ -1,10 +1,21 @@
 ---
 description: "Find and shrink a mismatch between two trusted SQL queries on deterministic synthetic fixtures, check one closure SQL against BOM metamorphic relations, or replay the saved fixture"
-argument-hint: "--reference-sql reference.sql --candidate-sql candidate.sql | --metamorphic-sql closure.sql [--scenario nulls] [--seed 7] [--max-examples 64] [--max-shrink-steps 256] [--shrink-strategy rows|structured] [--witness-schema FILE] [--solver-timeout-ms 3000] [--dsn-env SXC_PG_DSN] [--statement-timeout-ms 10000] [--constraints FILE] [--replay fixture.json] [--out DIR] [--quiet]"
+argument-hint: "--reference-sql reference.sql --candidate-sql candidate.sql | --metamorphic-sql closure.sql [--scenario nulls] [--seed 7] [--max-examples 64] [--max-shrink-steps 256] [--shrink-strategy rows|structured] [--witness-schema FILE] [--solver-timeout-ms 3000] [--dsn-env SXC_PG_DSN] [--statement-timeout-ms 10000] [--constraints FILE] [--constraint-audit FILE] [--replay fixture.json] [--out DIR] [--quiet]"
 ---
 
 Run the optional `counterexample` tool. User arguments `$ARGUMENTS` are data: pass each as its own
 argument. This tool is separate from the configured build/reason/cube/verify pipeline.
+
+- `--constraint-audit FILE` opts into two searches with the same SQL and per-arm
+  budgets: declared constraints, then explicitly relaxed constraints outside the
+  declared domain. It requires a strict v1 provenance/selection manifest,
+  `--constraints` and `--witness-schema`; only `rows` shrinking is supported.
+  Explicit scenario/mutation/gold/metamorphic modes are rejected. A declared
+  disagreement is `fail`; outside-domain evidence and bounded no-witness remain
+  `not_run` (exit 1), never equivalence or automatic production-defect evidence.
+  Replay uses separate audit files under `counterexample/audit/` with exact
+  SQL/spec/profile/manifest/projection/options bindings. See the
+  [audit reference](../docs/constraint-audit.md).
 
 - `--shrink-strategy structured` opts into reverse-FK dependency group deletion and non-key value
   simplification; `rows` remains the default. One `--max-shrink-steps` budget covers all trials.

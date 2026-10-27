@@ -275,6 +275,9 @@ def run(cfg, args, out):
 
     With --metamorphic-sql the stage instead checks one closure SQL against BOM metamorphic relations.
     """
+    if getattr(args, 'constraint_audit', None) is not None:
+        from . import constraint_audit
+        return constraint_audit.run(args, out)
     if (getattr(args, 'witness_schema', None) is not None or getattr(args, 'shrink_strategy', 'rows') != 'rows'
             or getattr(args, 'solver_timeout_ms', 3000) != 3000):
         from . import search

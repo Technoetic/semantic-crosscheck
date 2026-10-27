@@ -5,6 +5,13 @@ argument-hint: "--config crosscheck.toml --allow-fixture-database [--dsn-env SXC
 
 Run the `expect` stage. Pass user arguments as separate argv entries.
 
+Two synthetic examples use the same stage: `examples/expect/` covers a tiny BOM;
+[`examples/expect-boundaries/`](../examples/expect-boundaries/fixture-spec.md) covers a part with
+no stock (raw NULL), stock removed by a filter (declared zero), and the same label in
+different regions (composite result key). The boundary example includes a standalone
+specification, independently authored rows and a pinned fixture digest. Load its own
+`fixture.sql` into an empty dedicated database and use its `crosscheck.toml` below.
+
 ```text
 python "${CLAUDE_PLUGIN_ROOT}/skills/semantic-crosscheck/scripts/sxc.py" expect --config crosscheck.toml --allow-fixture-database
 ```

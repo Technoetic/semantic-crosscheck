@@ -6,7 +6,7 @@ and how to report a vulnerability.
 
 ## Supported versions
 
-Security fixes are made for the latest release (currently 0.11.x). Older releases are not patched.
+Security fixes are made for the latest release (currently 0.12.x). Older releases are not patched.
 
 ## Reporting a vulnerability
 
@@ -74,6 +74,11 @@ current directory. Use `verify-full` (or `verify-ca`) whenever the connection le
   gold, reference, candidate or metamorphic SQL file can run SQL as the check role. Review them like
   code. Synthetic fixture CTEs do not sandbox qualified external references; run `counterexample` in
   a dedicated test database.
+- **Constraint audit evidence is bounded diagnostic evidence.** Manifest provenance categories are caller
+  claims, not verified catalog facts. A relaxed witness outside the original constraints is `not_run`, never
+  a pass or proof of a false constraint, SQL equivalence or a production defect. Audit replay hashes bind
+  exact inputs but are not authenticity signatures. Local replay fixtures can contain synthetic rows;
+  keep them in the dedicated test environment. See [the audit contract](docs/constraint-audit.md).
 - **Debug output holds row values.** `SXC_CUBE_DEBUG=1` writes the full Cube error text, which can quote
   values, to `server.log`, and `SXC_DEBUG=1` prints full tracebacks. Use them locally, never paste or
   commit their output.
@@ -91,7 +96,7 @@ current directory. Use `verify-full` (or `verify-ca`) whenever the connection le
 ## Maintainer checklist for a public release
 
 - Turn on private vulnerability reporting in the repository settings, so the link above works.
-- Tag the release (`git tag -a v0.11.0`) and push the tag: README's Codex command pins `--ref v0.11.0`, and the
+- Tag the release (`git tag -a v0.12.0`) and push the tag: README's Codex command pins `--ref v0.12.0`, and the
   release archive is made from the tag with `git archive` and published with its SHA256SUMS.
 - Enable the hooks in the publishing clone with `git config core.hooksPath .githooks`, and set
   `SXC_DENYLIST` to the private deny-list (or `none`).

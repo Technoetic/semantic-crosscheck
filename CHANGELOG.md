@@ -6,6 +6,34 @@ All notable changes to this project are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-10-28
+
+Release notes: [docs/releases/v0.12.0.md](docs/releases/v0.12.0.md).
+
+### Added
+
+- Three independently authored, SHA-bound `expect` row cases in `examples/expect-boundaries/`: a parent
+  without stock keeps raw NULL, facts excluded by a filter use an explicitly declared zero policy, and
+  identical labels in different regions retain composite result keys. The fixture specification gives
+  hand-calculated rows and provenance; temporary-copy mutations test wrong authored rows, a shared wrong
+  filter and label-only grouping. Evidence covers these synthetic PostgreSQL 17+ / Cube 1.8.3 cases only,
+  separate from operational V1-V5, and runtime errors are never accepted as passes.
+- Opt-in `counterexample --constraint-audit FILE` with a strict version 1 manifest binding the original
+  constraint bytes, caller-claimed provenance for every source declaration and explicit relaxation selectors.
+  The same trusted SQL pair is searched in a declared arm and a projected relaxed arm; a relaxed witness
+  must violate the full original constraint profile and be confirmed by PostgreSQL's existing typed bag
+  comparison. A declared-domain disagreement is `fail`; an outside-domain disagreement is diagnostic
+  `not_run`, and bounded no-witness or incomplete outcomes are also `not_run`. No audit outcome is `pass`;
+  none proves equivalence, causal necessity, a false constraint or an actual production defect.
+- Separate versioned audit replay binds exact SQL, finite specification, original/projected constraints,
+  manifest, selected declarations, arm classification and budgets. Reduction and replay support `rows`
+  shrinking only, preserving original finite values, types and minimum/maximum row bounds. Both arms get
+  their own search/solver/shrink budgets; their bounded prefixes can differ. Counts/IDs/hashes stay in
+  results, while local synthetic replay artifacts may contain synthetic rows. See
+  [docs/constraint-audit.md](docs/constraint-audit.md) and [examples/constraint-audit/](examples/constraint-audit/).
+
+Existing defaults, dependency pins, ordinary counterexample formats and operational report verdicts are unchanged.
+
 ## [0.11.0] - 2026-10-27
 
 Release notes: [docs/releases/v0.11.0.md](docs/releases/v0.11.0.md).
@@ -411,4 +439,5 @@ First release. Release notes: [docs/releases/v0.1.0.md](docs/releases/v0.1.0.md)
 [0.1.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.1.0
 
 [0.10.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.10.0
+[0.12.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.12.0
 [0.11.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.11.0

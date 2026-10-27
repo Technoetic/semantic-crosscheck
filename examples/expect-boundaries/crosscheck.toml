@@ -1,0 +1,98 @@
+# Independently authored boundary expectations: fixture-spec.md (EB-1).
+# Load fixture.sql into a dedicated empty fixture DB; expect does not load it.
+version = 1
+
+[source]
+dsn_env = "SXC_PG_DSN"
+owner_dsn_env = "SXC_PG_OWNER_DSN"
+schemas = ["sxc_boundary"]
+output_schema = "sxc_boundary_out"
+
+[entities.part]
+table = "sxc_boundary.part"
+key = ["part_id"]
+
+[entities.stock]
+table = "sxc_boundary.stock"
+key = ["stock_id"]
+
+[measures.on_hand]
+entity = "stock"
+column = "qty"
+agg = "sum"
+by = "part_id"
+node = "part"
+
+[measures.usable]
+entity = "stock"
+column = "qty"
+agg = "sum"
+by = "part_id"
+node = "part"
+filter = { status = ["USABLE"] }
+
+[[gold]]
+id = "parent_without_facts"
+sql = "gold/parent_without_facts.sql"
+key = "part_id"
+[gold.cube_query]
+dimensions = ["part.part_id"]
+measures = ["m_on_hand.value"]
+filters = [{ member = "part.part_id", operator = "equals", values = [":part"] }]
+[gold.map]
+part_id = "part.part_id"
+qty = "m_on_hand.value"
+[gold.params.part]
+values = ["P-EMPTY"]
+[[gold.expect]]
+source = "authored"
+spec = "fixture-spec.md EB-1 section 2: parent_without_facts"
+fixture_sha256 = "e2512afd3fb7139907631f9b98f5f8d5a7f62d19b9cb9bfa265868e0822e313e"
+params = { part = "P-EMPTY" }
+rows = [{ part_id = "P-EMPTY", qty = { null = true } }]
+
+[[gold]]
+id = "facts_filtered_out"
+sql = "gold/facts_filtered_out.sql"
+key = "part_id"
+zero_if_null = ["usable_qty"]
+[gold.cube_query]
+dimensions = ["part.part_id"]
+measures = ["m_on_hand.value", "m_usable.value"]
+filters = [{ member = "part.part_id", operator = "equals", values = [":part"] }]
+[gold.map]
+part_id = "part.part_id"
+all_qty = "m_on_hand.value"
+usable_qty = "m_usable.value"
+[gold.params.part]
+values = ["P-FILTER"]
+[[gold.expect]]
+source = "authored"
+spec = "fixture-spec.md EB-1 section 3: facts_filtered_out"
+fixture_sha256 = "e2512afd3fb7139907631f9b98f5f8d5a7f62d19b9cb9bfa265868e0822e313e"
+params = { part = "P-FILTER" }
+rows = [{ part_id = "P-FILTER", all_qty = 9, usable_qty = 0 }]
+
+[[gold]]
+id = "same_label_different_region"
+sql = "gold/same_label_different_region.sql"
+key = ["region", "label"]
+[gold.cube_query]
+dimensions = ["part.region", "part.label"]
+measures = ["m_on_hand.value"]
+filters = [{ member = "part.label", operator = "equals", values = [":label"] }]
+[gold.map]
+region = "part.region"
+label = "part.label"
+qty = "m_on_hand.value"
+[gold.params.label]
+values = ["Relay"]
+[[gold.expect]]
+source = "authored"
+spec = "fixture-spec.md EB-1 section 4: same_label_different_region"
+fixture_sha256 = "e2512afd3fb7139907631f9b98f5f8d5a7f62d19b9cb9bfa265868e0822e313e"
+params = { label = "Relay" }
+rows = [
+    { region = "NORTH", label = "Relay", qty = 10 },
+    { region = "SOUTH", label = "Relay", qty = 20 },
+]

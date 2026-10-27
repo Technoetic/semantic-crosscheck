@@ -59,8 +59,18 @@ def _csv(value: str) -> list[str]:
     return [v.strip() for v in value.split(",") if v.strip()]
 
 
-def parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="sxc.py", description="Cross-check a PostgreSQL 17 closure, SHACL rules, OWL reasoning and a Cube semantic layer.")
+class _AuditUsageError(Exception):
+    """An audit parser error whose untrusted argparse message is never rendered."""
+
+
+class _AuditParser(argparse.ArgumentParser):
+    def error(self, _message):
+        raise _AuditUsageError()
+
+
+def parser(*, audit_errors=False) -> argparse.ArgumentParser:
+    parser_type = _AuditParser if audit_errors else argparse.ArgumentParser
+    p = parser_type(prog="sxc.py", description="Cross-check a PostgreSQL 17 closure, SHACL rules, OWL reasoning and a Cube semantic layer.")
     p.add_argument("--version", action="version", version=f"semantic-crosscheck {VERSION}")
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--config", default=None, help="path to crosscheck.toml; it must exist when given (default: "
@@ -128,6 +138,8 @@ def parser() -> argparse.ArgumentParser:
     s.add_argument("--statement-timeout-ms", type=int, default=10000, help="per-query time limit (default: 10000)")
     s.add_argument("--replay", default=None, help="replay a previously generated fixture with matching SQL hashes")
     s.add_argument("--constraints", default=None, metavar="FILE", help="optional version 1 integrity profile for the fixed synthetic schema; replay requires the exact same file bytes")
+    s.add_argument("--constraint-audit", default=None, metavar="FILE",
+                   help="opt-in v1 provenance/relaxation manifest; requires constraints and witness schema, rows shrink only; two searches each receive the configured budgets")
 
     s = sub.add_parser("cube-replay", parents=[common], help="replay a named synthetic mutation through actual Cube models and independent gold SQL")
     s.add_argument("--mutation-operator", choices=mutate.OPERATORS, required=True)
@@ -211,7 +223,7 @@ def _brief(detail: dict) -> str:
 
 
 def _summary(res: Result, path, quiet: bool) -> str:
-    standalone = res.stage in {"cube_replay", "tlp", "shacl_corpus"}
+    standalone = res.stage in {"cube_replay", "tlp", "shacl_corpus"} or 'constraint_audit' in res.inputs
     if standalone:
         path = None
     counts = {s: 0 for s in ("pass", "fail", "error", "not_run")}
@@ -266,10 +278,74 @@ def discard_report_files(out: Path | None) -> None:
             (out / name).unlink(missing_ok=True)
 
 
+def _audit_cli_inputs(argv, cli):
+    """Identify accepted audit spellings and cleanup paths without typed parsing.
+
+    Resolve exact options and unambiguous argparse abbreviations using the same
+    command option catalog. No argument error text or input values are rendered.
+    """
+    if not argv or argv[0] != 'counterexample':
+        return None
+    command = next(action for action in cli._actions if isinstance(action, argparse._SubParsersAction)).choices['counterexample']
+    options = command._option_string_actions
+    tokens = argv[1:]
+    if '--' in tokens:
+        tokens = tokens[:tokens.index('--')]
+
+    def resolve(token):
+        name = token.split('=', 1)[0]
+        if name in options:
+            return options[name]
+        matches = [action for option, action in options.items() if name.startswith('--') and option.startswith(name)]
+        return matches[0] if len(matches) == 1 else None
+
+    actions = [resolve(token) for token in tokens]
+    if not any(action is not None and action.dest == 'constraint_audit' for action in actions):
+        return None
+    fields = ('constraint_audit', 'out', 'constraints', 'witness_schema', 'reference_sql', 'candidate_sql',
+              'replay', 'config', 'gold_sql', 'metamorphic_sql')
+    values = dict.fromkeys(fields)
+    values['quiet'] = False
+    for index, (token, action) in enumerate(zip(tokens, actions)):
+        if action is None:
+            continue
+        if action.dest == 'quiet':
+            values['quiet'] = True
+        if action.dest not in fields:
+            continue
+        if '=' in token:
+            values[action.dest] = token.split('=', 1)[1]
+        elif index + 1 < len(tokens):
+            value = tokens[index + 1]
+            if not value.startswith('-') or value == '-' or command._negative_number_matcher.match(value):
+                values[action.dest] = value
+    return argparse.Namespace(**values)
+
+
+def _audit_usage_failure(args):
+    from semantic_crosscheck import constraint_audit
+    out = Path(args.out) if args.out else Path.cwd() / '.sxc'
+    try:
+        constraint_audit.prepare_run(args, out)
+    except StageError:
+        out = None  # Unsafe aliases or output errors must not overwrite a source.
+    res = Result('counterexample', inputs={'constraint_audit': {'mode': 'constraint_audit'}})
+    res.add('stage', 'error', '', reason='invalid_constraint_audit_arguments')
+    print(_summary(res, _write(res, out), args.quiet), file=sys.stderr)
+    return EXIT_CONFIG
+
+
 def main(argv=None) -> int:
-    args = parser().parse_args(argv)
+    argv = list(sys.argv[1:] if argv is None else argv)
+    cli = parser()
+    audit_inputs = _audit_cli_inputs(argv, cli)
+    try:
+        args = (parser(audit_errors=True) if audit_inputs is not None else cli).parse_args(argv)
+    except _AuditUsageError:
+        return _audit_usage_failure(audit_inputs)
     stage = args.stage
-    if stage == "counterexample" and args.scenario is None and args.mutation_operator is None and args.witness_schema is None:
+    audit_mode = stage == "counterexample" and args.constraint_audit is not None
+    if stage == "counterexample" and args.scenario is None and args.mutation_operator is None and args.witness_schema is None and args.constraint_audit is None:
         # Operator-directed fixtures have their own generator and reject legacy scenarios.
         args.scenario = "bom_diamond" if args.metamorphic_sql is not None else "nulls"
     if stage == "counterexample" and args.max_examples is None and not (
@@ -279,6 +355,14 @@ def main(argv=None) -> int:
     cfg = None
     out = Path(args.out) if args.out else None
     try:
+        if audit_mode:
+            from semantic_crosscheck import constraint_audit
+            out = out if out is not None else Path.cwd() / ".sxc"
+            try:
+                args._constraint_audit_replay_raw = constraint_audit.prepare_run(args, out)
+            except StageError:
+                out = None  # Writing an error result must not overwrite the aliased source.
+                raise
         if stage in {"cube-replay", "tlp", "shacl-corpus"}:
             # These stages have a fixed standalone output location even when
             # operational configuration is rejected before module dispatch.
@@ -304,14 +388,18 @@ def main(argv=None) -> int:
         revision_start = provenance.begin(cfg, result_name)
         mod = importlib.import_module(f"semantic_crosscheck.{STAGES[stage]}")
         res = mod.run(cfg, args, out)
-        if stage not in {"cube-replay", "tlp", "shacl-corpus"}:
+        if stage not in {"cube-replay", "tlp", "shacl-corpus"} and not audit_mode:
             res.inputs = inputs
         res = provenance.finish(cfg, res, revision_start)
     except StageError as e:
         if stage == "report":
             discard_report_files(out)
         res = Result(result_name)
-        res.add("stage", "error", "", message=str(e))
+        if audit_mode:
+            res.inputs = {"constraint_audit": {"mode": "constraint_audit"}}
+            res.add("stage", "error", "", reason="invalid_constraint_audit_inputs")
+        else:
+            res.add("stage", "error", "", message=str(e))
         res.next_safe_action = "fix the configuration or environment named in the message, then rerun this stage"
         print(_summary(res, _write(res, out), args.quiet), file=sys.stderr)
         return e.exit_code
@@ -319,6 +407,8 @@ def main(argv=None) -> int:
         if stage == "report":
             discard_report_files(out)
         res = Result(result_name)
+        if audit_mode:
+            res.inputs = {"constraint_audit": {"mode": "constraint_audit"}}
         res.add("stage", "error", "", reason="interrupted")
         res.next_safe_action = "the run was interrupted before it finished: rerun this stage"
         print(_summary(res, _write(res, out), args.quiet), file=sys.stderr)
@@ -327,8 +417,12 @@ def main(argv=None) -> int:
         if stage == "report":
             discard_report_files(out)
         res = Result(result_name)
-        res.add("stage", "error", "", exception=type(e).__name__, sqlstate=_db_error_code(e))
-        _crash_note(e)
+        if audit_mode:
+            res.inputs = {"constraint_audit": {"mode": "constraint_audit"}}
+            res.add("stage", "error", "", reason="constraint_audit_error")
+        else:
+            res.add("stage", "error", "", exception=type(e).__name__, sqlstate=_db_error_code(e))
+            _crash_note(e)
         print(_summary(res, _write(res, out), args.quiet), file=sys.stderr)
         return EXIT_FAIL
     path = res.write(out)

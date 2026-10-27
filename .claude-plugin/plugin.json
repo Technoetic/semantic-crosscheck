@@ -1,6 +1,6 @@
 {
   "name": "semantic-crosscheck",
-  "version": "0.11.0",
+  "version": "0.12.0",
   "description": "Cross-layer verification for an ontology plus semantic layer on PostgreSQL 17: a hierarchy closure, SQL and SHACL data rules, OWL reasoning with HermiT and a Cube data model, generated from one crosscheck.toml and checked against each other and against hand-written gold SQL.",
   "author": {
     "name": "전문준"

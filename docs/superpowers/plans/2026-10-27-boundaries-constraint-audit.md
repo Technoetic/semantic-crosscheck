@@ -32,11 +32,11 @@
 
 **Interfaces:** Consumes existing config.load / expect.run; produces three named gold.expect cases: parent_without_facts, facts_filtered_out, same_label_different_region. Reuse supported node/measure link and composite keys. No runtime change unless a test exposes an actual supported-contract bug, which must first be reported to the controller.
 
-- [ ] Write tests before corpus; demonstrate missing corpus fails and wrong authored rows are rejected.
-- [ ] Author a tiny part/stock synthetic fixture and a standalone specification calculating expected rows; use raw NULL and explicitly declared zero_if_null as needed.
-- [ ] Implement three supported cases, with SHA-bound fixture, independent gold rows and no upstream code copy. Document inspiration and pinned source, current NULL-grain policy and bounded scope.
-- [ ] Run focused config/unit checks plus real PostgreSQL/Cube tests; inject wrong expectations and a supported wrong-model/filter/composite grouping to prove the checks detect them.
-- [ ] Commit only owned files and report commands/results plus remaining limitations.
+- [x] Write tests before corpus; demonstrate missing corpus fails and wrong authored rows are rejected.
+- [x] Author a tiny part/stock synthetic fixture and a standalone specification calculating expected rows; use raw NULL and explicitly declared zero_if_null as needed.
+- [x] Implement three supported cases, with SHA-bound fixture, independent gold rows and no upstream code copy. Document inspiration and pinned source, current NULL-grain policy and bounded scope.
+- [x] Run focused config/unit checks plus real PostgreSQL/Cube tests; inject wrong expectations and a supported wrong-model/filter/composite grouping to prove the checks detect them.
+- [x] Commit only owned files and report commands/results plus remaining limitations.
 
 ### Task 2: Optional constraint provenance and sensitivity audit
 
@@ -44,11 +44,11 @@
 
 **Interfaces:** Final flag and artifact contract follows the code-based C2 design review in the task brief. Ordinary counterexample dispatch remains untouched without the explicit audit flag.
 
-- [ ] Pin public options, versioned manifest with source-declaration relaxation and per-declaration provenance, dual-arm classification and replay bindings in the task brief before implementation.
-- [ ] Write failing tests for opt-in dispatch, validation, relaxation dependencies, masked COUNT witness, no-witness/incomplete cases and replay mismatches.
-- [ ] Implement the smallest bounded two-arm diagnostic reusing existing PostgreSQL witness confirmation and generator; never reinterpret a relaxed witness as an ordinary domain violation.
-- [ ] Run focused unit/integration tests and default-mode regression tests, document usage, provenance limitations and budget costs.
-- [ ] Commit only owned files; report exact evidence.
+- [x] Pin public options, versioned manifest with source-declaration relaxation and per-declaration provenance, dual-arm classification and replay bindings in the task brief before implementation.
+- [x] Write failing tests for opt-in dispatch, validation, relaxation dependencies, masked COUNT witness, no-witness/incomplete cases and replay mismatches.
+- [x] Implement the smallest bounded two-arm diagnostic reusing existing PostgreSQL witness confirmation and generator; never reinterpret a relaxed witness as an ordinary domain violation.
+- [x] Run focused unit/integration tests and default-mode regression tests, document usage, provenance limitations and budget costs.
+- [x] Commit only owned files; report exact evidence.
 
 ### Task 3: Integration and independent verification
 

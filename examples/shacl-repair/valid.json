@@ -1,0 +1,129 @@
+{
+  "schema_version": 1,
+  "synthetic": true,
+  "cases": [
+    {
+      "id": "numeric",
+      "before": "numeric-before.ttl",
+      "after": "numeric-after.ttl",
+      "shapes": "numeric-shapes.ttl",
+      "retained_targets": [
+        {
+          "shape": "urn:sxc:repair:Shape",
+          "node": "urn:sxc:repair:row"
+        }
+      ],
+      "immutable_predicates": [
+        "urn:sxc:repair:serial"
+      ],
+      "immutable_triples": [],
+      "edit_costs": {
+        "add": 1,
+        "remove": 1
+      },
+      "expected": {
+        "before": {
+          "conforms": false,
+          "results": [
+            {
+              "focus": "urn:sxc:repair:row",
+              "path": "urn:sxc:repair:quantity",
+              "component": "MinInclusiveConstraintComponent",
+              "severity": "Violation",
+              "value": {
+                "kind": "number",
+                "value": "-1"
+              }
+            }
+          ]
+        },
+        "after": {
+          "conforms": true,
+          "results": []
+        }
+      }
+    },
+    {
+      "id": "class",
+      "before": "class-before.ttl",
+      "after": "class-after.ttl",
+      "shapes": "class-shapes.ttl",
+      "retained_targets": [
+        {
+          "shape": "urn:sxc:repair:Shape",
+          "node": "urn:sxc:repair:row"
+        }
+      ],
+      "immutable_predicates": [
+        "urn:sxc:repair:serial"
+      ],
+      "immutable_triples": [],
+      "edit_costs": {
+        "add": 1,
+        "remove": 1
+      },
+      "expected": {
+        "before": {
+          "conforms": false,
+          "results": [
+            {
+              "focus": "urn:sxc:repair:row",
+              "path": "urn:sxc:repair:child",
+              "component": "ClassConstraintComponent",
+              "severity": "Violation",
+              "value": {
+                "kind": "iri",
+                "value": "urn:sxc:repair:part"
+              }
+            }
+          ]
+        },
+        "after": {
+          "conforms": true,
+          "results": []
+        }
+      }
+    },
+    {
+      "id": "pair",
+      "before": "pair-before.ttl",
+      "after": "pair-after.ttl",
+      "shapes": "pair-shapes.ttl",
+      "retained_targets": [
+        {
+          "shape": "urn:sxc:repair:Shape",
+          "node": "urn:sxc:repair:row"
+        }
+      ],
+      "immutable_predicates": [
+        "urn:sxc:repair:serial"
+      ],
+      "immutable_triples": [],
+      "edit_costs": {
+        "add": 1,
+        "remove": 1
+      },
+      "expected": {
+        "before": {
+          "conforms": false,
+          "results": [
+            {
+              "focus": "urn:sxc:repair:row",
+              "path": "urn:sxc:repair:quantity",
+              "component": "LessThanConstraintComponent",
+              "severity": "Violation",
+              "value": {
+                "kind": "number",
+                "value": "3"
+              }
+            }
+          ]
+        },
+        "after": {
+          "conforms": true,
+          "results": []
+        }
+      }
+    }
+  ]
+}

@@ -776,6 +776,23 @@ CI는 전체 이력을 가진 clone의 작업 트리·이력을 일반 패턴과
 
 </div>
 
+## Optional diagnostic contracts (unreleased)
+
+Three default-off paths deepen the evidence around a failure:
+
+- **SHACL repair fixtures:** `shacl-repair --spec FILE` runs real pySHACL on independently authored before/after synthetic graphs, compares normalized expected report bags and verifies retained targets and immutable facts. Separate edit costs do not override hard preservation. [Schema and examples](docs/shacl-repair.md).
+- **Independent grain contracts:** `grain --config FILE --spec FILE` compares authored source/group/output/key/filter/null-policy claims with the existing undated preaggregate-to-node operation, then checks actual key and join preconditions in one bounded read-only PostgreSQL snapshot. [Schema and examples](docs/grain.md).
+- **OWL explanations:** `reason --explain-inconsistency` localizes generated axiom groups with the same HermiT after a consistency failure, within axiom/count/time caps. Only completed retained-deletion checks establish subset minimality; the original failure stays. [Limits and examples](docs/owl-explanations.md).
+
+The first two are standalone diagnostics outside the default report pipeline. They do not prove business truth, complete SHACL report equivalence, independent OWL correctness, global-minimum explanations or future data consistency. Runtime dependencies and defaults are unchanged; local source improvements await a separate release.
+
+| Stage | Additional diagnostic options |
+|---|---|
+| `shacl-repair` | `--spec FILE`, `--timeout-ms 30000` |
+| `grain` | `--spec FILE`, `--max-rows 100000` |
+
+The opt-in reason diagnostic accepts `--explain-inconsistency`, `--explain-max-axioms 128`, `--explain-max-checks 64` and `--explain-timeout-ms 10000`. Limits and nonpassing partial outcomes are documented above.
+
 ## 한국어 요약
 
 설정 하나로 PostgreSQL의 계층·규칙, SHACL, OWL·HermiT, Cube 모델을 만들고 서로와 gold SQL을 비교합니다. `not_run`은 통과가 아니며, 전체 판정은 `report`와 `not_proven`을 함께 읽습니다. 원본 조회와 생성 스키마 기록을 분리하고, 데모 적재는 별도의 loader 역할을 사용합니다.

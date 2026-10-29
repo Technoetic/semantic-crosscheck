@@ -4,7 +4,7 @@
     python sxc.py <stage> [--config crosscheck.toml] [--out DIR] [options]
 
 Stages: doctor, demo, build, reason, cube, verify, report, cube-install, counterexample,
-cube-replay, tlp, shacl-corpus, expect.
+cube-replay, tlp, shacl-corpus, expect, shacl-repair, grain.
 Each stage writes <out>/<stage>/result.json (counts and check ids only, never row values) and exits with
 0 pass, 1 a check failed or could not run, 2 configuration or usage error, 3 environment missing.
 
@@ -50,8 +50,11 @@ STAGES = {
     "tlp": "tlp",
     "shacl-corpus": "shacl_corpus",
     "expect": "expect",
+    "shacl-repair": "shacl_repair",
+    "grain": "grain",
 }
-NEEDS_CONFIG = {"demo", "build", "reason", "cube", "verify", "report", "expect"}
+NEEDS_CONFIG = {"demo", "build", "reason", "cube", "verify", "report", "expect", "grain"}
+DIAGNOSTIC_STAGES = {"shacl-repair", "grain"}
 DEFAULT_CONFIG = "crosscheck.toml"
 
 
@@ -97,6 +100,11 @@ def parser(*, audit_errors=False) -> argparse.ArgumentParser:
                                                                          "does not remove real-data coverage limitations")
 
     sub.add_parser("cube", parents=[common], help="generate the Cube model, start Cube and check its metadata")
+
+    s.add_argument("--explain-inconsistency", action="store_true", help="after an OWL inconsistency, run bounded same-HermiT axiom localization")
+    s.add_argument("--explain-max-axioms", type=int, default=128, help="maximum diagnostic axiom groups (default: 128)")
+    s.add_argument("--explain-max-checks", type=int, default=64, help="maximum explanation subset checks (default: 64)")
+    s.add_argument("--explain-timeout-ms", type=int, default=10000, help="total explanation process deadline in milliseconds (default: 10000)")
 
     s = sub.add_parser("verify", parents=[common], help="V1 strict compare, V2 strata sweep, V3 query shapes, V4 mutation tests")
     s.add_argument("--only", type=_csv, default=["v1", "v2", "v3", "v4"], help="subset of v1,v2,v3,v4 (default: all)")
@@ -167,6 +175,16 @@ def parser(*, audit_errors=False) -> argparse.ArgumentParser:
     s.add_argument("--allow-unpinned-suite", action="store_true",
                    help="with --w3c-suite: run a suite whose content digest differs from the pinned commit")
 
+    s = sub.add_parser("shacl-repair", parents=[common], allow_abbrev=False,
+                       help="validate authored synthetic before/after SHACL repair and retention fixtures")
+    s.add_argument("--spec", required=True, metavar="FILE", help="strict version 1 local synthetic repair manifest")
+    s.add_argument("--timeout-ms", type=int, default=30000, help="total local validation process deadline (default: 30000)")
+
+    s = sub.add_parser("grain", parents=[common], allow_abbrev=False,
+                       help="check independent authored grain contracts and bounded read-only key assumptions")
+    s.add_argument("--spec", required=True, metavar="FILE", help="strict version 1 intended-grain and key-provenance contract")
+    s.add_argument("--max-rows", type=int, default=100000, help="maximum source or node rows per contract (default: 100000)")
+
     s = sub.add_parser("expect", parents=[common], help="run the gold queries and Cube on a dedicated fixture database and compare "
                                                        "both with the literal expected rows of [[gold.expect]]")
     s.add_argument("--dsn-env", default="SXC_EXPECT_DSN", help="NAME of the environment variable holding the DSN of the dedicated "
@@ -186,7 +204,7 @@ def config_path(stage: str, given: str | None) -> Path | None:
             raise StageError("counterexample uses synthetic fixtures, not --config; pass the trusted SQL instead "
                              "(--reference-sql and --candidate-sql, or --metamorphic-sql)", EXIT_CONFIG)
         return None
-    if stage in {"cube-replay", "tlp", "shacl-corpus"}:
+    if stage in {"cube-replay", "tlp", "shacl-corpus", "shacl-repair"}:
         if given is not None:
             raise StageError(f"{stage} uses standalone synthetic inputs, not --config", EXIT_CONFIG)
         return None
@@ -223,7 +241,7 @@ def _brief(detail: dict) -> str:
 
 
 def _summary(res: Result, path, quiet: bool) -> str:
-    standalone = res.stage in {"cube_replay", "tlp", "shacl_corpus"} or 'constraint_audit' in res.inputs
+    standalone = res.stage in {"cube_replay", "tlp", "shacl_corpus", "shacl_repair", "grain"} or 'constraint_audit' in res.inputs
     if standalone:
         path = None
     counts = {s: 0 for s in ("pass", "fail", "error", "not_run")}
@@ -335,15 +353,113 @@ def _audit_usage_failure(args):
     return EXIT_CONFIG
 
 
+def _diagnostic_cli_inputs(argv):
+    """Keep parser failures count-only; do not render untrusted option values."""
+    if not argv or argv[0] not in DIAGNOSTIC_STAGES:
+        return None
+    args = argparse.Namespace(stage=argv[0], spec=None, config=None, out=None, quiet=False)
+    fields = {"--spec": "spec", "--config": "config", "--out": "out"}
+    tokens = argv[1:]
+    if "--" in tokens:
+        tokens = tokens[:tokens.index("--")]
+    for index, token in enumerate(tokens):
+        option, sep, value = token.partition("=")
+        if option == "--quiet":
+            args.quiet = True
+        if option in fields:
+            if sep:
+                setattr(args, fields[option], value)
+            elif index + 1 < len(tokens) and not tokens[index + 1].startswith("--"):
+                setattr(args, fields[option], tokens[index + 1])
+    return args
+
+
+def _diagnostic_output(args):
+    if args.out:
+        return Path(args.out)
+    cfg = Path(args.config or DEFAULT_CONFIG) if args.stage == "grain" else None
+    return (cfg.resolve().parent if cfg is not None and cfg.is_file() else Path.cwd()) / ".sxc"
+
+
+def _diagnostic_prepare(args, out):
+    # Reject unusable output containers before any failure path can try writing.
+    stage_dir = Path(out) / args.stage.replace("-", "_")
+    for directory in (Path(out), stage_dir):
+        if directory.exists() and not directory.is_dir():
+            raise StageError("diagnostic output unavailable", EXIT_CONFIG)
+    outputs = [stage_dir / name for name in ("result.json", "result.json.part")]
+    for value in (args.spec, args.config):
+        if not value:
+            continue
+        source = Path(value)
+        for target in outputs:
+            if source.resolve() == target.resolve() or (source.exists() and target.exists() and source.samefile(target)):
+                raise StageError("diagnostic output aliases an input", EXIT_CONFIG)
+    mod = importlib.import_module(f"semantic_crosscheck.{STAGES[args.stage]}")
+    mod.prepare_run(args, out)
+    if args.stage != "grain":
+        return None, None
+    # Load once before any cleanup, and reuse these exact parsed inputs below.
+    # Otherwise a gold/revision input named result.json could be removed first.
+    cfg_path = config_path(args.stage, args.config)
+    before = hashlib.sha256(cfg_path.read_bytes()).hexdigest()
+    cfg = config.load(cfg_path)
+    sources = [Path(cfg.path), *[g.sql_path(cfg) for g in cfg.gold]]
+    if cfg.source.data_revision_sql_file:
+        sources.append(cfg.base_dir() / cfg.source.data_revision_sql_file)
+    outputs = [Path(out) / "grain" / name for name in ("result.json", "result.json.part")]
+    for source in sources:
+        for target in outputs:
+            if mod._alias(source, target):
+                raise StageError("diagnostic output aliases an input", EXIT_CONFIG)
+    if hashlib.sha256(cfg_path.read_bytes()).hexdigest() != before:
+        raise StageError("diagnostic input changed", EXIT_CONFIG)
+    return cfg, before
+
+
+def _diagnostic_write(res, out):
+    try:
+        if out is not None:
+            # Never follow a stale temporary hardlink/symlink when writing.
+            (Path(out) / res.stage / "result.json.part").unlink(missing_ok=True)
+        return _write(res, out)
+    except Exception:
+        res.add("diagnostic:output", "error", "", reason="output_unavailable")
+        return None
+
+
+def _diagnostic_usage_failure(args):
+    out = None
+    try:
+        candidate = _diagnostic_output(args)
+        _diagnostic_prepare(args, candidate)
+        out = candidate
+        discard(out, args.stage.replace("-", "_"))
+    except Exception:
+        # An unverified alias must never delete or overwrite an input.
+        out = None
+    res = Result(args.stage.replace("-", "_"))
+    res.add("stage", "error", "", reason="invalid_diagnostic_arguments")
+    try:
+        path = _diagnostic_write(res, out)
+    except (OSError, ValueError):
+        path = None
+    print(_summary(res, path, args.quiet), file=sys.stderr)
+    return EXIT_CONFIG
+
+
 def main(argv=None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     cli = parser()
     audit_inputs = _audit_cli_inputs(argv, cli)
+    diagnostic_inputs = _diagnostic_cli_inputs(argv)
     try:
-        args = (parser(audit_errors=True) if audit_inputs is not None else cli).parse_args(argv)
+        args = (parser(audit_errors=True) if audit_inputs is not None or diagnostic_inputs is not None else cli).parse_args(argv)
     except _AuditUsageError:
-        return _audit_usage_failure(audit_inputs)
+        return (_diagnostic_usage_failure(diagnostic_inputs) if diagnostic_inputs is not None
+                else _audit_usage_failure(audit_inputs))
     stage = args.stage
+    diagnostic_mode = stage in DIAGNOSTIC_STAGES
     audit_mode = stage == "counterexample" and args.constraint_audit is not None
     if stage == "counterexample" and args.scenario is None and args.mutation_operator is None and args.witness_schema is None and args.constraint_audit is None:
         # Operator-directed fixtures have their own generator and reject legacy scenarios.
@@ -353,8 +469,16 @@ def main(argv=None) -> int:
         args.max_examples = 64   # the exhaustive scenario has no sample size: its case count is fixed
     result_name = stage.replace("-", "_")
     cfg = None
+    diagnostic_cfg = diagnostic_cfg_sha = None
     out = Path(args.out) if args.out else None
     try:
+        if diagnostic_mode:
+            out = _diagnostic_output(args)
+            try:
+                diagnostic_cfg, diagnostic_cfg_sha = _diagnostic_prepare(args, out)
+            except Exception:
+                out = None
+                raise StageError("invalid diagnostic inputs", EXIT_CONFIG) from None
         if audit_mode:
             from semantic_crosscheck import constraint_audit
             out = out if out is not None else Path.cwd() / ".sxc"
@@ -379,18 +503,31 @@ def main(argv=None) -> int:
         inputs = {}
         if cfg_file is not None:
             before = hashlib.sha256(cfg_file.read_bytes()).hexdigest()
-            cfg = config.load(cfg_file)
+            if diagnostic_mode and stage == "grain":
+                if before != diagnostic_cfg_sha:
+                    raise StageError("diagnostic input changed", EXIT_CONFIG)
+                cfg = diagnostic_cfg
+            else:
+                cfg = config.load(cfg_file)
             # The fingerprint is taken before the stage runs: an edit during the run then leaves the result recorded
             # with the old inputs, so report sees it as stale instead of certifying files the stage never read.
             inputs = inputs_fingerprint(cfg)
             if inputs.get("config_sha256") != before:
                 raise StageError(f"{cfg_file.name} changed while the stage was starting; rerun it", EXIT_CONFIG)
-        revision_start = provenance.begin(cfg, result_name)
+        revision_start = provenance.begin(None if diagnostic_mode else cfg, result_name)
         mod = importlib.import_module(f"semantic_crosscheck.{STAGES[stage]}")
+        if stage == "grain":
+            args._diagnostic_configuration_sha = diagnostic_cfg_sha
         res = mod.run(cfg, args, out)
-        if stage not in {"cube-replay", "tlp", "shacl-corpus"} and not audit_mode:
+        if stage == "grain":
+            if (hashlib.sha256(Path(cfg.path).read_bytes()).hexdigest() != diagnostic_cfg_sha
+                    or res.inputs.get("grain_config_sha256") != diagnostic_cfg_sha):
+                raise StageError("diagnostic input changed", EXIT_CONFIG)
+        if stage not in {"cube-replay", "tlp", "shacl-corpus"} and not audit_mode and not diagnostic_mode:
             res.inputs = inputs
-        res = provenance.finish(cfg, res, revision_start)
+        if stage == "grain":
+            res.inputs["configuration"] = inputs
+        res = provenance.finish(None if diagnostic_mode else cfg, res, revision_start)
     except StageError as e:
         if stage == "report":
             discard_report_files(out)
@@ -398,10 +535,12 @@ def main(argv=None) -> int:
         if audit_mode:
             res.inputs = {"constraint_audit": {"mode": "constraint_audit"}}
             res.add("stage", "error", "", reason="invalid_constraint_audit_inputs")
+        elif diagnostic_mode:
+            res.add("stage", "error", "", reason="diagnostic_environment_missing" if e.exit_code == 3 else "invalid_diagnostic_inputs")
         else:
             res.add("stage", "error", "", message=str(e))
         res.next_safe_action = "fix the configuration or environment named in the message, then rerun this stage"
-        print(_summary(res, _write(res, out), args.quiet), file=sys.stderr)
+        print(_summary(res, _diagnostic_write(res, out) if diagnostic_mode else _write(res, out), args.quiet), file=sys.stderr)
         return e.exit_code
     except KeyboardInterrupt:
         if stage == "report":
@@ -411,7 +550,7 @@ def main(argv=None) -> int:
             res.inputs = {"constraint_audit": {"mode": "constraint_audit"}}
         res.add("stage", "error", "", reason="interrupted")
         res.next_safe_action = "the run was interrupted before it finished: rerun this stage"
-        print(_summary(res, _write(res, out), args.quiet), file=sys.stderr)
+        print(_summary(res, _diagnostic_write(res, out) if diagnostic_mode else _write(res, out), args.quiet), file=sys.stderr)
         return EXIT_FAIL
     except Exception as e:  # noqa: BLE001 - unexpected failure: keep only the type and SQLSTATE in the result file
         if stage == "report":
@@ -420,12 +559,14 @@ def main(argv=None) -> int:
         if audit_mode:
             res.inputs = {"constraint_audit": {"mode": "constraint_audit"}}
             res.add("stage", "error", "", reason="constraint_audit_error")
+        elif diagnostic_mode:
+            res.add("stage", "error", "", reason="diagnostic_error")
         else:
             res.add("stage", "error", "", exception=type(e).__name__, sqlstate=_db_error_code(e))
             _crash_note(e)
-        print(_summary(res, _write(res, out), args.quiet), file=sys.stderr)
+        print(_summary(res, _diagnostic_write(res, out) if diagnostic_mode else _write(res, out), args.quiet), file=sys.stderr)
         return EXIT_FAIL
-    path = res.write(out)
+    path = _diagnostic_write(res, out) if diagnostic_mode else res.write(out)
     print(_summary(res, path, args.quiet))
     return res.exit_code()
 

@@ -39,7 +39,7 @@ counts and ids only.
 import importlib
 from pathlib import Path
 
-from . import db, ident, naming, owl, owl_witness, shacl_check, shapes, stage_build
+from . import db, ident, naming, owl, owl_explain, owl_witness, shacl_check, shapes, stage_build
 from .result import EXIT_CONFIG, EXIT_ENV, Result, StageError, require_stage
 
 PARTS = ("shacl", "owl")
@@ -61,6 +61,10 @@ WHY = {   # why the closure table cannot be compared with OWL ({h}: the hierarch
 def run(cfg, args, out: Path) -> Result:
     out = Path(out)
     only = _only(args)
+    if getattr(args, "explain_inconsistency", False):
+        owl_explain.validate_args(args)
+        if not cfg.ontology.hierarchy:
+            raise StageError("--explain-inconsistency requires a configured [ontology] hierarchy", EXIT_CONFIG)
     if getattr(args, "synthetic_witnesses", False) and not cfg.ontology.hierarchy:
         raise StageError("--synthetic-witnesses requires a configured [ontology] hierarchy", EXIT_CONFIG)
     build = require_stage(out, "build")
@@ -93,7 +97,7 @@ def run(cfg, args, out: Path) -> Result:
             if pairs_ready:
                 _shacl_pairs(conn, cfg, build, out, pairs, pair_ttl, exported, res)
             if use_owl:
-                _owl(conn, cfg, build, java, res)
+                _owl(conn, cfg, build, java, res, args)
                 if getattr(args, "synthetic_witnesses", False):
                     owl_witness.run(conn, cfg, java, res)
         finally:
@@ -125,6 +129,8 @@ def _only(args) -> list[str]:
         raise StageError(f"--only accepts {','.join(PARTS)} (got {','.join(bad)})", EXIT_CONFIG)
     if getattr(args, "synthetic_witnesses", False) and "owl" not in only:
         raise StageError("--synthetic-witnesses requires OWL checks: include owl in --only", EXIT_CONFIG)
+    if getattr(args, "explain_inconsistency", False) and "owl" not in only:
+        raise StageError("--explain-inconsistency requires OWL checks: include owl in --only", EXIT_CONFIG)
     return only
 
 
@@ -361,7 +367,7 @@ def _v5_not_run(cfg, res: Result, reason: str) -> None:
         res.add(cid, "not_run", ref, reason=reason)
 
 
-def _owl(conn, cfg, build: dict, java: str, res: Result) -> None:
+def _owl(conn, cfg, build: dict, java: str, res: Result, args=None) -> None:
     h = cfg.hierarchies[cfg.ontology.hierarchy]
     why = _closure_reason(conn, cfg, build, h)
     try:
@@ -388,6 +394,8 @@ def _owl(conn, cfg, build: dict, java: str, res: Result) -> None:
     res.add("owl:consistency", "pass" if r.consistent else "fail", "ontology", individuals=r.individuals,
             node_rows=r.node_rows, outside_node_table=r.outside_node_table, edges=r.edges, hermit_ms=r.hermit_ms)
     if not r.consistent:
+        if getattr(args, "explain_inconsistency", False):
+            owl_explain.run(cfg, graph, java, args, res)
         _v5_not_run(cfg, res, "inconsistent")
         res.not_proven.append("v5: the ontology is inconsistent and so entails every statement; the V5 comparisons "
                               "were not run")

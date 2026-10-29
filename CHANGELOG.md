@@ -1,5 +1,14 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- Optional authored synthetic `shacl-repair` fixtures with real before/after pySHACL, retained-target and immutable-fact obligations, independent normalized report bags and separate edit costs.
+- Optional `grain` authored operation/key contracts for undated preaggregate-to-node measures with bounded read-only PostgreSQL key/null/orphan/fanout evidence.
+- Optional `reason --explain-inconsistency` bounded same-HermiT generated-axiom explanations, verified subset-minimality only on completed checks and preserved original failures. No new dependencies or default pipeline stages.
+
+
 All notable changes to this project are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).

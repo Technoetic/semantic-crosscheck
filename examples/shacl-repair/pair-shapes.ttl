@@ -1,0 +1,2 @@
+@prefix ex: <urn:sxc:repair:> . @prefix sh: <http://www.w3.org/ns/shacl#> .
+ex:Shape a sh:NodeShape; sh:targetClass ex:Thing; sh:property [sh:path ex:quantity; sh:lessThan ex:limit] .

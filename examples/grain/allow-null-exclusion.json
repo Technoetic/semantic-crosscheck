@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "contracts": [
+    {
+      "measure": "total",
+      "source": {"entity": "fact", "table": "sxc_demo.grain_fact", "key": ["fact_id"]},
+      "group_by": ["node_id"],
+      "aggregate": {"function": "sum", "column": "qty"},
+      "filters": {"exact": {}, "normalized": {}},
+      "output": {"cube": "m_total", "key": ["key"], "value": "value", "reaggregate": "sum"},
+      "node": {"entity": "node", "table": "sxc_demo.grain_node", "key": ["node_id"]},
+      "join": {"relationship": "one_to_one", "node_key": ["node_id"], "output_key": ["key"]},
+      "null_policy": {"operation": "exclude", "allow_excluded_rows": true}
+    }
+  ]
+}

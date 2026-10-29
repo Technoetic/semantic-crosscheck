@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-10-29
+
+Release notes: [docs/releases/v0.13.0.md](docs/releases/v0.13.0.md).
+
 ### Added
 
 - Optional authored synthetic `shacl-repair` fixtures with real before/after pySHACL, retained-target and immutable-fact obligations, independent normalized report bags and separate edit costs.
@@ -13,7 +17,9 @@ All notable changes to this project are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+### Release compatibility
+
+- Register the Windows Job Object containment test only on Windows; Linux integration still requires zero skipped tests. Platform-specific coverage remains in the corresponding CI jobs.
 
 ## [0.12.0] - 2026-10-28
 
@@ -450,3 +456,5 @@ First release. Release notes: [docs/releases/v0.1.0.md](docs/releases/v0.1.0.md)
 [0.10.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.10.0
 [0.12.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.12.0
 [0.11.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.11.0
+
+[0.13.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.13.0

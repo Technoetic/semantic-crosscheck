@@ -308,22 +308,22 @@ class WorkerContainmentTest(unittest.TestCase):
                 if stat.exists():
                     self.assertEqual(stat.read_text().split()[2], "Z")
 
-    @unittest.skipUnless(os.name == "nt", "Windows job containment")
-    def test_failed_containment_cannot_start_worker_oracle(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            tmp = Path(temporary)
-            marker, script = tmp / "started", tmp / "worker.py"
-            script.write_text("import sys\nfrom pathlib import Path\n"
-                              "if sys.stdin.buffer.read():\n"
-                              f"    Path({str(marker)!r}).write_text('started')\n", encoding="utf-8")
-            job = mock.Mock()
-            job.assign.side_effect = OSError(SECRET)
-            with mock.patch.object(owl_explain, "WORKER", script), \
-                 mock.patch.object(owl_explain, "_WindowsJob", return_value=job):
-                with self.assertRaises(OSError):
-                    owl_explain._process(b"{}", time.monotonic() + 2)
-            self.assertFalse(marker.exists())
-            job.close.assert_called_once()
+    if os.name == "nt":
+        def test_failed_containment_cannot_start_worker_oracle(self):
+            with tempfile.TemporaryDirectory() as temporary:
+                tmp = Path(temporary)
+                marker, script = tmp / "started", tmp / "worker.py"
+                script.write_text("import sys\nfrom pathlib import Path\n"
+                                  "if sys.stdin.buffer.read():\n"
+                                  f"    Path({str(marker)!r}).write_text('started')\n", encoding="utf-8")
+                job = mock.Mock()
+                job.assign.side_effect = OSError(SECRET)
+                with mock.patch.object(owl_explain, "WORKER", script), \
+                     mock.patch.object(owl_explain, "_WindowsJob", return_value=job):
+                    with self.assertRaises(OSError):
+                        owl_explain._process(b"{}", time.monotonic() + 2)
+                self.assertFalse(marker.exists())
+                job.close.assert_called_once()
 
     def test_stage_calls_diagnostic_only_after_real_failure_and_when_requested(self):
         cfg, graph = cfg_graph()

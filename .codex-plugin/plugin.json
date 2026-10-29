@@ -1,6 +1,6 @@
 {
   "name": "semantic-crosscheck",
-  "version": "0.12.0",
+  "version": "0.13.0",
   "description": "Cross-layer verification for an ontology plus semantic layer on PostgreSQL 17, for Codex and Claude Code.",
   "author": {
     "name": "전문준"
@@ -9,7 +9,7 @@
   "interface": {
     "displayName": "Semantic Crosscheck",
     "shortDescription": "Prove that a PostgreSQL closure, SHACL rules, OWL reasoning and a Cube model agree.",
-    "longDescription": "Release v0.12.0: cross-checks PostgreSQL 17 closures, SQL and SHACL rules, OWL/HermiT and Cube against gold SQL. Three independently authored, fixture-bound expect examples cover raw missing-stock NULL, explicitly normalized zero after filtering, and composite region/label result keys. Opt-in counterexample --constraint-audit compares trusted SQL in two bounded domains: the declared constraint profile and an explicitly relaxed projection, accepting relaxed witnesses only outside the full original profile. A strict versioned manifest binds exact constraints, caller-claimed provenance and selected declarations; separate versioned replay binds each arm and exact inputs. Version 1 shrinks rows only and preserves original finite values, types and row bounds. A declared-domain disagreement fails; outside-domain disagreement and bounded no-witness outcomes are diagnostic not_run, never pass. No equivalence, causal necessity, false constraint or actual production defect is claimed. Existing default behavior and dependency pins are unchanged; the audit does not change operational V1-V5 or report verdicts. Rerun build, reason, cube, verify and report after upgrading. No business correctness, data completeness, shared whole-run snapshot or runtime attestation is claimed.",
+    "longDescription": "Release v0.13.0: cross-checks PostgreSQL17 closures, SQL/SHACL rules, OWL/HermiT and Cube against gold SQL. Adds standalone shacl-repair with authored synthetic before/after report bags, retained targets, hard immutable facts and separate edit costs; standalone grain with independent operation/key/filter/null-policy contracts plus bounded read-only PostgreSQL key, orphan and fanout evidence for undated preaggregate-to-node measures; and opt-in reason --explain-inconsistency using the same HermiT to localize generated axiom groups only after consistency fails. Original failures remain, and subset-minimality requires completed final deletion checks on a correctly bound original graph. Limits/errors never establish minimality. Same-engine explanation is not independent certification or a global minimum. New standalone diagnostics are outside the default report pipeline. No automatic repair, full SHACL report equivalence, Cube aggregate-value oracle, general grain/business correctness, shared whole-run snapshot or runtime attestation is claimed. Dependency pins and defaults stay unchanged. Rerun build, reason, cube, verify and report after upgrading.",
     "developerName": "Technoetic",
     "category": "Coding",
     "capabilities": [

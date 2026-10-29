@@ -46,6 +46,8 @@ default.
 | `tlp` | [xc-tlp.md](../../../commands/xc-tlp.md) | `sxc.py tlp --spec spec.json` |
 | `shacl-corpus` | [xc-shacl-corpus.md](../../../commands/xc-shacl-corpus.md) | `sxc.py shacl-corpus --jena-home /opt/apache-jena --timeout-ms 30000` |
 | `expect` | [xc-expect.md](../../../commands/xc-expect.md) | `sxc.py expect --config crosscheck.toml --allow-fixture-database` |
+| `shacl-repair` | [xc-shacl-repair.md](../../../commands/xc-shacl-repair.md) | `sxc.py shacl-repair --spec examples/shacl-repair/valid.json` |
+| `grain` | [xc-grain.md](../../../commands/xc-grain.md) | `sxc.py grain --config crosscheck.toml --spec contract.json` |
 
 `cube-replay`, `tlp` and `shacl-corpus` are optional standalone synthetic checks. They reject `--config`, ignore any
 working-directory configuration and preserve independent Result stages; their success does not change
@@ -96,3 +98,5 @@ another name for the same server. Its result is also kept out of `report` and of
 Edit `crosscheck.toml`, never the generated SQL, TTL or YAML. Report not proven items with every
 verdict. Source data is read-only, and results, messages and commits carry counts and ids only, never
 row values. See `SKILL.md` for the full list.
+
+Optional diagnostic contracts: shacl-repair is standalone authored RDF data; grain requires configuration but is outside the default pipeline. reason accepts an opt-in bounded same-HermiT explanation after inconsistency; consult the linked command for all limits. No command automatically repairs operational data.

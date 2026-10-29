@@ -1,0 +1,2 @@
+@prefix ex: <urn:sxc:repair:> . @prefix sh: <http://www.w3.org/ns/shacl#> .
+ex:row a ex:Thing; ex:quantity 1.00; ex:limit 2; ex:serial "fixed" .

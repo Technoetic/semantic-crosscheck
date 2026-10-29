@@ -94,6 +94,79 @@ class _Model:
     node_iris: set                 # IRIs of the node-table individuals
 
 
+@dataclass(frozen=True)
+class AxiomGroup:
+    """One removable logical unit; source values stay in the graph, never in this descriptor.
+
+    Declarations (Thing classes, ObjectProperties and individual names) are fixed background. The disjointness
+    block and each defined-class equivalence are single groups, rather than purported individual RDF triples.
+    """
+    id: str
+    kind: str
+    config_ref: str
+    token: tuple = field(repr=False)
+
+
+class AxiomGroupLimit(Exception):
+    """Bounded diagnostic collection stopped before constructing an oversized descriptor list."""
+
+
+def _key_order(key):
+    return type(key).__name__, canon.key(key)
+
+
+def _ordered_graph(graph: Graph) -> Graph:
+    return Graph(dict(sorted(graph.nodes.items(), key=lambda pair: _key_order(pair[0]))),
+                 sorted(graph.edges, key=lambda pair: (_key_order(pair[0]), _key_order(pair[1]))))
+
+
+def axiom_groups(cfg, graph: Graph, *, max_groups: int | None = None,
+                 deadline: float | None = None, _ordered: bool = False) -> list[AxiomGroup]:
+    """Stable ordinal ids for the generated axioms, independent of dictionary/edge row order.
+
+    The ids are local to this snapshot; they are deliberately not hashes of private keys. Class-map references are
+    to the map as a whole so its raw class-column values never become part of the public diagnostic.
+    """
+    def checkpoint():
+        if deadline is not None and time.monotonic() >= deadline:
+            raise TimeoutError()
+    checkpoint()
+    o = cfg.ontology
+    if not _ordered:
+        graph = _ordered_graph(graph)
+    checkpoint()
+    href = f"hierarchies.{o.hierarchy}"
+    groups = []
+    def add(kind, ref, *positions):
+        checkpoint()
+        if max_groups is not None and len(groups) >= max_groups:
+            raise AxiomGroupLimit()
+        groups.append(AxiomGroup(f"a{len(groups) + 1:06d}", kind, ref, (kind, *positions)))
+    for j, _value in enumerate(o.classes):
+        add("class_subclass", "ontology.classes", j)
+    if len(o.classes) > 1:
+        add("disjoint_classes", "ontology.classes")
+    add("closure_transitive", href)
+    add("edge_subproperty", href)
+    add("edge_domain", href)
+    add("edge_range", href)
+    for j, _value in enumerate(o.no_children):
+        add("no_children", f"ontology.no_children[{j}]", j)
+    for j, _defined in enumerate(o.defined):
+        add("defined_equivalence", f"ontology.defined[{j}]", j)
+    for j, (_key, values) in enumerate(graph.nodes.items()):
+        known = []
+        for i, value in enumerate(o.classes):
+            checkpoint()
+            if value in values:
+                known.append(i)
+        for i in known or [-1]:
+            add("node_type", "ontology.class_column" if i >= 0 else href, j, i)
+    for j, _pair in enumerate(graph.edges):
+        add("edge_assertion", href, j)
+    return groups
+
+
 # ---- configuration --------------------------------------------------------------------------------------
 def java_executable(env=None, which=procutil.which) -> str | None:
     """The java executable for HermiT: SXC_JAVA (an absolute file, or a command name looked up on PATH) when it is
@@ -255,36 +328,63 @@ def definition(kind: str, node_cls, cls, edge, closure):
     raise ValueError(f"unknown defined kind {kind!r}")
 
 
-def build(cfg, graph: Graph) -> _Model:
-    """The ontology of the module docstring in a fresh owlready2 World."""
+def build(cfg, graph: Graph, *, active_axioms: set[str] | None = None, _axiom_ordered: bool = False) -> _Model:
+    """The ontology of the module docstring in a fresh owlready2 World.
+
+    Optional active_axioms is private diagnostic support: fixed declarations plus just the selected removable
+    groups. Omitting it preserves the normal ontology and its original construction path. The private worker's
+    _axiom_ordered flag preserves parent-sorted row positions after replacing raw keys with opaque ordinals.
+    """
     import owlready2
     from owlready2 import AllDisjoint, Not, ObjectProperty, Thing, TransitiveProperty
     o = cfg.ontology
     h = cfg.hierarchies[o.hierarchy]
+    if active_axioms is not None:
+        if not _axiom_ordered:
+            graph = _ordered_graph(graph)
+        groups = axiom_groups(cfg, graph, _ordered=True)
+        by_token = {group.token: group.id for group in groups}
+        if not set(active_axioms).issubset(group.id for group in groups):
+            raise ValueError("unknown axiom group")
+    def enabled(kind, *positions):
+        return active_axioms is None or by_token[(kind, *positions)] in active_axioms
     base = o.iri or naming.DEFAULT_IRI
     world = owlready2.World()
     onto = world.get_ontology(base)
     individuals = onto.get_namespace(base + INDIVIDUALS)
     with onto:
         node_cls = types.new_class(h.node, (Thing,))
-        classes = {value: types.new_class(name, (node_cls,)) for value, name in o.classes.items()}
-        if len(classes) > 1:
+        classes = {value: types.new_class(name, (node_cls if enabled("class_subclass", j) else Thing,))
+                   for j, (value, name) in enumerate(o.classes.items())}
+        if len(classes) > 1 and enabled("disjoint_classes"):
             AllDisjoint(list(classes.values()))
-        closure = types.new_class(naming.owl_closure_property(h.name), (ObjectProperty, TransitiveProperty),
+        closure = types.new_class(naming.owl_closure_property(h.name),
+                                  (ObjectProperty, TransitiveProperty) if enabled("closure_transitive") else (ObjectProperty,),
                                   exec_body=lambda body: body.update(python_name=CLOSURE_ATTR))
-        edge = types.new_class(naming.owl_edge_property(h.name), (closure,),
+        edge = types.new_class(naming.owl_edge_property(h.name), (closure if enabled("edge_subproperty") else ObjectProperty,),
                                exec_body=lambda body: body.update(python_name=EDGE_ATTR))
-        edge.domain = [node_cls]
-        edge.range = [node_cls]
-        for value in o.no_children:
-            classes[value].is_a.append(Not(edge.some(Thing)))
+        if enabled("edge_domain"):
+            edge.domain = [node_cls]
+        if enabled("edge_range"):
+            edge.range = [node_cls]
+        for j, value in enumerate(o.no_children):
+            if enabled("no_children", j):
+                classes[value].is_a.append(Not(edge.some(Thing)))
         defined = {}
-        for d in o.defined:
+        for j, d in enumerate(o.defined):
             defined[d.name] = types.new_class(d.name, (Thing,))
-            defined[d.name].equivalent_to.append(definition(d.kind, node_cls, classes.get(d.cls), edge, closure))
+            if enabled("defined_equivalence", j):
+                defined[d.name].equivalent_to.append(definition(d.kind, node_cls, classes.get(d.cls), edge, closure))
         keys, by_key = {}, {}
-        for key, values in graph.nodes.items():
-            asserted = [classes[v] for v in sorted(values) if v in classes] or [node_cls]
+        for j, (key, values) in enumerate(graph.nodes.items()):
+            if active_axioms is None:
+                asserted = [classes[v] for v in sorted(values) if v in classes] or [node_cls]
+            else:
+                known = [(i, value) for i, value in enumerate(o.classes) if value in values]
+                asserted = [classes[v] for i, v in known if enabled("node_type", j, i)]
+                if not known and enabled("node_type", j, -1):
+                    asserted = [node_cls]
+                asserted = asserted or [Thing]
             ind = asserted[0](f"n{len(keys)}", namespace=individuals)
             ind.is_a.extend(asserted[1:])
             keys[ind.iri], by_key[key] = key, ind
@@ -292,8 +392,9 @@ def build(cfg, graph: Graph) -> _Model:
         for key in graph.outside():
             ind = Thing(f"n{len(keys)}", namespace=individuals)
             keys[ind.iri], by_key[key] = key, ind
-        for parent, child in graph.edges:
-            getattr(by_key[parent], EDGE_ATTR).append(by_key[child])
+        for j, (parent, child) in enumerate(graph.edges):
+            if enabled("edge_assertion", j):
+                getattr(by_key[parent], EDGE_ATTR).append(by_key[child])
     return _Model(world, closure, defined, keys, node_iris)
 
 

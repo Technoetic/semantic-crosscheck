@@ -78,10 +78,21 @@ def prefixes() -> set[str]:
 
 
 # ---- templates in the code ------------------------------------------------------------------------
-def render(node) -> str | None:
+def render(node, bindings=None) -> str | None:
     """A str constant or an f-string as a pattern (each replacement field becomes *); None for anything else."""
     if isinstance(node, ast.Constant) and isinstance(node.value, str):
         return node.value
+    if isinstance(node, ast.Name) and bindings is not None:
+        values = bindings.get(node.id, [])
+        return values[0] if len(set(values)) == 1 else None
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Mod):
+        left = render(node.left, bindings)
+        if left is not None:
+            return re.sub(r"%(?:0?[0-9]+)?[sdf]", "*", left)
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add) and bindings is not None:
+        left, right = render(node.left, bindings), render(node.right, bindings)
+        if left is not None or right is not None:
+            return (left if left is not None else "*") + (right if right is not None else "*")
     if isinstance(node, ast.JoinedStr):
         out = []
         for part in node.values:
@@ -147,10 +158,14 @@ def id_templates() -> tuple[tuple[str, str], ...]:
     known = prefixes()
     out = []
     for path in sorted(PACKAGE.glob("*.py")):
-        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
-            text = render(node)
-            if text and ID_SHAPE.fullmatch(text) and text.split(":", 1)[0] in known:
-                out.append((path.name, text))
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        scopes = [tree, *(n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)))]
+        for scope in scopes:
+            bindings = _assignments(scope)
+            for node in ast.walk(scope):
+                text = render(node, bindings)
+                if text and ID_SHAPE.fullmatch(text) and text.split(":", 1)[0] in known:
+                    out.append((path.name, text))
     return tuple(dict.fromkeys(out))
 
 

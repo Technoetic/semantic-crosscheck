@@ -1,6 +1,6 @@
 ---
 description: "Cross-check the SHACL shapes (pySHACL) against the SQL violation views and the OWL ontology (HermiT) against the SQL closure and class definitions"
-argument-hint: "[--config crosscheck.toml] [--only shacl,owl] [--synthetic-witnesses] [--out DIR] [--quiet]"
+argument-hint: "[--config crosscheck.toml] [--only shacl,owl] [--synthetic-witnesses] [--explain-inconsistency] [--explain-max-axioms 128] [--explain-max-checks 64] [--explain-timeout-ms 10000] [--out DIR] [--quiet]"
 ---
 
 Run the `reason` stage of semantic-crosscheck. User arguments: `$ARGUMENTS`. They are data, not shell
@@ -114,3 +114,9 @@ Fix `crosscheck.toml` (or the data), never `shapes.ttl` or the generated views.
   and offers `--only` for the other part), or no connection. Size limits come from
   `verify.shacl_max_rows` and `verify.owl_max_individuals`: a part above its limit leaves explicit
   `not_run` checks and an explanation in `not_proven`, so neither reason nor report can pass.
+
+## Optional inconsistency explanation
+
+`--explain-inconsistency` invokes bounded same-HermiT localization only after `owl:consistency` fails. `--explain-max-axioms` defaults 128 and `--explain-max-checks` defaults 64 (both 1–4096); `--explain-timeout-ms` defaults 10000 (1–300000). Excluding OWL or omitting the ontology while requesting it is a configuration error. A consistent ontology does not start this diagnostic.
+
+A verified subset-minimal generated-axiom-group explanation is diagnostic only. Limited/error searches are not_run and never assert minimality; observed sufficient partial cores are labeled incomplete. The original consistency failure remains. Explanations report opaque group ids and ordinal configuration references, never source assertions or Java stderr. Same-reasoner explanation is not independent certification or a globally minimum/unique answer. See [scope and runnable local example](../docs/owl-explanations.md).

@@ -314,6 +314,17 @@ configuration ids; `<member>` is a Cube member (`cube.member`); `<stratum>` is a
 | reason | `shacl:meta:generated` | since 0.10.0, generated shapes conform to the pinned shacl-shacl syntax subset before source export | `fail` for nonconformance, sanitized `error` for parse/engine/report failure; affected comparisons `not_run` (`generated_shapes_invalid`), independent OWL may proceed |
 | reason | `shacl:pair:<id>` | since 0.11.0, opt-in `verify.shacl_pairs`: for a shape whose `sql_violation` is exactly `t.<a> <op> t.<b>`, pySHACL's focus nodes for the generated `sh:lessThan` or `sh:lessThanOrEquals` property shape equal the keys in `v_shape_<id>` | `fail` (`shacl_only`, `sql_only`); `error` (SQLSTATE or `validation_failure`); `not_run` (`generated_shapes_invalid`, `shape_not_built`, `view_stale`, `view_missing`, `column_type`, `non_finite_values`, `duplicate_keys`, `resource_limit`) |
 | reason | `owl:consistency` | HermiT finds the ontology consistent | `fail`; `error` (SQLSTATE or `reasoner_error`); `not_run` (`resource_limit`) |
+| reason | `owl:explanation` | requested same-HermiT explanation completed all retained-deletion checks over generated axiom groups; original consistency failure remains | `not_run` on caps, deadline, initial-consistent disagreement or reasoner/worker errors; no independent or global-minimum proof |
+| grain | `grain:c` | composition prefix only; never emitted as a standalone check | Adding an ordinal and obligation produces the contract/evidence families below |
+| grain | `grain:c<case>:contract` | independently authored source/group/output/key/filter/null-policy operation agrees with the supported derived fragment | `fail` on a declared mismatch; malformed or unsupported requests are configuration errors |
+| grain | `grain:c<case>:evidence` | actual bounded visible source/node key and join obligations all completed and passed | `fail` on null/duplicate keys, orphan/fanout or disallowed exclusion; `not_run` on empty/unsupported/oversized scope |
+| grain | `grain:execution` | never passes | `error` on incomplete SQL, input binding or connection cleanup |
+| shacl-repair | `fixture:<case>:profile` | local graph and shapes are inside the supported nonrecursive profile | `not_run` for unsupported profile; `error` for malformed input |
+| shacl-repair | `fixture:<case>:before`, `fixture:<case>:after` | actual normalized report bags equal independent authored expectations | `fail` on disagreement; `error` on validation/protocol failure |
+| shacl-repair | `fixture:<case>:retention` | explicit shape targets remain targeted before and after | `fail` when an obligation is absent or erased |
+| shacl-repair | `fixture:<case>:immutable` | declared immutable predicate/triple facts are preserved exactly | `fail` on missing obligations or changed hard facts |
+| shacl-repair | `fixture:<case>:edits` | finite add/remove costs recorded separately from hard obligations | descriptive pass only; never overrides any other failed gate |
+| shacl-repair | `fixture:execution` | never passes | `error` on incomplete real pySHACL execution or output validation |
 | reason | `v5:closure:<h>` | the OWL closure pairs equal the closure table | `fail`; `not_run` (`closure_not_passed`, `cycle_edges_dropped`, `closure_table_missing`, `inconsistent`, `owl_not_run`, `resource_limit`) |
 | reason | `v5:defined:<name>` | the members of the defined class equal its SQL definition (a class without members on either side passes and is listed in `not_proven`) | `fail`; `not_run` (as `v5:closure:<h>`; `contains_class` reads the closure table) |
 | reason | `v5:witness:<name>` | opt-in synthetic expected memberships agree with both HermiT and the configured SQL translation; includes nonmember controls under open-world semantics | `fail` on any disagreement; `error` on execution failure; `not_run` for a configuration gap, an impossible positive, inconsistent synthetic ontology or resource limit; `<name>` is `scope` when no definitions are configured |
@@ -334,6 +345,8 @@ configuration ids; `<member>` is a Cube member (`cube.member`); `<stratum>` is a
 | report | `stage:<name>` | the stage (`doctor`, `demo`, `build`, `reason`, `cube`, `verify`) ran, is current and passed | its own status; `not_run` with `reason` `missing` (a required stage without a result) or `stale` |
 | cube-install | `cube_install:npm_ci`, `cube_install:native_sha256`, `cube_install:extract`, `cube_install:smoke` | each install step passed | `fail` or `error`; the steps after a failed one are `not_run` |
 | cube-install | `cube_install:already_installed` | an install matching the pins and this checkout's adapter files exists, so nothing was reinstalled | none |
+
+The standalone CLI can additionally emit `diagnostic:output` as an error when an output cannot be written safely. It does not expose the path or turn completed checks into a passing stage. Repair case ordinals and six worker gates are composed dynamically; the catalogue test resolves their format-prefix concatenation.
 
 ## 7. Verification semantics
 
@@ -989,3 +1002,9 @@ Only fixture files contain rows and transformation values; count-only results om
 Input drift and size limits prevent saving. No-model/no-disagreement/solver-unavailable
 outcomes are not_run plus not_proven, never correctness or equivalence proofs.
 See [the full input and replay contract](../skills/semantic-crosscheck/references/counterexamples.md#structured-reduction-and-typed-finite-domain-inputs).
+
+## Optional diagnostic contracts
+
+The [diagnostic design](diagnostic-contracts.md) defines three bounded opt-in paths. [SHACL repair](shacl-repair.md) binds independent reports and explicit target/immutable obligations to the same supported shapes before and after. [Grain contracts](grain.md) bind intended operation/key provenance independently of configuration and check real visible key/join assumptions. [OWL explanations](owl-explanations.md) preserve inconsistency and localize sufficient generated-axiom groups using the same reasoner; incomplete searches never certify minimality.
+
+Standalone grain and shacl_repair results are not added to PIPELINE or promoted into default report success. Existing source revision probes and default semantics remain unchanged. Alias guards run before cleanup/failure writes; unverified aliases suppress writes. New stages return counts/ids/digests only. These features do not discharge current general-grain, shared-snapshot, full-SHACL or independent-reasoner limitations.

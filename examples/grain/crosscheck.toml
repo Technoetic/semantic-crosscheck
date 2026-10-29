@@ -1,0 +1,22 @@
+# Synthetic disposable-database example; no source writes are performed by grain.
+version = 1
+
+[source]
+dsn_env = "SXC_PG_DSN"
+schemas = ["sxc_demo"]
+statement_timeout_ms = 1000
+
+[entities.fact]
+table = "sxc_demo.grain_fact"
+key = ["fact_id"]
+
+[entities.node]
+table = "sxc_demo.grain_node"
+key = ["node_id"]
+
+[measures.total]
+entity = "fact"
+column = "qty"
+agg = "sum"
+by = "node_id"
+node = "node"

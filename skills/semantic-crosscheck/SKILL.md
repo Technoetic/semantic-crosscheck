@@ -170,3 +170,11 @@ Every check id is listed in [docs/design.md](../../docs/design.md).
 - [references/codex.md](references/codex.md) — running the same stages from Codex
 - [docs/design.md](../../docs/design.md) — the full contract: result format, check catalogue and
   verification semantics
+
+## Optional diagnostic contracts
+
+- [xc-shacl-repair](../../commands/xc-shacl-repair.md): `shacl-repair --spec FILE` validates independent before/after synthetic SHACL reports, retained targets and hard immutable facts. It rejects operational configuration and does not repair data automatically.
+- [xc-grain](../../commands/xc-grain.md): `grain --config FILE --spec FILE` checks authored source/group/output/key/null-policy claims plus actual bounded read-only PostgreSQL key/join evidence for undated preaggregate-to-node measures.
+- `reason --explain-inconsistency` adds bounded same-HermiT generated-axiom localization only to a failed OWL consistency check; original failure is preserved. See [xc-reason](../../commands/xc-reason.md).
+
+The first two are standalone diagnostics, not prerequisites of report. None certifies business intent, whole-snapshot consistency across the existing pipeline, complete report equivalence or global-minimum explanations. Keep count-only results and alias guards; missing/unsupported work must not pass.

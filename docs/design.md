@@ -713,6 +713,14 @@ replaying a sampled V3 pair test (fewer keys compared than exist) also holds `sa
 `sampled_items` (those V3 check ids): the mutant may change only keys outside the samples. The marker changes no
 status.
 
+`closure_join_swap` counts which measure row each end of a pair joins, not the two values: Cube aggregates a
+measure reached through the closure's `many_to_one` join over the distinct primary keys of the measure cube in each
+group, so a fork whose parts hold one value still changes the sum grouped by its ancestor, the measure's `key` is a
+public dimension, and a NULL at one end against 0 at the other differs for V1 unless `zero_if_null`. With witness
+0 the mutant joins every closure row to the same measure row as the model (or to none, as the model does), so every
+query answers the same. Until 0.13.0 the witness compared the values (missing as 0 for `sum`/`count`) and could
+call such an observable mutant equivalent.
+
 | Operator | Applies to | Mutation | Witness (rows of the current data) |
 |---|---|---|---|
 | `closure_depth_shift` | every hierarchy | `min_depth + 1` | closure rows |
@@ -722,7 +730,7 @@ status.
 | `measure_normalization_drop` | measures with `filter_normalized` | the normalised filter compared on raw values | as `measure_filter_drop` |
 | `measure_agg_to_max` | `sum` and `count` measures | the value measure becomes `max` | on the measure cube's own row SQL: keys whose rows give a different sum (count) than max, plus 1 when the total differs, plus 1 when two keys queried together would differ (two non-zero values, or a negative value next to another) |
 | `dated_shift_one_day` | measures with `date_column` | `ts + 1 day` | rows of the measure cube's row SQL with a non-null `ts` |
-| `closure_join_swap` | measures with `closure_join` | the measure joined on the other end of the pair | pairs whose two ends have different measure values (missing counts as 0 for `sum`/`count`) |
+| `closure_join_swap` | measures with `closure_join` | the measure joined on the other end of the pair | pairs whose two ends join different rows of the measure cube (a key at one end only, or two different keys), whatever their values |
 | `closure_end_swap` | every hierarchy | the descendant copy joined on `ancestor` | pairs whose two ends are different node rows (one of them may be missing from the node table) |
 
 A model whose element an operator patches does not look as the configuration generates it (another

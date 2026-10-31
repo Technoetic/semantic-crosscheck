@@ -22,9 +22,9 @@ from .result import EXIT_CONFIG, StageError
 CHECK_ID = "owl:explanation"
 WORKER = Path(__file__).with_name("_owl_explain_worker.py")
 LIMITS = {"max_axioms": 4096, "max_checks": 4096, "timeout_ms": 300000}
-NOTE = ("owl:explanation uses the same HermiT and generated ontology as owl:consistency; subset minimality is only "
-        "over the reported removable axiom groups with fixed declarations. It is not independent certification "
-        "and does not establish a globally minimum, unique or complete explanation")
+NOTE = ("owl:explanation uses the same HermiT and generated ontology as owl:consistency; subset minimality and "
+        "uniqueness concern only the generated removable axiom groups over fixed declarations. It is not independent "
+        "certification and does not establish a globally minimum explanation or exclude causes outside those groups")
 
 
 def validate_limits(max_axioms=128, max_checks=64, timeout_ms=10000):
@@ -228,6 +228,8 @@ def explain(cfg, graph, java, *, max_axioms=128, max_checks=64, timeout_ms=10000
 
     A full-set check comes first; only an observed inconsistent set can be reported as a sufficient core. A final
     pass checks deletion of every retained group from the exact final core before subset_minimal is claimed.
+    After that, one check per retained group removes only that group from the full set: unique needs every such
+    check finished and consistent. Caps, deadline or errors there leave uniqueness not_proven, never the status.
     """
     validate_limits(max_axioms, max_checks, timeout_ms)
     deadline = time.monotonic() + timeout_ms / 1000
@@ -238,7 +240,8 @@ def explain(cfg, graph, java, *, max_axioms=128, max_checks=64, timeout_ms=10000
               "axiom_groups_count_complete": complete,
               "retained_axiom_groups": 0, "checks_completed": 0, "deletion_checks_completed": 0,
               "minimality_checks_completed": 0, "max_axioms": max_axioms, "max_checks": max_checks,
-              "timeout_ms": timeout_ms, "core": []}
+              "timeout_ms": timeout_ms, "core": [], "uniqueness": "not_proven",
+              "uniqueness_reason": "minimality_not_proven", "uniqueness_checks_completed": 0}
     if stop:
         result["reason"] = stop
         return result
@@ -251,6 +254,7 @@ def explain(cfg, graph, java, *, max_axioms=128, max_checks=64, timeout_ms=10000
         result.update(reason="axiom_limit", axiom_groups=max_axioms + 1, axiom_groups_count_complete=False)
         return result
     core = {group.id for group in groups}
+    every = frozenset(core)
     def checked(active):
         if time.monotonic() >= deadline:
             raise TimeoutError()
@@ -293,7 +297,36 @@ def explain(cfg, graph, java, *, max_axioms=128, max_checks=64, timeout_ms=10000
         result["core"] = [{"id": group.id, "kind": group.kind, "config_ref": group.config_ref}
                           for group in groups if group.id in core]
         result["retained_axiom_groups"] = len(core)
+    if result["status"] == "pass":
+        # "Union and Intersection of all Justifications" (ESWC 2022, arXiv 2109.11216): a group is in every
+        # justification iff removing only it from the full set is consistent, and a justification is the only one
+        # iff all its groups are. Groups only add axioms over the fixed declarations, so inconsistency is monotone.
+        try:
+            if _repeated_axioms(cfg, graph):
+                result["uniqueness_reason"] = "duplicate_axiom_groups"
+            else:
+                for group in groups:
+                    if group.id in core:
+                        consistent = checked(every - {group.id})
+                        result["uniqueness_checks_completed"] += 1
+                        if not consistent:
+                            result.update(uniqueness="not_unique", uniqueness_reason="completed")
+                            break
+                else:
+                    result.update(uniqueness="unique", uniqueness_reason="completed")
+        except _CheckLimit:
+            result["uniqueness_reason"] = "check_limit"
+        except TimeoutError:
+            result["uniqueness_reason"] = "timeout"
+        except Exception:  # same handling as the explanation: incompleteness only, never private error text
+            result["uniqueness_reason"] = "reasoner_error"
     return result
+
+
+def _repeated_axioms(cfg, graph):
+    """Two removable groups would generate one identical axiom: then the other group survives a single removal."""
+    no_children = cfg.ontology.no_children
+    return len(set(no_children)) != len(no_children) or len(set(graph.edges)) != len(graph.edges)
 
 
 class _CheckLimit(Exception):
@@ -310,3 +343,9 @@ def run(cfg, graph, java, args, res):
     if status != "pass":
         res.not_proven.append("owl:explanation was bounded or incomplete; the original owl:consistency failure "
                               "remains and no subset-minimal explanation was established")
+    elif got["uniqueness"] == "not_unique":
+        res.not_proven.append("owl:explanation showed that another subset-minimal explanation over the generated "
+                              "axiom groups exists; only one is reported and the others were not enumerated")
+    elif got["uniqueness"] != "unique":
+        res.not_proven.append(f"owl:explanation did not establish uniqueness ({got['uniqueness_reason']}); other "
+                              "subset-minimal explanations over the generated axiom groups were not ruled out")

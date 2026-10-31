@@ -18,7 +18,8 @@ element, and the check names the configuration entry the element comes from.
                                                                                 count) differs from their max: each key,
                                                                                 the total, and two keys queried together
   dated_shift_one_day         m_<m>.ts -> (ts) + interval '1 day'               rows with a ts (each moves to another day)
-  closure_join_swap           <h>_closure join to m_<m> on the other pair end   pairs whose ends differ in the measure
+  closure_join_swap           <h>_closure join to m_<m> on the other pair end   pairs whose ends join different m_<m>
+                                                                                rows, whatever their values
   closure_end_swap            <h>_closure join to <h>_descendant on ancestor    pairs whose ends are different node rows
 
 The filter witnesses count rows that can move the measure (a non-null value, non-zero for sums) plus the grain
@@ -28,6 +29,15 @@ changed by dataclasses.replace. That is exactly the SQL cube_gen.measure_cube ge
 needing column types. When the model's SQL does not contain the configured clause, the model came from
 another configuration and the mutant becomes an error check, never a silently different test. The
 measure_agg_to_max and dated_shift_one_day witnesses read the measure cube's own row SQL from the model.
+
+The closure_join_swap witness counts the pairs whose two ends join different m_<m> rows (a key at one end only, or
+two different keys), not the pairs whose ends hold different values. A query that reaches m_<m> through the
+closure's many_to_one join gets the measure aggregated over the distinct primary keys of m_<m> in each group (a
+multiplied measure in Cube 1.8.3 with the Tesseract planner), so a fork A->B, A->C with 5 at all three parts still
+changes the sum grouped by A (from 5 to 10 when the model joins the ancestor, closure_join = "ancestor"; the
+other way round for "descendant"); the measure's key is a public dimension; and a NULL at one end against 0 at
+the other differs for V1 unless zero_if_null. A pair whose ends join the same row, or none, gives the model and
+the mutant the same joined row, so witness 0 is exact.
 
 The closure operators (and closure_join_swap, through the closure its measure joins) are gated like the V1-V3
 checks: when build's closure:<h> did not pass, the closure table describes another graph than the source, so their
@@ -297,6 +307,10 @@ def _agg_to_max(cfg, model: dict, m) -> Mutant:
 
 
 def _join_swap(cfg, model: dict, m) -> Mutant:
+    """Each closure row joins the m_<m> row of its configured end; the mutant joins the row of the other end. A pair
+    whose ends join different rows (a key at one end only, or two different keys) changes what queries over the closure
+    and the measure read, whatever the two values; a pair whose ends join the same row, or none, changes nothing (see
+    the module docstring)."""
     h = cfg.hierarchy("", f"measures.{m.name}")
     cube = _closure_cube(model, h)
     mc = naming.cube_measure(m.name)
@@ -304,9 +318,8 @@ def _join_swap(cfg, model: dict, m) -> Mutant:
 
     def patch(mm):
         _swap_end(_element(mm, cube, "joins", mc), m.closure_join, other, f"{cube}.joins.{mc}")
-    differ = "coalesce(a.v, 0) <> coalesce(d.v, 0)" if m.agg in ("sum", "count") else "a.v IS DISTINCT FROM d.v"
     sql = (f"WITH v AS ({_per_key(cfg, m)}) SELECT count(*) FROM {_closure_sql(cfg, h)} p "
-           f"LEFT JOIN v a ON a.k = p.ancestor LEFT JOIN v d ON d.k = p.descendant WHERE {differ}")
+           f"LEFT JOIN v a ON a.k = p.ancestor LEFT JOIN v d ON d.k = p.descendant WHERE a.k IS DISTINCT FROM d.k")
     return Mutant("closure_join_swap", m.name, _mutated(model, patch), sql, {}, f"measures.{m.name}")
 
 

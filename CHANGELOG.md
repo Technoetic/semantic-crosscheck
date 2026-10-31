@@ -2,6 +2,47 @@
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-10-31
+
+Release notes: [docs/releases/v0.14.0.md](docs/releases/v0.14.0.md).
+
+### Fixed
+
+- `CubeClient.load` accepts a Cube `/load` answer only in Cube's load envelope, a JSON object whose `data` is a list
+  of row objects. Any other HTTP 2xx answer without an `error` member (an empty object, `results` instead of `data`,
+  `data` that is an object or a string, a body or row that is not an object, a body that is not JSON) is an `error`,
+  never zero rows: a V1 or V3 check carries `cube=invalid_response` and its next action points at the adapter, while
+  a V2 stratum check counts such bindings by type under `errors` (`CubeResponseError`) and keeps the general next
+  action, as for its other binding errors. Read as no rows, such an answer passed V1 and V2 vacuously against empty
+  gold rows, passed a V3 pair test of at most 2,000 keys (the key cap) over no keys whatever the source data held,
+  and counted as a V4 kill against non-empty gold rows; the other malformed JSON answers stopped the verify stage
+  with an unexpected exception (in V4 they left the mutant unjudged without the retry). A body that is not JSON was
+  already an `error`, but named `JSONDecodeError` or `UnicodeDecodeError`, and a V1 or V3 next action pointed at the
+  gold SQL instead of the adapter.
+- The Cube rows of a gold query in V1, V2 and their V4 replays must hold every mapped member, as `expect` already
+  required: a row without one is an `error` (`MissingMember`; `cube=invalid_response` on a V1 check and an `expect`
+  case, counted under `errors` on a V2 check), never a NULL or, under `zero_if_null`, a 0 that could pass. A V4 suite
+  item that gets either kind of answer is retried once; when the retry gets one too, the mutant is left unjudged
+  (`suite_error`) instead of killed.
+- V4 `closure_join_swap` no longer calls an observable mutant equivalent. Its witness compared the measure values at
+  the two ends of each closure pair (a missing value counting as 0 for `sum`/`count`), but Cube 1.8.3 aggregates a
+  measure reached through the closure's `many_to_one` join over the distinct primary keys of the measure cube in each
+  group, so equal values on a fork or diamond still change grouped answers; the measure's `key` is also a public
+  dimension, and V1 tells NULL from 0 unless `zero_if_null`. Such a mutant was skipped as "equivalent on this data"
+  with no check, which could hide a survivor from V4. The witness now counts the pairs whose two ends join different
+  measure rows, which for a model generated from `crosscheck.toml` is 0 only when every query answers the same; such
+  mutants are served, and one that survives fails V4. A verify that passed 0.13.0 with `v4:closure_join_swap:<m>`
+  listed as equivalent can now fail V4 when no gold query observes the change, for example when only the joined
+  measure row changes and the gold queries read only values.
+
+### Added
+
+- `reason --explain-inconsistency` reports `uniqueness` (`unique`, `not_unique` or `not_proven`) for a completed subset-minimal explanation. One extra same-HermiT check per retained group removes only that group from the full generated set, within the existing call cap and deadline, using the intersection-of-justifications criterion of "Union and Intersection of all Justifications" (arXiv 2109.11216). `unique` holds only among explanations over the generated axiom groups; caps, deadlines, worker errors or a repeated `ontology.no_children` value or edge leave it `not_proven` and keep the verified minimality.
+
+### Changed
+
+- A repeated value in `ontology.no_children` is now a configuration error. A repeat generated the same axiom twice and would imitate a second explanation.
+
 ## [0.13.0] - 2026-10-29
 
 Release notes: [docs/releases/v0.13.0.md](docs/releases/v0.13.0.md).
@@ -458,3 +499,4 @@ First release. Release notes: [docs/releases/v0.1.0.md](docs/releases/v0.1.0.md)
 [0.11.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.11.0
 
 [0.13.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.13.0
+[0.14.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.14.0

@@ -552,6 +552,8 @@ def _load(path: str | Path) -> Config:
         for v in ont.no_children:
             if v not in ont.classes:
                 _err("ontology.no_children", f"{v!r} is not a key of ontology.classes")
+        if len(set(ont.no_children)) != len(ont.no_children):
+            _err("ontology.no_children", "list each class value at most once")
         for j, d in enumerate(o.get("defined", [])):
             _known_keys(d, ("name", "kind", "class"), f"ontology.defined[{j}]")
             dd = Defined(name=d["name"], kind=d["kind"], cls=d.get("class", ""))

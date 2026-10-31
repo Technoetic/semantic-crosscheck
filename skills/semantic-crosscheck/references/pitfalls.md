@@ -34,6 +34,14 @@ gold SQL and `crosscheck.toml` avoid them too.
   Cube query reads its own snapshot, shared with no other query. Every key up to the budget is read in
   one statement under `source.statement_timeout_ms` (a timeout is an `error`) and held in memory, and a
   chunked test whose Cube answers leave out keys it asked for is `not_run` (`keys_not_answered`).
+- **A malformed answer is not an empty answer.** The client accepts a `/load` answer only in Cube's load
+  envelope, a JSON object whose `data` is a list of row objects, and a gold query's rows must hold every
+  mapped member (Cube answers each requested dimension and measure, NULL included). Any other HTTP 2xx
+  answer without an `error` member, or a gold-query row without a mapped member, makes the check an `error`
+  (`CubeResponseError`, or `MissingMember` for such a row), never zero rows, a NULL or a `zero_if_null` 0. A
+  V1 or V3 check carries `cube=invalid_response` and names the adapter in its next action; a V2 stratum
+  check counts such bindings by type under `errors`. In V4 the suite item is retried once, and when the
+  retry gets one too the mutant is left unjudged (`suite_error`) instead of killed.
 - **A many-to-one join that is one-to-many in the data inflates totals.** Cube trusts a declared
   `many_to_one` (or `one_to_one`) relationship and sums without deduplication, so a repeated key in the
   joined table counts the measure rows once per match. V3 `additive` tests sum the groups by the class
@@ -42,6 +50,14 @@ gold SQL and `crosscheck.toml` avoid them too.
   without a class when it starts from the node cube and drops measure rows without a node row, which then
   fail the sum); give the node entity's key a primary key or unique constraint. A path with a
   `one_to_many` step is not additive by nature and gets no test (listed as not applicable).
+- **A measure on the one side of a many_to_one join is counted once per group.** When a query reaches a
+  measure's cube through another cube's `many_to_one` join (the closure cube's join to a measure with
+  `closure_join`), Cube 1.8.3 aggregates the measure over the distinct primary keys of the measure's cube in
+  each group, not once per joined row: the group of an ancestor with several descendants counts the
+  ancestor's value once. V3 pair tests rely on this, and the V4 `closure_join_swap` witness counts the pairs
+  whose two ends join different measure rows: equal values at both ends can still change a grouped sum, and
+  always change which measure row (whose key is a public dimension) the pair joins.
+  The previous bullet is the other direction: the measure's own cube joins a table whose key repeats.
 - **Primary keys are hidden.** A primary-key dimension is not public unless it says `public: true`;
   querying a hidden member fails (HTTP 500). The generator makes single-column keys public. The
   synthetic `sxc_pk` of a composite-key cube stays hidden, so gold queries cannot use it and `/meta`

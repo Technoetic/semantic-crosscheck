@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- A repeated value in `ontology.no_children` is now a configuration error. A repeat generated the same axiom twice and would imitate a second explanation.
+
 ## [0.13.0] - 2026-10-29
 
 Release notes: [docs/releases/v0.13.0.md](docs/releases/v0.13.0.md).

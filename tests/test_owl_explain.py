@@ -5,6 +5,7 @@ import json
 import os
 import tempfile
 import time
+import tomllib
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -166,6 +167,16 @@ class ExplainTest(unittest.TestCase):
         got = self.explain(lambda *_a: next(calls))
         self.assertEqual((got["status"], got["minimality"], got["reason"]),
                          ("not_run", "not_proven", "verification_disagreement"))
+
+    def test_configuration_rejects_a_repeated_no_children_value(self):
+        raw = tomllib.loads(pgfixture.DEMO_CONFIG.read_text(encoding="utf-8"))
+        raw["ontology"]["no_children"] = ["raw", "raw"]
+        with mock.patch.object(config.tomllib, "loads", return_value=raw):
+            with self.assertRaises(StageError) as caught:
+                config.load(pgfixture.DEMO_CONFIG)
+        self.assertEqual(caught.exception.exit_code, EXIT_CONFIG)
+        self.assertIn("ontology.no_children", str(caught.exception))
+        self.assertNotIn("'raw'", str(caught.exception))
 
     def test_worker_payload_removes_source_keys_and_class_values_and_is_stable(self):
         self.cfg.ontology.classes = {SECRET: "RawMaterial"}

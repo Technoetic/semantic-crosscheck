@@ -36,8 +36,8 @@ gold SQL and `crosscheck.toml` avoid them too.
   chunked test whose Cube answers leave out keys it asked for is `not_run` (`keys_not_answered`).
 - **A malformed answer is not an empty answer.** The client accepts a `/load` answer only in Cube's load
   envelope, a JSON object whose `data` is a list of row objects, and a gold query's rows must hold every
-  mapped member (Cube answers each requested dimension and measure, NULL included). Any other answer without
-  an `error` member, or a gold-query row without a mapped member, makes the check an `error`
+  mapped member (Cube answers each requested dimension and measure, NULL included). Any other HTTP 2xx
+  answer without an `error` member, or a gold-query row without a mapped member, makes the check an `error`
   (`CubeResponseError`, or `MissingMember` for such a row), never zero rows, a NULL or a `zero_if_null` 0. A
   V1 or V3 check carries `cube=invalid_response` and names the adapter in its next action; a V2 stratum
   check counts such bindings by type under `errors`. In V4 the suite item is retried once, and when the

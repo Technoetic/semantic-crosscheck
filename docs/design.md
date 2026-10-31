@@ -314,7 +314,7 @@ configuration ids; `<member>` is a Cube member (`cube.member`); `<stratum>` is a
 | reason | `shacl:meta:generated` | since 0.10.0, generated shapes conform to the pinned shacl-shacl syntax subset before source export | `fail` for nonconformance, sanitized `error` for parse/engine/report failure; affected comparisons `not_run` (`generated_shapes_invalid`), independent OWL may proceed |
 | reason | `shacl:pair:<id>` | since 0.11.0, opt-in `verify.shacl_pairs`: for a shape whose `sql_violation` is exactly `t.<a> <op> t.<b>`, pySHACL's focus nodes for the generated `sh:lessThan` or `sh:lessThanOrEquals` property shape equal the keys in `v_shape_<id>` | `fail` (`shacl_only`, `sql_only`); `error` (SQLSTATE or `validation_failure`); `not_run` (`generated_shapes_invalid`, `shape_not_built`, `view_stale`, `view_missing`, `column_type`, `non_finite_values`, `duplicate_keys`, `resource_limit`) |
 | reason | `owl:consistency` | HermiT finds the ontology consistent | `fail`; `error` (SQLSTATE or `reasoner_error`); `not_run` (`resource_limit`) |
-| reason | `owl:explanation` | requested same-HermiT explanation completed all retained-deletion checks over generated axiom groups; original consistency failure remains; after 0.13.0 (unreleased), detail `uniqueness` is `unique` only when removing each retained group alone from the full set is consistent, `not_unique` when one removal stays inconsistent | `not_run` on caps, deadline, initial-consistent disagreement or reasoner/worker errors; no independent or global-minimum proof; `uniqueness` stays `not_proven` when its checks hit caps, deadline or errors, or groups repeat an axiom |
+| reason | `owl:explanation` | requested same-HermiT explanation completed all retained-deletion checks over generated axiom groups; original consistency failure remains; after 0.13.0 (unreleased), detail `uniqueness` is `unique` only when removing each retained group alone from the full set is consistent, `not_unique` when one removal stays inconsistent | `not_run` on caps, deadline, initial-consistent disagreement or reasoner/worker errors; no independent or global-minimum proof; `uniqueness` stays `not_proven` when its checks hit caps, deadline or errors, or a repeated `ontology.no_children` value or edge would generate one axiom twice |
 | grain | `grain:c` | composition prefix only; never emitted as a standalone check | Adding an ordinal and obligation produces the contract/evidence families below |
 | grain | `grain:c<case>:contract` | independently authored source/group/output/key/filter/null-policy operation agrees with the supported derived fragment | `fail` on a declared mismatch; malformed or unsupported requests are configuration errors |
 | grain | `grain:c<case>:evidence` | actual bounded visible source/node key and join obligations all completed and passed | `fail` on null/duplicate keys, orphan/fanout or disallowed exclusion; `not_run` on empty/unsupported/oversized scope |
@@ -715,11 +715,11 @@ status.
 
 `closure_join_swap` counts which measure row each end of a pair joins, not the two values: Cube aggregates a
 measure reached through the closure's `many_to_one` join over the distinct primary keys of the measure cube in each
-group, so a fork whose parts hold one value still changes the sum grouped by its ancestor, the measure's `key` is a
-public dimension, and a NULL at one end against 0 at the other differs for V1 unless `zero_if_null`. With witness
-0 the mutant joins every closure row to the same measure row as the model (or to none, as the model does), so every
-query answers the same. Until 0.13.0 the witness compared the values (missing as 0 for `sum`/`count`) and could
-call such an observable mutant equivalent.
+group, so a fork whose parts hold one value still changes the sum grouped by its ancestor. Separately, the
+measure's `key` is a public dimension, and a NULL at one end against 0 at the other differs for V1 unless
+`zero_if_null`. With witness 0 the mutant joins every closure row to the same measure row as the model (or to
+none, as the model does), so every query answers the same. Through 0.13.0 the witness compared the values
+(missing as 0 for `sum`/`count`) and could call such an observable mutant equivalent.
 
 | Operator | Applies to | Mutation | Witness (rows of the current data) |
 |---|---|---|---|

@@ -19,15 +19,18 @@
   retry gets one too, the mutant is left unjudged (`suite_error`) instead of killed.
 - V4 `closure_join_swap` no longer calls an observable mutant equivalent. Its witness compared the measure values at
   the two ends of each closure pair (a missing value counting as 0 for `sum`/`count`), but Cube 1.8.3 aggregates a
-  measure reached through the closure's `many_to_one` join over the distinct primary keys of the measure cube in
-  each group, so equal values on a fork or diamond still change grouped answers, the measure's `key` is a public
+  measure reached through the closure's `many_to_one` join over the distinct primary keys of the measure cube in each
+  group, so equal values on a fork or diamond still change grouped answers; the measure's `key` is also a public
   dimension, and V1 tells NULL from 0 unless `zero_if_null`. Such a mutant was skipped as "equivalent on this data"
-  with no check, hiding a survivor from V4. The witness now counts the pairs whose two ends join different measure
-  rows, which is 0 only when every query answers the same; such mutants are served, and one that survives fails V4.
+  with no check, which could hide a survivor from V4. The witness now counts the pairs whose two ends join different
+  measure rows, which is 0 only when every query answers the same; such mutants are served, and one that survives
+  fails V4. A verify that passed 0.13.0 with `v4:closure_join_swap:<m>` listed as equivalent can now fail V4 when no
+  gold query observes the change, for example when only the joined measure row changes and the gold queries read only
+  values.
 
 ### Added
 
-- `reason --explain-inconsistency` reports `uniqueness` (`unique`, `not_unique` or `not_proven`) for a completed subset-minimal explanation. One extra same-HermiT check per retained group removes only that group from the full generated set, within the existing call cap and deadline, using the intersection-of-justifications criterion of "Union and Intersection of all Justifications" (arXiv 2109.11216). `unique` holds only among explanations over the generated axiom groups; caps, deadlines, worker errors or repeated axioms leave it `not_proven` and keep the verified minimality.
+- `reason --explain-inconsistency` reports `uniqueness` (`unique`, `not_unique` or `not_proven`) for a completed subset-minimal explanation. One extra same-HermiT check per retained group removes only that group from the full generated set, within the existing call cap and deadline, using the intersection-of-justifications criterion of "Union and Intersection of all Justifications" (arXiv 2109.11216). `unique` holds only among explanations over the generated axiom groups; caps, deadlines, worker errors or a repeated `ontology.no_children` value or edge leave it `not_proven` and keep the verified minimality.
 
 ### Changed
 

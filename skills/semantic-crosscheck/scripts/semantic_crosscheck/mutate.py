@@ -34,8 +34,9 @@ The closure_join_swap witness counts the pairs whose two ends join different m_<
 two different keys), not the pairs whose ends hold different values. A query that reaches m_<m> through the
 closure's many_to_one join gets the measure aggregated over the distinct primary keys of m_<m> in each group (a
 multiplied measure in Cube 1.8.3 with the Tesseract planner), so a fork A->B, A->C with 5 at all three parts still
-changes the sum grouped by A from 5 to 10; the measure's key is a public dimension; and a NULL at one end against 0
-at the other differs for V1 unless zero_if_null. A pair whose ends join the same row, or none, gives the model and
+changes the sum grouped by A (from 5 to 10 when the model joins the ancestor, closure_join = "ancestor"; the
+other way round for "descendant"); the measure's key is a public dimension; and a NULL at one end against 0 at
+the other differs for V1 unless zero_if_null. A pair whose ends join the same row, or none, gives the model and
 the mutant the same joined row, so witness 0 is exact.
 
 The closure operators (and closure_join_swap, through the closure its measure joins) are gated like the V1-V3

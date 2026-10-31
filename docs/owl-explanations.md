@@ -35,14 +35,17 @@ consistent and `uniqueness: not_unique` at the first removal that stays inconsis
 without that group exists; the others are not enumerated. Each of these checks covers the complete group set, so it
 costs about as much as the initial check. They share the call cap and deadline: a cap, deadline or worker failure
 leaves `uniqueness: not_proven` with `uniqueness_reason` `check_limit`, `timeout` or `reasoner_error`, and keeps the
-verified `status: pass` and `minimality: subset_minimal`. `uniqueness_checks_completed` counts finished checks. An
+verified `status: pass` and `minimality: subset_minimal`; finished checks give `uniqueness_reason: completed`.
+`uniqueness_checks_completed` counts finished uniqueness checks, which `checks_completed` also includes. An
 incomplete explanation never attempts uniqueness (`uniqueness_reason: minimality_not_proven`). With the default 64
-calls, a three-group core finishes the explanation and these checks only when the snapshot has at most 57
-removable groups (1 + 57 + 3 + 3 calls), and the default deadline often ends the search sooner; raise the limits
-for real data. The criterion assumes that every group generates a distinct axiom. Configurations reject a repeated
-`ontology.no_children` value. A repeat that still reaches the diagnostic, such as a caller-supplied graph that
-repeats an edge (database snapshots read distinct edges), leaves `uniqueness: not_proven` with
-`duplicate_axiom_groups` and no extra call: the surviving copy would otherwise imitate a second explanation.
+calls, a three-group core finishes the explanation and these checks only when the snapshot has at most 57 removable
+groups (1 + 57 + 3 + 3 calls), and the default deadline often ends the search sooner; raise the limits for real
+data. The criterion assumes that every group generates a distinct axiom. Configurations reject a repeated
+`ontology.no_children` value. A repeated `ontology.no_children` value or a repeated edge that still reaches the
+diagnostic, such as a caller-supplied graph that repeats an edge (database snapshots read distinct edges), leaves
+`uniqueness: not_proven` with `duplicate_axiom_groups` and no extra call: the surviving copy would otherwise imitate
+a second explanation. Only these two repeats are detected; a caller that bypasses the configuration checks and maps
+two entries to one OWL name can get a group-level `not_unique`, never a false `unique`.
 
 A group cap, call cap, timeout or worker failure produces `status: not_run` and `minimality: not_proven`.
 `sufficient: true` then means the reported partial core was actually checked and found inconsistent. If the

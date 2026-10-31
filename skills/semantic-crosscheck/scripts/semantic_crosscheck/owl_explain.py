@@ -344,8 +344,8 @@ def run(cfg, graph, java, args, res):
         res.not_proven.append("owl:explanation was bounded or incomplete; the original owl:consistency failure "
                               "remains and no subset-minimal explanation was established")
     elif got["uniqueness"] == "not_unique":
-        res.not_proven.append("owl:explanation found another subset-minimal explanation over the generated axiom "
-                              "groups; only one is reported and the others were not enumerated")
+        res.not_proven.append("owl:explanation showed that another subset-minimal explanation over the generated "
+                              "axiom groups exists; only one is reported and the others were not enumerated")
     elif got["uniqueness"] != "unique":
         res.not_proven.append(f"owl:explanation did not establish uniqueness ({got['uniqueness_reason']}); other "
                               "subset-minimal explanations over the generated axiom groups were not ruled out")

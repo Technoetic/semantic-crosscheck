@@ -38,8 +38,8 @@ gold SQL and `crosscheck.toml` avoid them too.
   envelope, a JSON object whose `data` is a list of row objects, and a gold query's rows must hold every
   mapped member (Cube answers each requested dimension and measure, NULL included). Anything else is an
   `error` check with `cube=invalid_response` (`CubeResponseError`, or `MissingMember` for a row without a
-  member), never zero rows, a NULL or a `zero_if_null` 0; in V4 the suite item is retried once and then
-  leaves the mutant unjudged (`suite_error`) instead of killing it.
+  member), never zero rows, a NULL or a `zero_if_null` 0; in V4 the suite item is retried once, and when
+  the retry gets one too the mutant is left unjudged (`suite_error`) instead of killed.
 - **A many-to-one join that is one-to-many in the data inflates totals.** Cube trusts a declared
   `many_to_one` (or `one_to_one`) relationship and sums without deduplication, so a repeated key in the
   joined table counts the measure rows once per match. V3 `additive` tests sum the groups by the class
@@ -53,7 +53,8 @@ gold SQL and `crosscheck.toml` avoid them too.
   `closure_join`), Cube 1.8.3 aggregates the measure over the distinct primary keys of the measure's cube in
   each group, not once per joined row: the group of an ancestor with several descendants counts the
   ancestor's value once. V3 pair tests rely on this, and the V4 `closure_join_swap` witness counts the pairs
-  whose two ends join different measure rows because equal values at both ends still change a grouped sum.
+  whose two ends join different measure rows: equal values at both ends can still change a grouped sum, and
+  always change which measure row (whose key is a public dimension) the pair joins.
   The previous bullet is the other direction: the measure's own cube joins a table whose key repeats.
 - **Primary keys are hidden.** A primary-key dimension is not public unless it says `public: true`;
   querying a hidden member fails (HTTP 500). The generator makes single-column keys public. The

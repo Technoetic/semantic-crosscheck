@@ -9,7 +9,7 @@
 
 ## Global constraints
 
-No new dependency; no default pipeline/output behavior change; counts/ids/hashes only; no operational writes; no release/version bump. Work only in D:/worktrees/sxc-ninth-i. Feature agents do not commit or edit shared CLI/docs. Root stages/commits the reviewed integration.
+No new dependency; no default pipeline/output behavior change; counts/ids/hashes only; no operational writes; no release/version bump. Work only in a separate worktree. Feature agents do not commit or edit shared CLI/docs. Root stages/commits the reviewed integration.
 
 ## Review focus
 

@@ -42,6 +42,13 @@ gold SQL and `crosscheck.toml` avoid them too.
   without a class when it starts from the node cube and drops measure rows without a node row, which then
   fail the sum); give the node entity's key a primary key or unique constraint. A path with a
   `one_to_many` step is not additive by nature and gets no test (listed as not applicable).
+- **A measure on the one side of a many_to_one join is counted once per group.** When a query reaches a
+  measure's cube through another cube's `many_to_one` join (the closure cube's join to a measure with
+  `closure_join`), Cube 1.8.3 aggregates the measure over the distinct primary keys of the measure's cube in
+  each group, not once per joined row: the group of an ancestor with several descendants counts the
+  ancestor's value once. V3 pair tests rely on this, and the V4 `closure_join_swap` witness counts the pairs
+  whose two ends join different measure rows because equal values at both ends still change a grouped sum.
+  The previous bullet is the other direction: the measure's own cube joins a table whose key repeats.
 - **Primary keys are hidden.** A primary-key dimension is not public unless it says `public: true`;
   querying a hidden member fails (HTTP 500). The generator makes single-column keys public. The
   synthetic `sxc_pk` of a composite-key cube stays hidden, so gold queries cannot use it and `/meta`

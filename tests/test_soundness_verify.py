@@ -1,11 +1,14 @@
 """Integration regression tests of the verification-soundness fixes (PostgreSQL 17 and, for most, the Cube adapter).
 
   WitnessDataTest   (database)         V4 witnesses count what the mutation changes on the data: closure_end_swap
-                                       with one class for every part, dated_shift_one_day without a gold window,
-                                       measure_agg_to_max on one key and on a negative value next to a zero
+                                       with one class for every part, closure_join_swap with 0 open on every order,
+                                       dated_shift_one_day without a gold window, measure_agg_to_max on one key and on
+                                       a negative value next to a zero
   CubeVerifyTest    (database + Cube)  a database that refuses the mutant's connections makes the V4 check an error,
                                        never a kill; a closure that did not pass in build gates the closure mutants
-                                       (no false survivor on a stale closure table); V3 pair tests above the key cap
+                                       (no false survivor on a stale closure table); closure_join_swap with one value
+                                       at every part is served and killed by the closure pair test (Cube counts each
+                                       measure row once per group); V3 pair tests above the key cap
                                        compare a deterministic sample that Cube filters, and within
                                        verify.pair_key_budget every key in chunks (each answered by Cube) plus the
                                        NULL key group (notSet), a real NULL key included
@@ -132,6 +135,25 @@ class WitnessDataTest(unittest.TestCase):
             owner_run(self.fx, "UPDATE sxc_demo.part p SET part_class = s.part_class FROM sxc_demo.sound_saved_class s "
                                "WHERE s.part_id = p.part_id", "DROP TABLE sxc_demo.sound_saved_class")
 
+    def test_join_swap_counts_pairs_whose_ends_join_different_rows_even_with_equal_values(self):
+        owner_run(self.fx, "CREATE TABLE sxc_demo.sound_saved_open AS SELECT order_id, qty_open FROM sxc_demo.sales_order",
+                  "UPDATE sxc_demo.sales_order SET qty_open = 0")
+        try:
+            closure_t = '"sxc_out"."has_component_closure"'
+            per_key = mutate._per_key(self.cfg, self.cfg.measures["firm_open"])
+            by_value = self.scalar(f"WITH v AS ({per_key}) SELECT count(*) FROM {closure_t} p LEFT JOIN v a ON a.k = "
+                                   "p.ancestor LEFT JOIN v d ON d.k = p.descendant WHERE coalesce(a.v, 0) <> coalesce(d.v, 0)")
+            self.assertEqual(by_value, 0, "the value-based witness would call the mutant equivalent")
+            firm = "EXISTS (SELECT 1 FROM sxc_demo.sales_order o WHERE o.status = 'FIRM' AND o.part_id = p.{})"
+            joined = self.scalar(f"SELECT count(*) FROM {closure_t} p WHERE p.ancestor <> p.descendant "
+                                 f"AND ({firm.format('ancestor')} OR {firm.format('descendant')})")
+            self.assertGreater(joined, 0)
+            n = mutate.witness(self.conn, self.cfg, mutants(self.cfg, self.model)["v4:closure_join_swap:firm_open"])
+            self.assertEqual(n, joined, "a pair with a FIRM order at one end or both joins two different measure rows")
+        finally:
+            owner_run(self.fx, "UPDATE sxc_demo.sales_order o SET qty_open = s.qty_open FROM sxc_demo.sound_saved_open s "
+                               "WHERE s.order_id = o.order_id", "DROP TABLE sxc_demo.sound_saved_open")
+
     def test_dated_shift_counts_every_dated_row_without_a_gold_window(self):
         dated = sum(1 for o in self.fx.data["orders"] if o["status"] == "FIRM" and o["due_date"])
         cfg = copy.deepcopy(self.cfg)
@@ -241,6 +263,33 @@ class CubeVerifyTest(unittest.TestCase):
         for target in ("firm_open", "firm_open_dated"):
             self.assertIn(by_id[f"v4:measure_filter_drop:{target}"].status, ("pass", "not_run"))
         self.assertEqual(res.status, "not_run")
+
+    def test_join_swap_with_one_value_at_every_part_is_served_and_killed(self):
+        """Every part gets one FIRM order of 5 (the demo's FIRM orders become FORECAST), so both ends of every closure
+        pair hold the same value and the value witness of 0.13.0 called closure_join_swap equivalent: no check. The
+        closure pair test groups by the ancestor. Cube counts the ancestor's m_firm_open row once per group, so the
+        model answers 5 like the alone query, while the mutant adds the rows of the ancestor's descendants (5 each)."""
+        owner_run(self.fx, "CREATE TABLE sxc_demo.sound_saved_status AS SELECT order_id, status FROM sxc_demo.sales_order "
+                           "WHERE status = 'FIRM'",
+                  "UPDATE sxc_demo.sales_order SET status = 'FORECAST' WHERE status = 'FIRM'",
+                  "INSERT INTO sxc_demo.sales_order SELECT 'SX-' || part_id, part_id, 'FIRM', 5, 5, DATE '2026-05-15' "
+                  "FROM sxc_demo.part")
+        try:
+            cfg = copy.deepcopy(self.cfg)
+            cfg.verify.mutation_operators = ["closure_join_swap"]
+            res = self.verify(cfg, self.out("join_swap_one_value"), ["v4"])
+        finally:
+            owner_run(self.fx, "DELETE FROM sxc_demo.sales_order WHERE order_id LIKE 'SX-%'",
+                      "UPDATE sxc_demo.sales_order o SET status = s.status FROM sxc_demo.sound_saved_status s "
+                      "WHERE s.order_id = o.order_id", "DROP TABLE sxc_demo.sound_saved_status")
+        cid = "v4:closure_join_swap:firm_open"
+        self.assertNotIn(f"{cid} equivalent on this data", res.not_proven)
+        by_id = {c.id: c for c in res.checks}
+        self.assertIn(cid, by_id, "the mutant is served and judged")
+        c = by_id[cid]
+        self.assertEqual((c.status, c.detail.get("killed_by")),
+                         ("pass", "v3:pair:has_component_closure.qty+m_firm_open.value"), c.detail)
+        self.assertEqual(c.detail["witness"], self.fx.data["expected"]["closure_pairs"], "both ends of every pair join a row")
 
     def test_pair_tests_above_the_cap_compare_a_sample(self):
         cfg = copy.deepcopy(self.cfg)

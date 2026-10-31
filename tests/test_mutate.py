@@ -3,6 +3,9 @@
 Unit tests run cube_gen.generate against a catalog-only fake connection, so the model has exactly the shape
 of the real one (the integration test proves that), and check that every operator changes one element of
 a copy, that only a failing suite item kills a mutant and that the closure operators follow build's closure check.
+The closure_join_swap witness also runs on small SQLite fixtures (a stand-in for PostgreSQL that has every construct
+the statement uses): one value at every part of a fork, of two parents or of a diamond, a 0 at one end and no row at
+the other, and a lone pair with one value each count, because the two ends join different measure rows.
 Integration tests load the demo into PostgreSQL 17, compute witnesses against the independent demo reference
 numbers and, with the Cube adapter installed, serve every observable mutant to a small gold suite.
 """
@@ -13,6 +16,7 @@ import dataclasses
 import os
 import re
 import shutil
+import sqlite3
 import tempfile
 import types
 import unittest
@@ -191,7 +195,27 @@ class OperatorTest(unittest.TestCase):
         self.assertEqual(mu[("closure_end_swap", "has_component")].witness_sql,
                          f'SELECT count(*) FROM {closure_table} p LEFT JOIN "sxc_demo"."part" a ON a."part_id" = p.ancestor '
                          'LEFT JOIN "sxc_demo"."part" d ON d."part_id" = p.descendant WHERE a."part_id" IS DISTINCT FROM d."part_id"')
-        self.assertIn("coalesce(a.v, 0) <> coalesce(d.v, 0)", mu[("closure_join_swap", "firm_open")].witness_sql)
+        self.assertEqual(mu[("closure_join_swap", "firm_open")].witness_sql,
+                         f'WITH v AS (SELECT t."part_id" AS k, sum(t."qty_open") AS v FROM "sxc_demo"."sales_order" t '
+                         f'WHERE {cube_gen.where_sql(self.cfg.measures["firm_open"])} GROUP BY t."part_id") '
+                         f'SELECT count(*) FROM {closure_table} p LEFT JOIN v a ON a.k = p.ancestor '
+                         'LEFT JOIN v d ON d.k = p.descendant WHERE a.k IS DISTINCT FROM d.k')
+
+    def test_join_swap_witness_compares_the_joined_rows_whatever_the_aggregate(self):
+        """Equal values at the two ends still change what Cube answers (a grouped sum counts each joined measure row
+        once, the measure's key is a public dimension, V1 tells NULL from 0), so the witness compares the measure rows
+        the ends join, never their values."""
+        for agg in ("sum", "count", "min", "max"):
+            with self.subTest(agg=agg):
+                cfg = config.load(pgfixture.DEMO_CONFIG)
+                cfg.measures["firm_open"].agg = agg
+                cfg.verify.mutation_operators = ["closure_join_swap"]
+                model, _notes = cube_gen.generate(cfg, CatalogConn())
+                (mu,) = mutate.operators(cfg, model)
+                self.assertIn(f'{agg}(t."qty_open") AS v', mu.witness_sql)
+                self.assertTrue(mu.witness_sql.endswith(" WHERE a.k IS DISTINCT FROM d.k"), mu.witness_sql)
+                self.assertNotRegex(mu.witness_sql.split(" SELECT count(*) ", 1)[1], r"\b[ad]\.v\b",
+                                    "the values at the two ends decide nothing")
 
     def test_agg_to_max_witness_aggregates_the_cube_rows_per_key_overall_and_in_pairs(self):
         mu = self.mutants()
@@ -285,6 +309,52 @@ class OperatorTest(unittest.TestCase):
         self.assertEqual(sqls[1], f"SET LOCAL statement_timeout = {self.cfg.source.statement_timeout_ms}")
         self.assertEqual(conn.statements[2], (mu.witness_sql, mu.witness_params))
         self.assertEqual(sqls[3], "ROLLBACK")
+
+
+@unittest.skipUnless(sqlite3.sqlite_version_info >= (3, 39, 0), "SQLite before 3.39 has no IS DISTINCT FROM")
+class JoinSwapWitnessDataTest(unittest.TestCase):
+    """The demo's closure_join_swap witness on small data. SQLite stands in for PostgreSQL: the statement needs only a
+    CTE, LEFT JOIN, IN, GROUP BY and IS DISTINCT FROM. The model joins m_firm_open on the ancestor of each closure
+    pair, the mutant on the descendant. Cube aggregates the measure over the distinct keys of m_firm_open in each group,
+    so with 5 at every part of the fork A -> B, A -> C the sum grouped by A is 5 for the model and 10 for the mutant,
+    although each pair holds the same value at both ends."""
+
+    # case -> (closure pairs, orders as (part, status, qty_open), pairs whose ends join different m_firm_open rows)
+    CASES = {
+        "one value on a fork": ([("A", "B"), ("A", "C")], [("A", "FIRM", 5), ("B", "FIRM", 5), ("C", "FIRM", 5)], 2),
+        "one value on two parents": ([("A", "B"), ("C", "B")],
+                                     [("A", "FIRM", 5), ("B", "FIRM", 5), ("C", "FIRM", 5)], 2),
+        "one value on a diamond": ([("A", "B"), ("A", "C"), ("B", "D"), ("C", "D"), ("A", "D")],
+                                   [(p, "FIRM", 5) for p in "ABCD"], 5),
+        "0 at one end, no FIRM row at the other": ([("A", "B")], [("A", "FIRM", 0), ("B", "FORECAST", 7)], 1),
+        "one value on a lone pair": ([("A", "B")], [("A", "FIRM", 5), ("B", "FIRM", 5)], 1),
+        "different values": ([("A", "B")], [("A", "FIRM", 5), ("B", "FIRM", 6)], 1),
+        "no FIRM row at either end": ([("A", "B")], [("A", "FORECAST", 3), ("X", "FIRM", 9), (None, "FIRM", 4)], 0),
+    }
+
+    def setUp(self):
+        cfg, model = demo_model()
+        cfg.verify.mutation_operators = ["closure_join_swap"]
+        (self.mutant,) = mutate.operators(cfg, model)
+
+    def witness(self, pairs: list, orders: list) -> int:
+        conn = sqlite3.connect(":memory:")
+        self.addCleanup(conn.close)
+        conn.execute("ATTACH DATABASE ':memory:' AS sxc_demo")
+        conn.execute("ATTACH DATABASE ':memory:' AS sxc_out")
+        cols = ", ".join(f"{c} {t}" for c, t in DEMO_COLUMNS["sxc_demo.sales_order"])
+        conn.execute(f"CREATE TABLE sxc_demo.sales_order ({cols})")
+        conn.execute("CREATE TABLE sxc_out.has_component_closure (ancestor text, descendant text, min_depth integer, "
+                     "max_depth integer, path_count integer, qty numeric)")
+        conn.executemany("INSERT INTO sxc_out.has_component_closure VALUES (?, ?, 1, 1, 1, 1)", pairs)
+        conn.executemany("INSERT INTO sxc_demo.sales_order VALUES (?, ?, ?, ?, ?, '2026-05-15')",
+                         [(f"o{i}", part, status, qty, qty) for i, (part, status, qty) in enumerate(orders)])
+        return conn.execute(self.mutant.witness_sql).fetchone()[0]
+
+    def test_counts_the_pairs_whose_ends_join_different_measure_rows(self):
+        for name, (pairs, orders, expected) in self.CASES.items():
+            with self.subTest(case=name):
+                self.assertEqual(self.witness(pairs, orders), expected)
 
 
 CLOSURE_CHECKS = ["v4:closure_depth_shift:has_component", "v4:closure_path_count_one:has_component",

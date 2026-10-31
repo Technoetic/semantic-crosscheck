@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- V4 `closure_join_swap` no longer calls an observable mutant equivalent. Its witness compared the measure values at
+  the two ends of each closure pair (a missing value counting as 0 for `sum`/`count`), but Cube 1.8.3 aggregates a
+  measure reached through the closure's `many_to_one` join over the distinct primary keys of the measure cube in
+  each group, so equal values on a fork or diamond still change grouped answers, the measure's `key` is a public
+  dimension, and V1 tells NULL from 0 unless `zero_if_null`. Such a mutant was skipped as "equivalent on this data"
+  with no check, hiding a survivor from V4. The witness now counts the pairs whose two ends join different measure
+  rows, which is 0 only when every query answers the same; such mutants are served, and one that survives fails V4.
+
 ## [0.13.0] - 2026-10-29
 
 Release notes: [docs/releases/v0.13.0.md](docs/releases/v0.13.0.md).

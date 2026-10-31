@@ -2,13 +2,18 @@
 
 Why: CubeClient.load read every answer without an "error" member as rows through r.get("data", []), so {},
 {"results": []}, {"data": {}} and {"data": ""} became zero rows, and compare.cube_rows read a missing member as NULL
-(0 under zero_if_null). Against empty gold rows V1 and a V3 pair test then passed vacuously, against non-empty ones
-a V4 mutant counted as killed, and the other shapes ({"data": null}, a body that is not an object, a row that is not
-an object) stopped the whole verify stage with an unexpected exception. Every case here fails without the fix.
-No database, Cube or network: the real client runs with its HTTP call replaced by fixed JSON answers.
+(0 under zero_if_null). V1 and V2 then passed vacuously against empty gold rows, a V3 pair test of at most
+PAIR_KEY_CAP keys passed over no keys whatever the source data held, a V4 mutant counted as killed against non-empty
+gold rows, and the other shapes ({"data": null}, a body that is not an object, a row that is not an object) stopped
+the whole verify stage with an unexpected exception. A body that is not JSON was an error named by its decode
+exception, whose next action pointed at the gold SQL. Every malformed case here fails without the fix; the valid
+answers, the existing errors and the /meta decode error are pinned. No database, Cube or network: the real client
+runs with its HTTP call replaced by fixed JSON answers, or with its opener replaced by fixed HTTP 200 bodies.
 """
 
 import contextlib
+import io
+import json
 import tempfile
 import time
 import unittest
@@ -23,6 +28,8 @@ from test_compare_unit import FakeConn, demo_cfg, demo_model, gold_of
 MALFORMED = [{}, {"data": None}, {"results": []}, {"data": {}}, {"data": ""}, [], {"data": "rows"}, None, "text",
              {"data": [1]}, {"data": [{"m.value": "1"}, "row"]}]
 INVALID = {"error": "CubeResponseError", "cube": "invalid_response"}
+# HTTP 200 bodies that are not JSON: a page, nothing, a byte order mark alone, bytes that do not decode
+NOT_JSON = [b"<html>ok</html>", b"", b"\xff\xfe", b'{"data": [\xff]}']
 
 
 class Answers(CubeClient):
@@ -47,6 +54,24 @@ class Returns:
         return self.data
 
 
+class Body:
+    """A stand-in for CubeClient._opener: every request gets an HTTP 200 answer with `body`, so the real _req, its
+    json.loads included, runs without a network. `paths` records the paths asked for."""
+
+    def __init__(self, body: bytes):
+        self.body, self.paths = body, []
+
+    def open(self, req, timeout=None):
+        self.paths.append(req.selector)
+        return io.BytesIO(self.body)
+
+
+def served(body: bytes) -> CubeClient:
+    client = CubeClient("http://127.0.0.1:9", "s" * 64)
+    client._opener = Body(body)
+    return client
+
+
 def category(e: BaseException):
     return compare.error_detail(e).get("cube")
 
@@ -58,6 +83,21 @@ class LoadEnvelopeTest(unittest.TestCase):
                 with self.assertRaises(CubeError) as caught:
                     Answers(answer).load({"measures": ["m.value"]})
                 self.assertEqual(compare.error_detail(caught.exception), INVALID)
+
+    def test_a_load_body_that_is_not_json_is_an_invalid_response_error(self):
+        for body in NOT_JSON:
+            with self.subTest(body=body):
+                client = served(body)
+                try:
+                    with self.assertRaises(CubeError) as caught:
+                        client.load({"measures": ["m.value"]})
+                except ValueError as e:   # without the fix: JSONDecodeError or UnicodeDecodeError, no cube category
+                    self.fail(f"escaped as {type(e).__name__}")
+                self.assertEqual(compare.error_detail(caught.exception), INVALID)
+                self.assertEqual(client._opener.paths, ["/cubejs-api/v1/load"])
+                # /meta keeps the decode error, which the cube stage reports as the reason of cube:meta
+                with self.assertRaises((json.JSONDecodeError, UnicodeDecodeError)):
+                    client.meta()
 
     def test_valid_answers_and_the_existing_errors_are_unchanged(self):
         rows = [{"m.key": "a", "m.value": None}]
@@ -122,6 +162,8 @@ class CubeRowsTest(unittest.TestCase):
 class VerdictTest(unittest.TestCase):
     """What V1, V4 and a V3 pair test make of a malformed answer."""
 
+    maxDiff = None
+
     def setUp(self):
         self.cfg = demo_cfg()
         self.gold = gold_of(self.cfg, "q04_depth_histogram")
@@ -183,6 +225,24 @@ class VerdictTest(unittest.TestCase):
                 except Exception as e:  # noqa: BLE001 - without the fix some answers escape as a stage crash
                     st, detail = "escaped", {"error": type(e).__name__}
                 self.assertEqual((st, detail), ("error", INVALID))
+
+    def test_a_load_body_that_is_not_json_is_a_v1_and_v3_error_with_the_adapter_action(self):
+        model = demo_model(self.cfg)
+        for body in NOT_JSON:
+            with self.subTest(body=body):
+                conn = FakeConn(cols=["max_depth", "pairs"], data=[(1, 3)])
+                r = compare.run_binding(conn, served(body), self.cfg, self.gold, {})
+                res = stage_verify.Result("verify")
+                res.add("v1:q04_depth_histogram", compare.status(r), "gold[3] q04_depth_histogram", **stage_verify._detail(r))
+                action = stage_verify._next_action(res)
+                test = next(t for t in shape_q.tests(self.cfg, model) if t["id"] == "pair:m_firm_open.value+m_on_hand.value")
+                v3 = shape_q.run_test(FakeConn(scalar=5), served(body), self.cfg, model, test,
+                                      budget=self.cfg.verify.pair_key_budget)
+                self.assertEqual({"v1": (compare.status(r), r.get("side"), r.get("error"), r.get("cube")),
+                                  "adapter_action": "doctor --require cube" in action and "gold SQL" not in action,
+                                  "v3": v3},
+                                 {"v1": ("error", "cube", "CubeResponseError", "invalid_response"),
+                                  "adapter_action": True, "v3": ("error", INVALID)})
 
     def test_next_action_names_the_adapter_not_the_gold_sql(self):
         res = stage_verify.Result("verify")

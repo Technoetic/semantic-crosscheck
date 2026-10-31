@@ -6,7 +6,9 @@
 - Accepts a /load answer only in Cube's load envelope: a JSON object whose "data" is a list of JSON objects (the
   rows). Anything else (not an object, no "data", "data" of another type, a row that is not an object) raises
   CubeResponseError instead of becoming an empty answer: zero rows read from a malformed response would pass V1 and
-  V3 vacuously against empty gold rows and count as a V4 kill against non-empty ones.
+  V2 vacuously against empty gold rows, pass a V3 pair test of at most PAIR_KEY_CAP keys over no keys whatever the
+  source data holds, and count as a V4 kill against non-empty gold rows. A body that is not JSON raises it too, so
+  every malformed answer gets one category; meta() keeps the decode error, which the cube stage reports by type.
 - Talks to the loopback adapter directly. urllib's default opener applies HTTP_PROXY and the system proxy settings,
   and does not bypass 127.0.0.1 unless NO_PROXY lists it, so the JWT and the query values (bound filter values from
   the database) would go to the proxy; every request therefore uses an opener without proxies.
@@ -76,7 +78,10 @@ class CubeClient:
         q.setdefault("limit", DEFAULT_LIMIT)
         deadline = time.time() + self.timeout_s
         while True:
-            r = self._req("/cubejs-api/v1/load", {"query": q})
+            try:
+                r = self._req("/cubejs-api/v1/load", {"query": q})
+            except (json.JSONDecodeError, UnicodeDecodeError) as e:   # an HTTP 200 whose body is not JSON
+                raise CubeResponseError("the load response is not JSON") from e
             if not isinstance(r, dict):
                 raise CubeResponseError("the load response is not a JSON object")
             if r.get("error") == "Continue wait":

@@ -517,11 +517,13 @@ in `build` is `not_run`. Detail keys: `gold_rows`, `cube_rows`, `matched_rows`, 
 `rows_compared` and the positions of failed bindings).
 
 **Malformed Cube answers.** `CubeClient.load` accepts an answer only in Cube's load envelope, a JSON object whose
-`data` is a list of row objects, and raises `CubeResponseError` otherwise. `compare.cube_rows` requires every row
-of a gold query to hold every mapped member (Cube answers each requested dimension and measure, NULL included) and
-raises `MissingMember` otherwise. Both are an `error` with `cube` = `invalid_response`, never zero rows, a NULL
-or, under `zero_if_null`, a 0: read as no rows, such an answer would pass V1 and a V3 pair test vacuously against
-empty gold rows and kill a V4 mutant against non-empty ones. A V3 test whose answer is outside the envelope is an
+`data` is a list of row objects, and raises `CubeResponseError` otherwise, for a body that is not JSON as well
+(`meta()` leaves such a body to its decode error, which `cube:meta` reports as its `reason`). `compare.cube_rows`
+requires every row of a gold query to hold every mapped member (Cube answers each requested dimension and measure,
+NULL included) and raises `MissingMember` otherwise. Both are an `error` with `cube` = `invalid_response`, never
+zero rows, a NULL or, under `zero_if_null`, a 0: read as no rows, such an answer would pass V1 and V2 vacuously
+against empty gold rows, pass a V3 pair test of at most `PAIR_KEY_CAP` keys over no keys whatever the source data
+holds, and kill a V4 mutant against non-empty gold rows. A V3 test whose answer is outside the envelope is an
 `error` as well; the member check covers the rows of gold queries only (V1, V2, their V4 replays and `expect`).
 Both sides empty still passes when Cube really answered an empty `data` list.
 

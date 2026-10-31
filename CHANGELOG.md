@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- `reason --explain-inconsistency` reports `uniqueness` (`unique`, `not_unique` or `not_proven`) for a completed subset-minimal explanation. One extra same-HermiT check per retained group removes only that group from the full generated set, within the existing call cap and deadline, using the intersection-of-justifications criterion of "Union and Intersection of all Justifications" (arXiv 2109.11216). `unique` holds only among explanations over the generated axiom groups; caps, deadlines, worker errors or repeated axioms leave it `not_proven` and keep the verified minimality.
+
 ### Changed
 
 - A repeated value in `ontology.no_children` is now a configuration error. A repeat generated the same axiom twice and would imitate a second explanation.

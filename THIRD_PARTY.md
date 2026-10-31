@@ -25,7 +25,10 @@ The TLP partition-checking methodology is informed by
 [SQLancer](https://github.com/sqlancer/sqlancer), whose project is MIT-licensed. No SQLancer source is
 copied or bundled, and SQLancer is not a runtime dependency. The independent SHACL corpus uses
 [sheval](https://arxiv.org/abs/2609.05944v2) as an architectural reference only. Its repository's code
-licence was not verified; no sheval source is adopted, copied or bundled.
+licence was not verified; no sheval source is adopted, copied or bundled. The OWL explanation uniqueness
+check reimplements the intersection-of-justifications criterion of
+[Union and Intersection of all Justifications](https://arxiv.org/abs/2109.11216); no code from that work is used
+or bundled.
 
 Licence names below were read from the installed packages' metadata (Python) and from the licence fields
 recorded in `skills/semantic-crosscheck/adapters/cube/package-lock.json` (npm), unless noted otherwise.

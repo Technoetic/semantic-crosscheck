@@ -157,7 +157,7 @@ class ExplainTest(unittest.TestCase):
                          ("pass", "subset_minimal", True))
         self.assertEqual({group["id"] for group in got["core"]}, required)
         self.assertEqual(got["minimality_checks_completed"], 2)
-        self.assertEqual(seen[-2:], [frozenset(required - {key}) for key in ids[-2:]])
+        self.assertEqual(seen[1 + len(ids):3 + len(ids)], [frozenset(required - {key}) for key in ids[-2:]])
         self.assertNotIn(SECRET, json.dumps(got))
         self.assertTrue(all(set(group) == {"id", "kind", "config_ref"} for group in got["core"]))
 
@@ -167,6 +167,100 @@ class ExplainTest(unittest.TestCase):
         got = self.explain(lambda *_a: next(calls))
         self.assertEqual((got["status"], got["minimality"], got["reason"]),
                          ("not_run", "not_proven", "verification_disagreement"))
+
+    def test_unique_requires_each_retained_group_to_be_needed_by_the_full_set(self):
+        ids = [group.id for group in owl.axiom_groups(self.cfg, self.graph)]
+        required = set(ids[-2:])
+        seen = []
+        def check(_cfg, _graph, _java, active, _deadline):
+            seen.append(frozenset(active))
+            return not required.issubset(active)
+        got = self.explain(check)
+        self.assertEqual((got["status"], got["minimality"], got["uniqueness"], got["uniqueness_reason"]),
+                         ("pass", "subset_minimal", "unique", "completed"))
+        self.assertEqual((got["uniqueness_checks_completed"], got["checks_completed"]), (2, 1 + len(ids) + 2 + 2))
+        # Removal from the full generated set, not from the core (the minimality pass already did that).
+        self.assertEqual(seen[-2:], [frozenset(ids) - {key} for key in ids[-2:]])
+
+    def test_another_justification_without_a_retained_group_is_not_unique(self):
+        ids = [group.id for group in owl.axiom_groups(self.cfg, self.graph)]
+        first, second = {ids[-2], ids[-1]}, {ids[-3], ids[-1]}
+        def check(_cfg, _graph, _java, active, _deadline):
+            return not (first <= active or second <= active)
+        got = self.explain(check)
+        self.assertEqual((got["status"], got["minimality"]), ("pass", "subset_minimal"))
+        self.assertEqual({group["id"] for group in got["core"]}, first)
+        self.assertEqual((got["uniqueness"], got["uniqueness_reason"], got["uniqueness_checks_completed"]),
+                         ("not_unique", "completed", 1))
+        result = Result("reason")
+        with mock.patch.object(owl_explain, "_check", side_effect=check):
+            owl_explain.run(self.cfg, self.graph, "java", options(), result)
+        self.assertEqual(result.checks[-1].status, "pass")
+        self.assertTrue(any("another subset-minimal explanation" in text for text in result.not_proven))
+
+    def test_unfinished_uniqueness_is_not_proven_and_keeps_the_verified_core(self):
+        ids = [group.id for group in owl.axiom_groups(self.cfg, self.graph)]
+        required = set(ids[-2:])
+        minimal = 1 + len(ids) + len(required)
+        for spare in (0, 1):  # the cap stops before the first or before the last uniqueness check
+            with self.subTest(spare=spare):
+                got = self.explain(lambda *a: not required.issubset(a[3]), max_checks=minimal + spare)
+                self.assertEqual((got["status"], got["reason"], got["minimality"]),
+                                 ("pass", "completed", "subset_minimal"))
+                self.assertEqual((got["uniqueness"], got["uniqueness_reason"], got["uniqueness_checks_completed"]),
+                                 ("not_proven", "check_limit", spare))
+                self.assertEqual(got["checks_completed"], minimal + spare)
+        for exc, reason in ((RuntimeError(SECRET + " C:/private/file"), "reasoner_error"),
+                            (TimeoutError(SECRET), "timeout")):
+            with self.subTest(reason=reason):
+                calls = []
+                def check(_cfg, _graph, _java, active, _deadline):
+                    calls.append(active)
+                    if len(calls) > minimal:
+                        raise exc
+                    return not required.issubset(active)
+                got = self.explain(check)
+                self.assertEqual((got["status"], got["minimality"]), ("pass", "subset_minimal"))
+                self.assertEqual((got["uniqueness"], got["uniqueness_reason"]), ("not_proven", reason))
+                self.assertNotIn(SECRET, json.dumps(got))
+                self.assertNotIn("C:/private", json.dumps(got))
+                result = Result("reason")
+                with mock.patch.object(owl_explain, "_check", side_effect=lambda *a: not required.issubset(a[3])):
+                    owl_explain.run(self.cfg, self.graph, "java", options(explain_max_checks=minimal), result)
+                self.assertTrue(any("did not establish uniqueness" in text for text in result.not_proven))
+
+    def test_incomplete_explanation_never_attempts_uniqueness(self):
+        checker = mock.Mock(return_value=False)
+        got = self.explain(checker, max_checks=1)
+        self.assertEqual(checker.call_count, 1)
+        self.assertEqual((got["uniqueness"], got["uniqueness_reason"], got["uniqueness_checks_completed"]),
+                         ("not_proven", "minimality_not_proven", 0))
+        ids = [group.id for group in owl.axiom_groups(self.cfg, self.graph)]
+        calls = iter([False] + [True] * len(ids) + [False])
+        got = self.explain(lambda *_a: next(calls))
+        self.assertEqual((got["reason"], got["uniqueness"], got["uniqueness_reason"]),
+                         ("verification_disagreement", "not_proven", "minimality_not_proven"))
+
+    def test_repeated_axioms_leave_uniqueness_not_proven(self):
+        # Two groups generating one identical axiom survive each other's single removal (a false not_unique).
+        for label in ("no_children", "edge"):
+            with self.subTest(case=label):
+                self.cfg, self.graph = cfg_graph()
+                if label == "no_children":
+                    self.cfg.ontology.no_children = ["raw", "raw"]
+                else:
+                    self.graph.edges = self.graph.edges * 2
+                groups = owl.axiom_groups(self.cfg, self.graph)
+                restriction = {group.id for group in groups if group.kind == "no_children"}
+                typed = {group.id for group in groups
+                         if group.kind == "node_type" and group.config_ref == "ontology.class_column"}
+                edges = {group.id for group in groups if group.kind == "edge_assertion"}
+                def check(_cfg, _graph, _java, active, _deadline):
+                    return not (restriction & active and typed <= active and edges & active)
+                got = self.explain(check)
+                self.assertEqual((got["status"], got["minimality"]), ("pass", "subset_minimal"))
+                self.assertEqual((got["uniqueness"], got["uniqueness_reason"], got["uniqueness_checks_completed"]),
+                                 ("not_proven", "duplicate_axiom_groups", 0))
 
     def test_configuration_rejects_a_repeated_no_children_value(self):
         raw = tomllib.loads(pgfixture.DEMO_CONFIG.read_text(encoding="utf-8"))
@@ -395,10 +489,19 @@ class RealHermitExplainTest(unittest.TestCase):
                 cfg, graph = cfg_graph(disjoint)
                 original = owl.reason(cfg, graph, JAVA)
                 self.assertFalse(original.consistent)
-                got = owl_explain.explain(cfg, graph, JAVA, timeout_ms=60000)
+                got = owl_explain.explain(cfg, graph, JAVA, timeout_ms=120000)
                 self.assertEqual((got["status"], got["minimality"]), ("pass", "subset_minimal"), got)
+                self.assertEqual((got["uniqueness"], got["uniqueness_reason"]), ("unique", "completed"), got)
                 core = {group["id"] for group in got["core"]}
+                self.assertEqual(got["uniqueness_checks_completed"], len(core))
                 self.assertIn(required_kind, {group["kind"] for group in got["core"]})
+                every = {group.id for group in owl.axiom_groups(cfg, graph)}
+                for removed in core:  # independent of the worker: every retained group is needed by the full set
+                    model = owl.build(cfg, graph, active_axioms=every - {removed})
+                    try:
+                        self.assertTrue(owl.hermit(model.world, JAVA)[0])
+                    finally:
+                        model.world.close()
                 model = owl.build(cfg, graph, active_axioms=core)
                 try:
                     self.assertFalse(owl.hermit(model.world, JAVA)[0])
@@ -411,6 +514,25 @@ class RealHermitExplainTest(unittest.TestCase):
                     finally:
                         model.world.close()
                 self.assertNotIn(SECRET, json.dumps(got))
+
+    def test_real_second_violation_is_not_unique(self):
+        cfg, _graph = cfg_graph()
+        graph = owl.Graph({f"{SECRET}-1": {"raw"}, f"{SECRET}-2": {"raw"}, "leaf": set()},
+                          [(f"{SECRET}-1", "leaf"), (f"{SECRET}-2", "leaf")])
+        self.assertFalse(owl.reason(cfg, graph, JAVA).consistent)
+        got = owl_explain.explain(cfg, graph, JAVA, timeout_ms=120000)
+        self.assertEqual((got["status"], got["minimality"], got["uniqueness"]),
+                         ("pass", "subset_minimal", "not_unique"), got)
+        self.assertNotIn(SECRET, json.dumps(got))
+        every = {group.id for group in owl.axiom_groups(cfg, graph)}
+        still_inconsistent = []
+        for removed in {group["id"] for group in got["core"]}:
+            model = owl.build(cfg, graph, active_axioms=every - {removed})
+            try:
+                still_inconsistent.append(not owl.hermit(model.world, JAVA)[0])
+            finally:
+                model.world.close()
+        self.assertTrue(any(still_inconsistent))
 
     def test_actual_worker_missing_java_and_hard_timeout(self):
         cfg, graph = cfg_graph()

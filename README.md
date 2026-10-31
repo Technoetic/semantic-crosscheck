@@ -689,7 +689,7 @@ Cube의 기본 오류 로그에는 오류 클래스·코드·대략적인 범주
 - OWL은 열린 세계 의미론입니다. SQL과 의미가 맞는 지원 정의만 비교하며 범용 RDF/OWL 가져오기·동기화 서비스는 제공하지 않습니다.
 - gold 질의당 순회 파라미터는 하나입니다. 여러 파라미터는 `param_sets`를 사용합니다. `timeDimensions`는 `granularity` 대신 `dateRange`, `closure_join`은 정확히 하나의 계층이 필요합니다.
 - Cube 응답의 상한은 **50,000행**입니다. 상한에 도달하면 부분 비교로 통과시키지 않고 오류로 처리합니다.
-- Cube 응답이 load 형식(`data`가 행 객체의 목록인 JSON 객체)이 아니거나(`error` 멤버가 있는 응답은 질의 오류) gold 질의(V1·V2)의 Cube 행에 요청한 멤버가 빠져 있으면 빈 결과·NULL·0으로 읽지 않고 `error`로 처리합니다. V1·V3 검사는 `cube=invalid_response`를 담고 다음 조치가 어댑터 점검을 가리키며, V2 층 검사는 그런 바인딩을 오류 유형별(`CubeResponseError`·`MissingMember`)로 셉니다. V3는 응답 형식만 확인하고 행 멤버는 확인하지 않습니다. V4는 그 시험 항목을 한 번 재시도하고, 재시도에서도 그런 응답이면 변형을 `suite_error`(판정 보류)로 남기며 검출(kill)로 세지 않습니다.
+- Cube 응답이 load 형식(`data`가 행 객체의 목록인 JSON 객체)이 아니거나(`error` 멤버가 있는 응답은 `CubeResponseError`가 아님) gold 질의(V1·V2)의 Cube 행에 요청한 멤버가 빠져 있으면 빈 결과·NULL·0으로 읽지 않고 `error`로 처리합니다. V1·V3 검사는 `cube=invalid_response`를 담고 다음 조치가 어댑터 점검을 가리키며, V2 층 검사는 그런 바인딩을 오류 유형별(`CubeResponseError`·`MissingMember`)로 셉니다. V3는 응답 형식만 확인하고 행 멤버는 확인하지 않습니다. V4는 그런 응답을 받은 시험 항목을 한 번 재시도하고, 재시도에서도 그런 응답이면 변형을 `suite_error`(판정 보류)로 남기며 검출(kill)로 세지 않습니다.
 - 식별자는 소문자 SQL 이름만 지원합니다. 인용한 혼합 대소문자 이름은 지원하지 않습니다.
 - Cube 1.8.3 고정, PostgreSQL 17 이전 버전·클라이언트 인증서 미지원입니다.
 - V4는 변이마다 Cube 프로세스를 시작합니다. SHACL·OWL 입력은 `verify.shacl_max_rows`·`verify.owl_max_individuals`로 제한하며 초과 시 not_run입니다.

@@ -25,6 +25,14 @@
   with no check, hiding a survivor from V4. The witness now counts the pairs whose two ends join different measure
   rows, which is 0 only when every query answers the same; such mutants are served, and one that survives fails V4.
 
+### Added
+
+- `reason --explain-inconsistency` reports `uniqueness` (`unique`, `not_unique` or `not_proven`) for a completed subset-minimal explanation. One extra same-HermiT check per retained group removes only that group from the full generated set, within the existing call cap and deadline, using the intersection-of-justifications criterion of "Union and Intersection of all Justifications" (arXiv 2109.11216). `unique` holds only among explanations over the generated axiom groups; caps, deadlines, worker errors or repeated axioms leave it `not_proven` and keep the verified minimality.
+
+### Changed
+
+- A repeated value in `ontology.no_children` is now a configuration error. A repeat generated the same axiom twice and would imitate a second explanation.
+
 ## [0.13.0] - 2026-10-29
 
 Release notes: [docs/releases/v0.13.0.md](docs/releases/v0.13.0.md).

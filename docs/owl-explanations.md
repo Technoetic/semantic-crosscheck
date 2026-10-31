@@ -26,6 +26,24 @@ retained group from the exact final core. Only successful completion of all thos
 `status: pass`, `sufficient: true` and `minimality: subset_minimal`. This pass describes the diagnostic work;
 the source ontology still fails `owl:consistency`.
 
+A `subset_minimal` result then decides `uniqueness`. A group belongs to every subset-minimal explanation exactly
+when removing only that group from the complete generated set makes HermiT report consistency, and the reported
+core is the only explanation exactly when this holds for each retained group ([Union and Intersection of all
+Justifications](https://arxiv.org/abs/2109.11216), ESWC 2022, applied here to generated axiom groups over fixed
+declarations). One further check per retained group therefore gives `uniqueness: unique` when every removal is
+consistent and `uniqueness: not_unique` at the first removal that stays inconsistent, because another explanation
+without that group exists; the others are not enumerated. Each of these checks covers the complete group set, so it
+costs about as much as the initial check. They share the call cap and deadline: a cap, deadline or worker failure
+leaves `uniqueness: not_proven` with `uniqueness_reason` `check_limit`, `timeout` or `reasoner_error`, and keeps the
+verified `status: pass` and `minimality: subset_minimal`. `uniqueness_checks_completed` counts finished checks. An
+incomplete explanation never attempts uniqueness (`uniqueness_reason: minimality_not_proven`). With the default 64
+calls, a three-group core finishes the explanation and these checks only when the snapshot has at most 57
+removable groups (1 + 57 + 3 + 3 calls), and the default deadline often ends the search sooner; raise the limits
+for real data. The criterion assumes that every group generates a distinct axiom. Configurations reject a repeated
+`ontology.no_children` value. A repeat that still reaches the diagnostic, such as a caller-supplied graph that
+repeats an edge (database snapshots read distinct edges), leaves `uniqueness: not_proven` with
+`duplicate_axiom_groups` and no extra call: the surviving copy would otherwise imitate a second explanation.
+
 A group cap, call cap, timeout or worker failure produces `status: not_run` and `minimality: not_proven`.
 `sufficient: true` then means the reported partial core was actually checked and found inconsistent. If the
 initial complete-set check did not finish or returned consistent, no sufficient core is reported. The original
@@ -53,9 +71,11 @@ responses are fixed consistency tokens. Temporary HermiT files are removed after
 Job Object contains the worker and its descendants before the input payload is sent; containment failure aborts
 the check. POSIX workers run in their own process group. Timeouts terminate the whole group/job.
 
-This is the same reasoner as the baseline check. Subset minimality concerns the removable groups and fixed
-background only. It is not independent certification, a globally minimum explanation, a unique explanation or
-an enumeration of every cause. No additional Java dependency or external implementation is bundled.
+This is the same reasoner as the baseline check. Subset minimality and uniqueness concern the removable groups
+and fixed background only: `unique` means that no other set of these generated groups is a subset-minimal
+inconsistent set for this HermiT. It is not independent certification, a globally minimum explanation, a
+statement about axioms outside the generated groups or an enumeration of every cause. No additional Java
+dependency or external implementation is bundled.
 
 The source-independent synthetic runner exercises actual HermiT without a database. Set `SXC_JAVA` when Java is
 not on `PATH`, and run either case with enough time for repeated Java startup:
@@ -67,4 +87,6 @@ python examples/owl-explanations/run.py --case disjoint --timeout-ms 60000
 
 Both fixtures intentionally fail consistency. The runner exits successfully only when it obtains a verified
 subset-minimal explanation and prints the bounded, key-free diagnostic JSON. Tests also directly recheck the
-returned core and every retained deletion with actual HermiT.
+returned core and every retained deletion with actual HermiT. Each fixture has a single explanation, so a run
+that finishes reports `uniqueness: unique`; tests confirm with direct HermiT calls that removing each retained
+group from the complete set restores consistency, and that two independent violations give `not_unique`.

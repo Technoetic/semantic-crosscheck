@@ -198,7 +198,7 @@ Optional. When present, `reason` builds an OWL ontology for one hierarchy (and `
 | `hierarchy` | string | required | Hierarchy modelled in OWL. |
 | `class_column` | string | `""` | Column of the node entity holding the class value. V3 `additive` tests group the sum/count measures by it on every cube Cube joins through many-to-one or one-to-one steps (the node cube and the closure's ancestor and descendant copies); without it there are none. |
 | `classes` | table of strings | `{}` | Column value to OWL class name, for example `{ raw = "RawMaterial" }`. Names match `^[A-Za-z_][A-Za-z0-9_]*$` and are distinct; the classes are pairwise disjoint subclasses of the node class. |
-| `no_children` | list of strings | `[]` | Class values (keys of `classes`) whose items must not have children; each becomes the axiom `C SubClassOf not (<h> some Thing)`. |
+| `no_children` | list of strings | `[]` | Class values (keys of `classes`) whose items must not have children; each becomes the axiom `C SubClassOf not (<h> some Thing)`. A value may appear only once. |
 | `defined` | list of tables | `[]` | Defined classes, written as `[[ontology.defined]]` entries (below). |
 
 ### `[[ontology.defined]]`

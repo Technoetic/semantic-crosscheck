@@ -87,21 +87,7 @@ CAPTURED_NOTE = ("{n} captured case(s): their rows come from an earlier run, not
                  "pass shows only that nothing changed since the capture and is not independent evidence")
 
 
-class MissingMember(ValueError):
-    """A Cube row lacks a requested member; compare.cube_rows would otherwise read it as NULL."""
-
-
-class _Members:
-    """client.load that refuses a row without every member the gold maps."""
-
-    def __init__(self, client, members):
-        self.client, self.members = client, tuple(members)
-
-    def load(self, query: dict) -> list[dict]:
-        data = self.client.load(query)
-        if any(not isinstance(r, dict) or any(m not in r for m in self.members) for r in data):
-            raise MissingMember("a Cube row lacks a requested member")
-        return data
+MissingMember = compare.MissingMember   # compare.cube_rows refuses a Cube row without a requested member
 
 
 # ---- guards and the fixture configuration ---------------------------------------------------------------
@@ -223,7 +209,7 @@ def run_case(conn, client, cfg, gold, case, types: dict | None = None) -> tuple[
     except errors as e:
         return "error", {**base, "side": "gold", **compare.error_detail(e)}
     try:
-        c_rows = compare.cube_rows(_Members(client, gold.map.values()), gold, case.params)
+        c_rows = compare.cube_rows(client, gold, case.params)
     except errors as e:
         return "error", {**base, "side": "cube", "gold_rows": len(g_rows), **compare.error_detail(e)}
     return judge(gold, case, g_rows, c_rows, types)

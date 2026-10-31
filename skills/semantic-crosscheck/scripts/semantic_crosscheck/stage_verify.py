@@ -458,6 +458,10 @@ def _error_action(c: Check) -> str:
         return "the Cube model does not match crosscheck.toml: rerun `sxc.py cube`, then rerun verify"
     if reason == "members_not_in_model":
         return f"{c.id} uses Cube members the model lacks: fix cube_query and map of {ref}, or rerun `sxc.py cube`"
+    if d.get("cube") == "invalid_response":
+        return (f"Cube answered the query of {c.id} with something that is not a load result for it (no data list of "
+                "row objects, or a row without a requested member), so nothing was compared: check the adapter with "
+                "`sxc.py doctor --require cube`, rerun `sxc.py cube`, then rerun verify")
     if d.get("cube") == "timeout":
         return f"{c.id} timed out in Cube: raise [cube].query_timeout_s or narrow the query of {ref}, then rerun verify"
     if d.get("cube") == "row_limit":

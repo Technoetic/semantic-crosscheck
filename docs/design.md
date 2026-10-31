@@ -221,8 +221,8 @@ parameters are ignored.
 | `closure` | `build(conn, cfg, h) -> (checks, sql_log)` inside the caller's transaction, which holds the output schema's build lock |
 | `cube_gen` | `generate(cfg, conn) -> (model, notes)`, `members(model)`, `to_yaml`, `write_model(model, dir)`, `load_model(out)`, `where_sql(measure)`, `measure_cube(cfg, m, cols)`, `columns(conn, table)` |
 | `cube_run` | `cube_home()` (absolute), `install_state(home) -> 'ok'\|'missing'\|'incomplete'\|'stale'`, `installed(home)`, `adapter_hashes()`, `serve(cfg, run_dir, log_path) -> CubeClient` (context manager; `client.runtime` is `runtime_facts` of the started child), `runtime_facts(version, env=None) -> {'cube_version', 'sql_planner'}`, `sql_planner(env) -> 'tesseract'\|'legacy'\|'unknown'`, `PLANNER_ENV`, `ADAPTER_DIR`, `MIN_NODE` |
-| `cube_client` | `CubeClient.load(query) -> list[dict]` (polls "Continue wait", explicit limit 50,000, never `renewQuery`, no proxies), `meta()` |
-| `compare` | `run_binding(conn, client, cfg, gold, params, cache=None, types=None)`, `compare_rows(gold, g_rows, c_rows, types=None)`, `member_kinds(model)`, `gold_kinds(gold, kinds)` |
+| `cube_client` | `CubeClient.load(query) -> list[dict]` (polls "Continue wait", explicit limit 50,000, never `renewQuery`, no proxies; accepts only Cube's load envelope, a JSON object whose `data` is a list of row objects, and raises `CubeResponseError`, a `CubeError`, for any other answer instead of returning no rows), `meta()` |
+| `compare` | `run_binding(conn, client, cfg, gold, params, cache=None, types=None)`, `cube_rows(client, gold, params)` (a row without every mapped member raises `MissingMember`, a `CubeResponseError`), `compare_rows(gold, g_rows, c_rows, types=None)`, `member_kinds(model)`, `gold_kinds(gold, kinds)`, `error_detail(e)` (`cube`: `timeout`, `row_limit`, `invalid_response`, `query_error`) |
 | `sweep` | `bindings(conn, cfg, gold)`, `strata_names(gold)`, `md5_order(column)` |
 | `shape_q` | `tests(cfg, model)`, `run_test(..., budget=None, witness=None)` (the baseline V3 run passes `verify.pair_key_budget` and, with `verify.existence_witness`, a `PairWitness` of each pair test), `pair_keys(conn, cfg, test, budget=None, witness=None)`, `PairWitness(conn, cfg, test)` (`result(pair_status)`), `witness_id(test)`, `witness_note()`, `sampled(test)`, `d95_keys(sampled, total)`, `sample_note(detail)`, `chunk_note(detail)`, `PAIR_KEY_CAP = 2000` (defined in `config`), `join_path(cubes, measure_cube, dim_cube)`, `additive_path(steps)`, `null_group_sql(cfg, test)`, `not_applicable(cfg, model)` |
 | `mutate` | `OPERATORS`, `CLOSURE_OPERATORS`, `OUTCOMES`, `selected(cfg)`, `run_mutants(cfg, out, conn, model, suite, closure=None, sampled_items=())`, `verdict(status, item)`, `closure_status(cfg, out)` |
@@ -332,7 +332,7 @@ configuration ids; `<member>` is a Cube member (`cube.member`); `<stratum>` is a
 | cube | `cube:model` | the model was generated (a generator error is exit 2 instead) | none |
 | cube | `cube:gold_members:<gold>` | every member the gold entry names exists in the model and is public | `fail` (`missing`, `hidden`, `malformed` counts) |
 | cube | `cube:meta` | Cube's `/meta` lists exactly the public members of the model | `fail` (`missing`, `extra`); `error` (HTTP status, connection error, unexpected response). Every outcome records `cube_version` and `sql_planner` of the adapter that answered |
-| verify | `v1:<gold>` | the first binding matches exactly | `fail`; `error` (gold or Cube side: error type, SQLSTATE, HTTP status, `cube` `timeout`/`row_limit`/`query_error`; `members_not_in_model`; `bindings_failed`); `not_run` (`closure_not_passed`, `no_binding`) |
+| verify | `v1:<gold>` | the first binding matches exactly | `fail`; `error` (gold or Cube side: error type, SQLSTATE, HTTP status, `cube` `timeout`/`row_limit`/`invalid_response`/`query_error`; `members_not_in_model`; `bindings_failed`); `not_run` (`closure_not_passed`, `no_binding`) |
 | verify | `v2:<gold>:<stratum>` | every binding of the stratum matches exactly; an empty stratum passes (`empty_stratum`) and is listed in `not_proven` | as `v1:<gold>`, without `no_binding` |
 | verify | `v3:total:<member>` | the Cube total equals SQL computed from the configuration (or the closure table) | `fail`; `error`; `not_run` (`closure_not_passed`) |
 | verify | `v3:additive:<member>:<member>` | the groups of the measure by the ontology class column of a cube joined through many_to_one / one_to_one steps only, the NULL group included, add up to its total, and the NULL group equals independent SQL over the measure source (`null_group_equal`: an anti-join, or the matched rows without a class when Cube roots the query at the dimension's cube) | as `v3:total:<member>`; a join path with a one_to_many or unknown step gets no check, only a `not_proven` line (not applicable) |
@@ -516,6 +516,17 @@ in `build` is `not_run`. Detail keys: `gold_rows`, `cube_rows`, `matched_rows`, 
 `declared_null_as_zero` (V2 adds `bindings`, `failed_bindings`, `error_bindings`, `empty_bindings`,
 `rows_compared` and the positions of failed bindings).
 
+**Malformed Cube answers.** `CubeClient.load` accepts an answer only in Cube's load envelope, a JSON object whose
+`data` is a list of row objects, and raises `CubeResponseError` otherwise, for a body that is not JSON as well
+(`meta()` leaves such a body to its decode error, which `cube:meta` reports as its `reason`). `compare.cube_rows`
+requires every row of a gold query to hold every mapped member (Cube answers each requested dimension and measure,
+NULL included) and raises `MissingMember` otherwise. Both are an `error` with `cube` = `invalid_response`, never
+zero rows, a NULL or, under `zero_if_null`, a 0: read as no rows, such an answer would pass V1 and V2 vacuously
+against empty gold rows, pass a V3 pair test of at most `PAIR_KEY_CAP` keys over no keys whatever the source data
+holds, and kill a V4 mutant against non-empty gold rows. A V3 test whose answer is outside the envelope is an
+`error` as well; the member check covers the rows of gold queries only (V1, V2, their V4 replays and `expect`).
+Both sides empty still passes when Cube really answered an empty `data` list.
+
 **Bindings.** No parameters: one binding in stratum `all`. `param_sets`: stratum `param_sets` with each set.
 One swept parameter: `values` (stratum `values`), `values_of = "entity.column"` (every distinct non-null value,
 stratum `values`), or `strata` sampled from the hierarchy (k = ceil(sweep_k / number of strata) per stratum,
@@ -684,7 +695,8 @@ computed once. It stops at the first item that does not pass:
   id);
 - an item that **errors** is retried once; if it still errors, the check is `error` with `reason=suite_error` and
   `item`, because a query that could not run proves nothing about the mutant (a suite that raises gives
-  `reason=suite_error` with `exception`);
+  `reason=suite_error` with `exception`); a Cube answer outside the load envelope, or a gold-query row without a
+  mapped member, is such an error (`cube=invalid_response`), never a kill;
 - when every item passes the mutant **survived** and the check fails (`killed_by` is empty).
 
 Before Cube starts, a witness SQL query counts what the mutation changes on the current data, independent of the

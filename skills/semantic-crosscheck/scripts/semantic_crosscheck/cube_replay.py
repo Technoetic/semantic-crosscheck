@@ -224,8 +224,9 @@ def comparison_status(original_gold_agree, mutant_gold_agree):
 def _load(client, query):
     """Validate the actual HTTP envelope, so missing data is never an empty answer.
 
-    The general client treats a missing ``data`` member as []; that is unsuitable
-    when a malformed mutant response could otherwise be counted as a kill.
+    CubeClient.load applies the same envelope check; this copy keeps replay's own
+    row limit and turns every malformed answer into a ValueError, which run()
+    reports as a runtime error, never as a kill.
     """
     request = dict(query, limit=ce.ROW_LIMIT + 1)
     deadline = time.monotonic() + client.timeout_s

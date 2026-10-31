@@ -34,6 +34,12 @@ gold SQL and `crosscheck.toml` avoid them too.
   Cube query reads its own snapshot, shared with no other query. Every key up to the budget is read in
   one statement under `source.statement_timeout_ms` (a timeout is an `error`) and held in memory, and a
   chunked test whose Cube answers leave out keys it asked for is `not_run` (`keys_not_answered`).
+- **A malformed answer is not an empty answer.** The client accepts a `/load` answer only in Cube's load
+  envelope, a JSON object whose `data` is a list of row objects, and a gold query's rows must hold every
+  mapped member (Cube answers each requested dimension and measure, NULL included). Anything else is an
+  `error` check with `cube=invalid_response` (`CubeResponseError`, or `MissingMember` for a row without a
+  member), never zero rows, a NULL or a `zero_if_null` 0; in V4 the suite item is retried once and then
+  leaves the mutant unjudged (`suite_error`) instead of killing it.
 - **A many-to-one join that is one-to-many in the data inflates totals.** Cube trusts a declared
   `many_to_one` (or `one_to_one`) relationship and sums without deduplication, so a repeated key in the
   joined table counts the measure rows once per match. V3 `additive` tests sum the groups by the class

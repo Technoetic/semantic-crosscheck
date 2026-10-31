@@ -4,7 +4,9 @@ Gold rows come from the gold SQL file (trusted code from the configuration, read
 executed as one prepared statement with bound parameters inside db.read_only. The extended protocol accepts a single
 statement only, so a gold file cannot end the read-only transaction. Cube rows come from gold.cube_query after every
 string equal to ":<param>" (also inside lists and dicts) is replaced by the bound value; gold.map renames them to
-gold columns.
+gold columns. The answer must be Cube's load envelope (cube_client.CubeResponseError otherwise) and every row must
+hold every mapped member: Cube answers each requested dimension and measure, NULL included, so a row without one
+raises MissingMember instead of being read as NULL (or as 0 under zero_if_null).
 
 Rows are matched on the canonical key and a duplicate key on either side fails. Matched rows must be canonically
 identical in every mapped column. Canonical forms follow the type of each column's Cube member (gold_kinds of
@@ -13,8 +15,9 @@ timestamps in one UTC form, booleans as booleans. A caller without a model compa
 only declared equivalence is zero_if_null: a Cube NULL counts as 0 in the listed columns, because the gold SQL
 coalesces them. Both sides empty is a pass flagged `empty`.
 
-The comparison dict holds counts only. Errors are reported by exception type, SQLSTATE or HTTP status: database
-and Cube messages can quote row values, so they are never kept.
+The comparison dict holds counts only. Errors are reported by exception type, SQLSTATE, HTTP status or Cube category
+(timeout, row_limit, invalid_response, query_error): database and Cube messages can quote row values, so they are
+never kept.
 """
 
 import http.client
@@ -22,7 +25,7 @@ import json
 import re
 
 from . import canon, db
-from .cube_client import CubeError
+from .cube_client import CubeError, CubeResponseError
 
 _PLACEHOLDER = re.compile(r"^:([a-z_][a-z0-9_]*)$")
 RESERVED_PARAMS = frozenset({"stream", "types"})   # keyword arguments pg8000 uses for other purposes
@@ -31,6 +34,10 @@ VALUE_KINDS = ("string", "time", "boolean")        # Cube measure types that are
 
 class UnboundParameter(ValueError):
     """A ':<name>' placeholder in cube_query has no value in the binding (configuration error)."""
+
+
+class MissingMember(CubeResponseError):
+    """A Cube row lacks a member gold.map names (or is not an object): a malformed answer, never a NULL."""
 
 
 def subst(obj, params: dict):
@@ -101,9 +108,13 @@ def gold_rows(conn, cfg, gold, params: dict) -> list[dict]:
 
 
 def cube_rows(client, gold, params: dict) -> list[dict]:
-    """Cube rows of gold.cube_query for one binding, renamed to gold columns through gold.map."""
+    """Cube rows of gold.cube_query for one binding, renamed to gold columns through gold.map. A row without every
+    mapped member raises MissingMember: it is never read as NULL, nor as 0 under zero_if_null."""
     data = client.load(cube_query(gold, params))
-    return [{col: r.get(member) for col, member in gold.map.items()} for r in data]
+    members = tuple(gold.map.values())
+    if not isinstance(data, list) or any(not isinstance(r, dict) or any(m not in r for m in members) for r in data):
+        raise MissingMember("a Cube row lacks a requested member")
+    return [{col: r[member] for col, member in gold.map.items()} for r in data]
 
 
 def _index(rows: list[dict], key: list, types: dict) -> tuple[dict, int]:
@@ -179,7 +190,7 @@ def expected_errors() -> tuple:
 
 
 def error_detail(e: BaseException) -> dict:
-    """Exception type plus SQLSTATE or HTTP status; never the message, which can quote row values."""
+    """Exception type plus SQLSTATE, HTTP status or Cube category; never the message, which can quote row values."""
     d = {"error": type(e).__name__}
     arg = e.args[0] if e.args else None
     if isinstance(arg, dict) and arg.get("C"):
@@ -187,7 +198,9 @@ def error_detail(e: BaseException) -> dict:
     if isinstance(e, CubeError):
         text = str(e)
         m = re.match(r"HTTP (\d{3})\b", text)
-        if m:
+        if isinstance(e, CubeResponseError):
+            d["cube"] = "invalid_response"
+        elif m:
             d["http_status"] = int(m.group(1))
         elif text.startswith("result reached the limit"):
             d["cube"] = "row_limit"

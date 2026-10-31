@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- `CubeClient.load` accepts a Cube `/load` answer only in Cube's load envelope, a JSON object whose `data` is a
+  list of row objects. Any other answer (an empty object, `results` instead of `data`, `data` that is an object or
+  a string, a body or row that is not an object) is an `error` with `cube=invalid_response`, never zero rows. Read
+  as no rows, such an answer passed V1 and V3 pair tests vacuously against empty gold rows and counted as a V4 kill
+  against non-empty ones; the other malformed shapes stopped the verify stage with an unexpected exception (in V4
+  they left the mutant unjudged without the retry).
+- The Cube rows of a gold query in V1, V2 and their V4 replays must hold every mapped member, as `expect` already
+  required: a row without one is an `error` (`MissingMember`, `cube=invalid_response`), never a NULL or, under
+  `zero_if_null`, a 0 that could pass. A V4 suite item that gets either kind of answer is retried once; when the
+  retry gets one too, the mutant is left unjudged (`suite_error`) instead of killed.
+
 ## [0.13.0] - 2026-10-29
 
 Release notes: [docs/releases/v0.13.0.md](docs/releases/v0.13.0.md).

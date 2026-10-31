@@ -1,5 +1,7 @@
 # Changelog
 
+## [Unreleased]
+
 ## [0.14.0] - 2026-10-31
 
 Release notes: [docs/releases/v0.14.0.md](docs/releases/v0.14.0.md).
@@ -28,10 +30,10 @@ Release notes: [docs/releases/v0.14.0.md](docs/releases/v0.14.0.md).
   group, so equal values on a fork or diamond still change grouped answers; the measure's `key` is also a public
   dimension, and V1 tells NULL from 0 unless `zero_if_null`. Such a mutant was skipped as "equivalent on this data"
   with no check, which could hide a survivor from V4. The witness now counts the pairs whose two ends join different
-  measure rows, which is 0 only when every query answers the same; such mutants are served, and one that survives
-  fails V4. A verify that passed 0.13.0 with `v4:closure_join_swap:<m>` listed as equivalent can now fail V4 when no
-  gold query observes the change, for example when only the joined measure row changes and the gold queries read only
-  values.
+  measure rows, which for a model generated from `crosscheck.toml` is 0 only when every query answers the same; such
+  mutants are served, and one that survives fails V4. A verify that passed 0.13.0 with `v4:closure_join_swap:<m>`
+  listed as equivalent can now fail V4 when no gold query observes the change, for example when only the joined
+  measure row changes and the gold queries read only values.
 
 ### Added
 

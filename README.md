@@ -709,7 +709,7 @@ Cube의 기본 오류 로그에는 오류 클래스·코드·대략적인 범주
 | 엄격한 통합 runner | 미실행 검사·빈 suite·실패·오류가 있으면 CI 실패 |
 | 실제 runtime 선택 모드 | 완전 실행 환경의 성공·설정 변경·근거 누락 시 PASS 차단을 실행하는 통합 CI |
 | 새 릴리스 브랜치 전체 검증 | 릴리스 메타데이터를 포함한 새 전체 로컬 실행과 공개 CI의 실제 결과를 검증 JSON에 각각 기록하며, 실행 전 성공 집계를 선언하지 않음 |
-| 이전 구현 단계 검증 | 항목마다 2관점 검토와 수정 1회 → 통합 브랜치의 각 머리에서 전체 1,325개 실행(PostgreSQL·Cube 없는 환경 제외 247, 실패·오류 0). 독립 4관점 최종 검증이 문서 과장 1건을 확인해 문서만 수정했고, 이어진 확인 2회의 문구 지적을 반영. 하나의 전 엔진 실행이나 최종 릴리스 커밋의 근거로 합산하지 않음 |
+| 이전 구현 단계 검증 | 항목마다 2관점 검토와 수정 1회 → 세 브랜치를 합친 머리와 그 뒤 각 머리에서 전체 1,325개 실행(선택 실행 환경이 없어 제외 247, 실패·오류 0). 독립 4관점 최종 검증이 문서 과장 1건을 확인해 문서만 수정했고, 이어진 확인 2회의 문구 지적을 반영. 하나의 전 엔진 실행이나 최종 릴리스 커밋의 근거로 합산하지 않음 |
 | 릴리스 배포 파일 | [소스 ZIP](https://github.com/Technoetic/semantic-crosscheck/releases/download/v0.14.0/semantic-crosscheck-0.14.0.zip) · [SHA256SUMS](https://github.com/Technoetic/semantic-crosscheck/releases/download/v0.14.0/SHA256SUMS) |
 
 최종 공개 커밋·CI 작업 URL·실제 집계는 실행 후 릴리스와 함께 제공하는 **v0.14.0 검증 JSON**에서 확인합니다. 원시 CI 로그에서 읽은 집계만 공개 커밋의 근거로 사용하며, 이전 구현 단계 검증·새 전체 로컬 검증·전체 엔진 통합 CI를 구분합니다.
@@ -777,7 +777,7 @@ CI는 전체 이력을 가진 clone의 작업 트리·이력을 일반 패턴과
 
 </div>
 
-## Optional diagnostic contracts (v0.13.0)
+## Optional diagnostic contracts (since v0.13.0)
 
 Three default-off paths deepen the evidence around a failure:
 

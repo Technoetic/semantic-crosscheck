@@ -4,7 +4,7 @@ Gold rows come from the gold SQL file (trusted code from the configuration, read
 executed as one prepared statement with bound parameters inside db.read_only. The extended protocol accepts a single
 statement only, so a gold file cannot end the read-only transaction. Cube rows come from gold.cube_query after every
 string equal to ":<param>" (also inside lists and dicts) is replaced by the bound value; gold.map renames them to
-gold columns. The answer must be Cube's load envelope (cube_client.CubeResponseError otherwise) and every row must
+gold columns. A 2xx answer must be Cube's load envelope (cube_client.CubeResponseError otherwise) and every row must
 hold every mapped member: Cube answers each requested dimension and measure, NULL included, so a row without one
 raises MissingMember instead of being read as NULL (or as 0 under zero_if_null).
 

@@ -517,15 +517,18 @@ in `build` is `not_run`. Detail keys: `gold_rows`, `cube_rows`, `matched_rows`, 
 `rows_compared` and the positions of failed bindings).
 
 **Malformed Cube answers.** `CubeClient.load` accepts an answer only in Cube's load envelope, a JSON object whose
-`data` is a list of row objects, and raises `CubeResponseError` otherwise, for a body that is not JSON as well
-(`meta()` leaves such a body to its decode error, which `cube:meta` reports as its `reason`). `compare.cube_rows`
-requires every row of a gold query to hold every mapped member (Cube answers each requested dimension and measure,
-NULL included) and raises `MissingMember` otherwise. Both are an `error` with `cube` = `invalid_response`, never
-zero rows, a NULL or, under `zero_if_null`, a 0: read as no rows, such an answer would pass V1 and V2 vacuously
-against empty gold rows, pass a V3 pair test of at most `PAIR_KEY_CAP` keys over no keys whatever the source data
-holds, and kill a V4 mutant against non-empty gold rows. A V3 test whose answer is outside the envelope is an
-`error` as well; the member check covers the rows of gold queries only (V1, V2, their V4 replays and `expect`).
-Both sides empty still passes when Cube really answered an empty `data` list.
+`data` is a list of row objects, and raises `CubeResponseError` for any other answer without an `error` member (an
+`error` member stays a query error), for a body that is not JSON as well (`meta()` leaves such a body to its decode
+error, which `cube:meta` reports as its `reason`). `compare.cube_rows` requires every row of a gold query to hold
+every mapped member (Cube answers each requested dimension and measure, NULL included) and raises `MissingMember`
+otherwise. Both make the check an `error`, never zero rows, a NULL or, under `zero_if_null`, a 0: read as no rows,
+such an answer would pass V1 and V2 vacuously against empty gold rows, pass a V3 pair test of at most `PAIR_KEY_CAP`
+keys over no keys whatever the source data holds, and kill a V4 mutant against non-empty gold rows. A V1 or V3 check
+and an `expect` case carry `cube` = `invalid_response`, and a V1 or V3 check gets the adapter next action; a V2
+stratum check counts such bindings by type under `errors` and keeps the general next action, as for its other
+errors. A V3 test whose answer is outside the envelope is an `error` as well; the member check covers the rows of
+gold queries only (V1, V2, their V4 replays and `expect`). Both sides empty still passes when Cube really answered
+an empty `data` list.
 
 **Bindings.** No parameters: one binding in stratum `all`. `param_sets`: stratum `param_sets` with each set.
 One swept parameter: `values` (stratum `values`), `values_of = "entity.column"` (every distinct non-null value,
@@ -696,7 +699,7 @@ computed once. It stops at the first item that does not pass:
 - an item that **errors** is retried once; if it still errors, the check is `error` with `reason=suite_error` and
   `item`, because a query that could not run proves nothing about the mutant (a suite that raises gives
   `reason=suite_error` with `exception`); a Cube answer outside the load envelope, or a gold-query row without a
-  mapped member, is such an error (`cube=invalid_response`), never a kill;
+  mapped member, is such an error (`CubeResponseError` or `MissingMember`), never a kill;
 - when every item passes the mutant **survived** and the check fails (`killed_by` is empty).
 
 Before Cube starts, a witness SQL query counts what the mutation changes on the current data, independent of the

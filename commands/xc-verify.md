@@ -141,12 +141,13 @@ that generated the model. Fix `crosscheck.toml` or the gold SQL file, never the 
   items left out (a gated closure, a gold query that could not be planned, or `--gold`); those items
   might have killed it. Make every gold query and closure run, then rerun the full verify.
 - `v4:suite` `not_run`: no suite item passes on the unmutated model; fix the V1 to V3 failures first.
-- `error` on V1 to V3: the detail names the error type, SQLSTATE or HTTP status; the `next:` line names
-  the cause (`members_not_in_model`: fix `cube_query` and `map`; a Cube timeout: raise
-  `cube.query_timeout_s` or narrow the query; the row limit: narrow the query with filters or
-  parameters; SQLSTATE `57014`: raise `source.statement_timeout_ms`; `cube=invalid_response`: Cube's answer
-  was not a load result for the query, no `data` list of row objects or a row without a mapped member
-  (`MissingMember`), so nothing was compared: check the adapter with `/xc-doctor --require cube` and rerun
-  [/xc-cube](xc-cube.md)).
+- `error` on V1 to V3: the detail names the error type, SQLSTATE or HTTP status (a V2 stratum check counts
+  its bindings by error type under `errors` and by SQLSTATE under `sqlstates`, so its `next:` line cannot
+  name a Cube or SQLSTATE cause); for V1 and V3 the `next:` line names the cause (`members_not_in_model`:
+  fix `cube_query` and `map`; a Cube timeout: raise `cube.query_timeout_s` or narrow the query; the row
+  limit: narrow the query with filters or parameters; SQLSTATE `57014`: raise
+  `source.statement_timeout_ms`; `cube=invalid_response`: Cube's answer was not a load result for the
+  query (no `data` list of row objects, or a row without a mapped member, `MissingMember`), so nothing was
+  compared: check the adapter with `/xc-doctor --require cube` and rerun [/xc-cube](xc-cube.md)).
 - Exit code 2: no cube result or model, an unknown `--only` or `--gold` value, or an unknown mutation
   operator. Exit code 3: Cube could not start; see [/xc-cube](xc-cube.md).

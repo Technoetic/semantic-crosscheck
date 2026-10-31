@@ -225,8 +225,9 @@ def _load(client, query):
     """Validate the actual HTTP envelope, so missing data is never an empty answer.
 
     CubeClient.load applies the same envelope check; this copy keeps replay's own
-    row limit and turns every malformed answer into a ValueError, which run()
-    reports as a runtime error, never as a kill.
+    row limit and raises ValueError when there is no data list, and compare()
+    raises it for a row that is not an object or lacks a projected member, so
+    run() reports every malformed answer as a runtime error, never as a kill.
     """
     request = dict(query, limit=ce.ROW_LIMIT + 1)
     deadline = time.monotonic() + client.timeout_s

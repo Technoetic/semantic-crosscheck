@@ -4,19 +4,22 @@
 
 ### Fixed
 
-- `CubeClient.load` accepts a Cube `/load` answer only in Cube's load envelope, a JSON object whose `data` is a
-  list of row objects. Any other answer (an empty object, `results` instead of `data`, `data` that is an object or
-  a string, a body or row that is not an object, a body that is not JSON) is an `error` with
-  `cube=invalid_response`, never zero rows. Read as no rows, such an answer passed V1 and V2 vacuously against
-  empty gold rows, passed a V3 pair test of at most 2,000 keys (the key cap) over no keys whatever the source data
-  held, and counted as a V4 kill against non-empty gold rows; the other malformed JSON answers stopped the verify
-  stage with an unexpected exception (in V4 they left the mutant unjudged without the retry). A body that is not
-  JSON was already an `error`, but named `JSONDecodeError` or `UnicodeDecodeError` and with a next action that
-  pointed at the gold SQL instead of the adapter.
+- `CubeClient.load` accepts a Cube `/load` answer only in Cube's load envelope, a JSON object whose `data` is a list
+  of row objects. Any other answer without an `error` member (an empty object, `results` instead of `data`, `data`
+  that is an object or a string, a body or row that is not an object, a body that is not JSON) is an `error`, never
+  zero rows: a V1 or V3 check carries `cube=invalid_response` and its next action points at the adapter, while a V2
+  stratum check counts such bindings by type under `errors` (`CubeResponseError`) and keeps the general next action,
+  as for its other errors. Read as no rows, such an answer passed V1 and V2 vacuously against empty gold rows, passed
+  a V3 pair test of at most 2,000 keys (the key cap) over no keys whatever the source data held, and counted as a V4
+  kill against non-empty gold rows; the other malformed JSON answers stopped the verify stage with an unexpected
+  exception (in V4 they left the mutant unjudged without the retry). A body that is not JSON was already an `error`,
+  but named `JSONDecodeError` or `UnicodeDecodeError`, and a V1 or V3 next action pointed at the gold SQL instead of
+  the adapter.
 - The Cube rows of a gold query in V1, V2 and their V4 replays must hold every mapped member, as `expect` already
-  required: a row without one is an `error` (`MissingMember`, `cube=invalid_response`), never a NULL or, under
-  `zero_if_null`, a 0 that could pass. A V4 suite item that gets either kind of answer is retried once; when the
-  retry gets one too, the mutant is left unjudged (`suite_error`) instead of killed.
+  required: a row without one is an `error` (`MissingMember`; `cube=invalid_response` on a V1 check and an `expect`
+  case, counted under `errors` on a V2 check), never a NULL or, under `zero_if_null`, a 0 that could pass. A V4 suite
+  item that gets either kind of answer is retried once; when the retry gets one too, the mutant is left unjudged
+  (`suite_error`) instead of killed.
 - V4 `closure_join_swap` no longer calls an observable mutant equivalent. Its witness compared the measure values at
   the two ends of each closure pair (a missing value counting as 0 for `sum`/`count`), but Cube 1.8.3 aggregates a
   measure reached through the closure's `many_to_one` join over the distinct primary keys of the measure cube in each

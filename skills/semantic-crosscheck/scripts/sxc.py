@@ -241,7 +241,9 @@ def _brief(detail: dict) -> str:
 
 
 def _summary(res: Result, path, quiet: bool) -> str:
-    standalone = res.stage in {"cube_replay", "tlp", "shacl_corpus", "shacl_repair", "grain"} or 'constraint_audit' in res.inputs
+    standalone = (res.stage in {"cube_replay", "tlp", "shacl_corpus", "shacl_repair", "grain"}
+                  or 'constraint_audit' in res.inputs or 'spec_sources' in res.inputs
+                  or getattr(res, '_suppress_paths', False))
     if standalone:
         path = None
     counts = {s: 0 for s in ("pass", "fail", "error", "not_run")}
@@ -448,6 +450,33 @@ def _diagnostic_usage_failure(args):
     return EXIT_CONFIG
 
 
+def _expect_prepare(args, out):
+    """Parse verified bytes and protect inputs before any output mutation."""
+    from semantic_crosscheck import knowledge_sources
+    path = config_path('expect', args.config)
+    candidate = out if out is not None else path.resolve().parent / '.sxc'
+    before = hashlib.sha256(path.read_bytes()).hexdigest()
+    cfg = config.load(path)
+    knowledge_sources.preflight(cfg, candidate)
+    if hashlib.sha256(path.read_bytes()).hexdigest() != before:
+        raise StageError('expect: configuration_changed', EXIT_CONFIG)
+    return cfg, before, candidate, path
+
+
+def _expect_write(res, out, cfg):
+    """A changed alias must not turn an error-result write into input loss."""
+    if out is None:
+        return None
+    try:
+        from semantic_crosscheck import knowledge_sources
+        if cfg is not None:
+            knowledge_sources.preflight(cfg, out)
+        return _write(res, out)
+    except Exception:
+        res.add('stage', 'error', '', reason='protected_output_unavailable')
+        return None
+
+
 def main(argv=None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     cli = parser()
@@ -470,8 +499,15 @@ def main(argv=None) -> int:
     result_name = stage.replace("-", "_")
     cfg = None
     diagnostic_cfg = diagnostic_cfg_sha = None
+    expect_cfg = expect_cfg_sha = None
     out = Path(args.out) if args.out else None
     try:
+        if stage == 'expect':
+            try:
+                expect_cfg, expect_cfg_sha, out, cfg_file = _expect_prepare(args, out)
+            except Exception:
+                out = None
+                raise StageError('expect: invalid_or_protected_inputs', EXIT_CONFIG) from None
         if diagnostic_mode:
             out = _diagnostic_output(args)
             try:
@@ -493,7 +529,8 @@ def main(argv=None) -> int:
             out = out if out is not None else Path.cwd() / ".sxc"
             ensure_out(out)
             discard(out, result_name)
-        cfg_file = config_path(stage, args.config)
+        if stage != 'expect':
+            cfg_file = config_path(stage, args.config)
         if out is None:
             out = (cfg_file.resolve().parent if cfg_file else Path.cwd()) / ".sxc"
         ensure_out(out)
@@ -503,7 +540,11 @@ def main(argv=None) -> int:
         inputs = {}
         if cfg_file is not None:
             before = hashlib.sha256(cfg_file.read_bytes()).hexdigest()
-            if diagnostic_mode and stage == "grain":
+            if stage == 'expect':
+                if before != expect_cfg_sha:
+                    raise StageError('expect: configuration_changed', EXIT_CONFIG)
+                cfg = expect_cfg
+            elif diagnostic_mode and stage == "grain":
                 if before != diagnostic_cfg_sha:
                     raise StageError("diagnostic input changed", EXIT_CONFIG)
                 cfg = diagnostic_cfg
@@ -519,12 +560,18 @@ def main(argv=None) -> int:
         if stage == "grain":
             args._diagnostic_configuration_sha = diagnostic_cfg_sha
         res = mod.run(cfg, args, out)
+        if stage == 'expect' and any(getattr(c, 'spec_source', None) is not None for g in cfg.gold for c in g.expect):
+            if hashlib.sha256(Path(cfg.path).read_bytes()).hexdigest() != expect_cfg_sha:
+                raise StageError('expect: configuration_changed', EXIT_CONFIG)
         if stage == "grain":
             if (hashlib.sha256(Path(cfg.path).read_bytes()).hexdigest() != diagnostic_cfg_sha
                     or res.inputs.get("grain_config_sha256") != diagnostic_cfg_sha):
                 raise StageError("diagnostic input changed", EXIT_CONFIG)
         if stage not in {"cube-replay", "tlp", "shacl-corpus"} and not audit_mode and not diagnostic_mode:
+            sources = res.inputs.get('spec_sources') if stage == 'expect' else None
             res.inputs = inputs
+            if sources is not None:
+                res.inputs['spec_sources'] = sources
         if stage == "grain":
             res.inputs["configuration"] = inputs
         res = provenance.finish(None if diagnostic_mode else cfg, res, revision_start)
@@ -537,10 +584,15 @@ def main(argv=None) -> int:
             res.add("stage", "error", "", reason="invalid_constraint_audit_inputs")
         elif diagnostic_mode:
             res.add("stage", "error", "", reason="diagnostic_environment_missing" if e.exit_code == 3 else "invalid_diagnostic_inputs")
+        elif stage == 'expect':
+            res._suppress_paths = True
+            res.add('stage', 'error', '', reason='expect_environment_unavailable' if e.exit_code == 3 else 'invalid_expect_inputs')
         else:
             res.add("stage", "error", "", message=str(e))
         res.next_safe_action = "fix the configuration or environment named in the message, then rerun this stage"
-        print(_summary(res, _diagnostic_write(res, out) if diagnostic_mode else _write(res, out), args.quiet), file=sys.stderr)
+        path = (_expect_write(res, out, expect_cfg) if stage == 'expect' else
+                _diagnostic_write(res, out) if diagnostic_mode else _write(res, out))
+        print(_summary(res, path, args.quiet), file=sys.stderr)
         return e.exit_code
     except KeyboardInterrupt:
         if stage == "report":
@@ -549,8 +601,12 @@ def main(argv=None) -> int:
         if audit_mode:
             res.inputs = {"constraint_audit": {"mode": "constraint_audit"}}
         res.add("stage", "error", "", reason="interrupted")
+        if stage == 'expect':
+            res._suppress_paths = True
         res.next_safe_action = "the run was interrupted before it finished: rerun this stage"
-        print(_summary(res, _diagnostic_write(res, out) if diagnostic_mode else _write(res, out), args.quiet), file=sys.stderr)
+        path = (_expect_write(res, out, expect_cfg) if stage == 'expect' else
+                _diagnostic_write(res, out) if diagnostic_mode else _write(res, out))
+        print(_summary(res, path, args.quiet), file=sys.stderr)
         return EXIT_FAIL
     except Exception as e:  # noqa: BLE001 - unexpected failure: keep only the type and SQLSTATE in the result file
         if stage == "report":
@@ -561,12 +617,18 @@ def main(argv=None) -> int:
             res.add("stage", "error", "", reason="constraint_audit_error")
         elif diagnostic_mode:
             res.add("stage", "error", "", reason="diagnostic_error")
+        elif stage == 'expect':
+            res._suppress_paths = True
+            res.add('stage', 'error', '', reason='expect_error')
         else:
             res.add("stage", "error", "", exception=type(e).__name__, sqlstate=_db_error_code(e))
             _crash_note(e)
-        print(_summary(res, _diagnostic_write(res, out) if diagnostic_mode else _write(res, out), args.quiet), file=sys.stderr)
+        path = (_expect_write(res, out, expect_cfg) if stage == 'expect' else
+                _diagnostic_write(res, out) if diagnostic_mode else _write(res, out))
+        print(_summary(res, path, args.quiet), file=sys.stderr)
         return EXIT_FAIL
-    path = _diagnostic_write(res, out) if diagnostic_mode else res.write(out)
+    path = (_expect_write(res, out, expect_cfg) if stage == 'expect' else
+            _diagnostic_write(res, out) if diagnostic_mode else res.write(out))
     print(_summary(res, path, args.quiet))
     return res.exit_code()
 

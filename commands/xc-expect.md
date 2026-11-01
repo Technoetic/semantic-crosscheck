@@ -5,6 +5,18 @@ argument-hint: "--config crosscheck.toml --allow-fixture-database [--dsn-env SXC
 
 Run the `expect` stage. Pass user arguments as separate argv entries.
 
+Unreleased source: authored cases may additionally declare a closed `spec_source`
+table with required `file`/`sha256` and optional `object_id`/`revision`. The existing
+`spec` citation remains required. Source pins are opaque-byte evidence: noncurrent
+sources stop all cases before DB, and completion drift demotes affected passing
+cases. Configuration/gold/revision/source output aliases are protected before
+cleanup and final/error writes. A protected preflight can retain an old result;
+its nonzero exit means that file is not fresh execution evidence. Only bound
+cases have the 64-case, 256 KiB/file, 4 MiB/batch and 64 KiB metadata limits.
+Source states/hashes appear in `spec_sources` and `expect:spec_source:<gold-id>[<case-index>]`.
+Current bytes prove neither semantic validity nor object existence or approval.
+See [source bindings](../docs/knowledge-sources.md) for the full boundary and schema.
+
 Two synthetic examples use the same stage: `examples/expect/` covers a tiny BOM;
 [`examples/expect-boundaries/`](../examples/expect-boundaries/fixture-spec.md) covers a part with
 no stock (raw NULL), stock removed by a filter (declared zero), and the same label in

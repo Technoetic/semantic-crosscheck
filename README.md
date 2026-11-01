@@ -1,3 +1,9 @@
+Unreleased source: authored `gold.expect` cases can opt into local opaque-byte
+[`spec_source` bindings](docs/knowledge-sources.md). Missing or changed evidence
+stops execution before DB; completion drift invalidates affected expectation
+passes. Source pins add no operational report or grain authority. Version metadata
+remains 0.14.0.
+
 <div align="center">
 
 # semantic-crosscheck

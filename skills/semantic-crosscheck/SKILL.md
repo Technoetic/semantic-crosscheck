@@ -76,6 +76,12 @@ Additional standalone synthetic stages are available when explicitly requested:
 
 All three reject `--config`, ignore default operational configuration, and remain outside the required pipeline. Their passes must not erase real-data `not_proven` disclosures. Missing engines, malformed output, timeout or partial comparison cannot pass. Synthetic rows remain in labelled replay artifacts, never count-only results.
 
+Unreleased source: authored expectation cases may opt into opaque-byte
+`spec_source` pins ([source bindings](../../docs/knowledge-sources.md)). A
+noncurrent source gates cases before DB; completion drift demotes affected
+passes. This adds no grain or operational report authority. Existing unbound
+cases keep their source-free behavior.
+
 The `expect` stage addresses a gold query and the configuration sharing one
 mistake ([command](../../commands/xc-expect.md)). It reads the operational `--config` for the `[[gold.expect]]`
 cases (literal expected rows per gold entry, see [references/config.md](references/config.md)) but runs build,

@@ -51,7 +51,7 @@ import re
 from pathlib import Path
 from types import SimpleNamespace
 
-from . import compare, cube_gen, cube_run, db, ident, naming, stage_build, stage_cube
+from . import compare, cube_gen, cube_run, db, ident, knowledge_sources, naming, stage_build, stage_cube
 from .result import EXIT_CONFIG, EXIT_ENV, Result, StageError
 
 _ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
@@ -349,15 +349,36 @@ def run(cfg, args, out: Path) -> Result:
         res.add("expect:cases", "not_run", "gold", reason="no_cases", gold=len(cfg.gold))
         res.next_safe_action = next_action(res)
         return res
-    env = fixture_env(cfg, args)
+    knowledge_sources.preflight(cfg, out)
+    snapshot = knowledge_sources.capture(cfg, cases, out)
+    bound = bool(snapshot.entries)
+    if not snapshot.ok:
+        for gi, g, i, case in cases:
+            _not_run(res, f'expect:{g.id}[{i}]', f'gold[{gi}] {g.id} expect[{i}]', case,
+                     reason='spec_source_not_current')
+        knowledge_sources.finish(snapshot, res)
+        res.next_safe_action = 'review the declared source pins and rerun expect'
+        return res
+    try:
+        env = fixture_env(cfg, args)
+    except StageError as exc:
+        if bound:
+            raise StageError('expect: fixture_environment_unavailable', exc.exit_code) from None
+        raise
     compared, unset = operational_variables(cfg)
     fcfg = fixture_config(cfg, env)
-    _notes(res, cases, compared, unset)
+    _notes(res, cases, compared, [] if bound else unset)
+    if bound and unset:
+        res.not_proven.append('some operational connection variables were unavailable for fixture isolation checks')
     conn = db.connect(env)
     try:
         _stage(res, conn, fcfg, env, Path(out) / "expect", cases, {"operational_variables_compared": len(compared)})
     finally:
         conn.close()
+    knowledge_sources.finish(snapshot, res)
+    if bound:
+        res.not_proven.append('source current means pinned bytes at observation boundaries; semantic validity, '
+                              'object existence and approval were not verified')
     res.next_safe_action = next_action(res)
     return res
 

@@ -9,6 +9,7 @@ sees a half-written verdict or an earlier verdict left behind by an interrupted 
 
 import json
 import os
+import tempfile
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -73,9 +74,16 @@ class Result:
         p = Path(out_dir) / self.stage
         p.mkdir(parents=True, exist_ok=True)
         f = p / "result.json"
-        part = p / "result.json.part"
-        part.write_text(json.dumps(self.to_dict(), ensure_ascii=False, indent=1), encoding="utf-8", newline="\n")
-        os.replace(part, f)
+        # Exclusive creation avoids truncating an input hardlinked at the old
+        # predictable result.json.part path. Replacement still stays atomic.
+        fd, name = tempfile.mkstemp(prefix='.result-', suffix='.part', dir=p)
+        part = Path(name)
+        try:
+            with os.fdopen(fd, 'w', encoding='utf-8', newline='\n') as stream:
+                stream.write(json.dumps(self.to_dict(), ensure_ascii=False, indent=1))
+            os.replace(part, f)
+        finally:
+            part.unlink(missing_ok=True)
         return f
 
 

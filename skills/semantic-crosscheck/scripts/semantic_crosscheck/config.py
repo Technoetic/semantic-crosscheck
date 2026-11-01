@@ -25,7 +25,7 @@ CUBE_VERSION = "1.8.3"           # the adapter's package-lock and native hashes 
 PAIR_KEY_CAP = 2000              # keys per V3 pair query (shape_q: the sample and chunk size); the least budget
 TABLES = ("version", "source", "entities", "hierarchies", "shapes", "measures", "ontology", "cube", "verify", "gold")
 EXPECT_SOURCES = ("authored", "captured")
-EXPECT_KEYS = ("source", "spec", "params", "rows", "partial", "fixture_sha256")
+EXPECT_KEYS = ("source", "spec", "params", "rows", "partial", "fixture_sha256", "spec_source")
 NULL_CELL = {"null": True}       # TOML has no NULL: an expected cell written { null = true } is SQL NULL
 _SCALARS = (str, int, float, datetime.date, datetime.time)   # bool is an int and datetime a date: both accepted
 _MEMBER = re.compile(r"^[a-z_][a-z0-9_]{0,62}\.[a-z_][a-z0-9_]{0,62}$")
@@ -186,6 +186,7 @@ class Expect:
     params: dict = field(default_factory=dict)   # the gold query's parameter values for this case
     partial: bool = False          # compare only the columns the rows name (every key column among them)
     fixture_sha256: str = ""       # optional pin: expect:fixture's fixture_sha256 of the fixture the rows were written for
+    spec_source: object = None     # optional authored opaque-byte source binding (knowledge_sources.SourceBinding)
 
 
 @dataclass
@@ -317,8 +318,14 @@ def _expect_cases(ref: str, gg: Gold, raw) -> list:
         pin = e.get("fixture_sha256", "")
         if not isinstance(pin, str) or (pin and not re.fullmatch(r"[0-9a-f]{64}", pin)):
             _err(cref, "fixture_sha256 must be the 64 lowercase hexadecimal digits of expect:fixture's fixture_sha256")
+        spec_source = None
+        if 'spec_source' in e:
+            from .knowledge_sources import validate_spec_source
+            if e['source'] != 'authored':
+                _err(cref, 'spec_source is supported only for authored cases')
+            spec_source = validate_spec_source(e['spec_source'], cref)
         cases.append(Expect(source=e["source"], rows=_expect_rows(cref, gg, e["rows"], partial), spec=spec,
-                            params=dict(params), partial=partial, fixture_sha256=pin))
+                            params=dict(params), partial=partial, fixture_sha256=pin, spec_source=spec_source))
     return cases
 
 

@@ -49,6 +49,12 @@ Unknown keys, verdict/trust additions and unsupported syntax yield
 `unsupported_profile`; that does not assert invalidity of general OKF.
 Unsupported JSON metadata yields only omitted-field count/hash where available,
 never arbitrary values. Input bundles are preserved in place.
+Closed schema and generated document integrity are validated independently of
+current trusted inputs. An internally supported unchanged bundle whose trusted
+configuration/SQL/engine/binding metadata differs yields `trusted_inputs_changed`;
+unknown or forged fields still yield `unsupported_profile`. Every later inventory
+must match the inventory whose document bytes were validated, through the final
+diagnostic write.
 
 `inputs` contains `configuration_sha256`, `engine_sha256` and `contracts`. Each
 contract contains selected validated `id`, mapped `members`, `sql_sha256`,
@@ -88,6 +94,9 @@ Export refuses every existing destination, including an empty directory. Owned
 sibling staging is published with Windows no-replace rename, Linux
 `renameat2(RENAME_NOREPLACE)` or macOS `renamex_np(RENAME_EXCL)`; unavailable
 support fails closed. Only verified invocation-owned staging is cleaned. The
+original configuration SHA and input protections must still hold before cleanup;
+changed or unreadable configuration leaves staging untouched because it may now
+contain a declared input. These checks repeat before each cleanup deletion. The
 caller's destination is never cleaned, including races. Postpublication input
 edits fail the operation; an already published directory may remain and needs
 a fresh preview before use.

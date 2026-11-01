@@ -317,6 +317,110 @@ class OKFTests(unittest.TestCase):
         if (self.out / 'okf/result.json').exists():
             self.assertNotEqual(self.result()['status'], 'pass')
 
+    def test_review_preview_retains_validated_inventory_after_observation(self):
+        self.export()
+        mod = self.module()
+        original = mod._observe
+        calls = 0
+        document = self.bundle / 'contracts/q01_explosion.md'
+        def mutate(*args, **kwargs):
+            nonlocal calls
+            result = original(*args, **kwargs)
+            calls += 1
+            if calls == 2:
+                document.write_bytes(b'PRIVATE_PERSISTENT_PREVIEW_MUTATION')
+            return result
+        with patch.object(mod, '_observe', side_effect=mutate):
+            self.assertNotEqual(self.cli('--import-preview', self.bundle), 0)
+        if (self.out / 'okf/result.json').exists():
+            self.assertNotEqual(self.result()['status'], 'pass')
+        self.assertEqual(document.read_bytes(), b'PRIVATE_PERSISTENT_PREVIEW_MUTATION')
+
+    def test_review_export_retains_inventory_from_generated_byte_verification(self):
+        mod = self.module()
+        original = mod._verify_generated
+        def mutate(bundle, files):
+            result = original(bundle, files)
+            if bundle == self.bundle:
+                (bundle / 'contracts/q01_explosion.md').write_bytes(b'PRIVATE_POST_VERIFICATION_MUTATION')
+            return result
+        with patch.object(mod, '_verify_generated', side_effect=mutate):
+            self.assertNotEqual(self.cli('--export', self.bundle, '--select', 'q01_explosion'), 0)
+        if (self.out / 'okf/result.json').exists():
+            self.assertNotEqual(self.result()['status'], 'pass')
+
+    def test_review_cleanup_preserves_staging_newly_declared_by_configuration(self):
+        mod = self.module()
+        original = mod._observe
+        calls = 0
+        target = None
+        raw = None
+        def mutate(*args, **kwargs):
+            nonlocal calls, target, raw
+            calls += 1
+            if calls == 2:
+                staging = next(self.root.glob('.sxc-okf-*'))
+                target = staging / 'contracts/q01_explosion.md'
+                raw = target.read_bytes()
+                self.path.write_text(self.path.read_text().replace('other.sql', target.relative_to(self.root).as_posix()), encoding='utf-8')
+                self.assertEqual(config.load(self.path).gold[1].sql_path(config.load(self.path)), target)
+            return original(*args, **kwargs)
+        with patch.object(mod, '_observe', side_effect=mutate):
+            self.assertNotEqual(self.cli('--export', self.bundle, '--select', 'q01_explosion'), 0)
+        self.assertIsNotNone(target)
+        self.assertTrue(target.exists(), 'observed configuration drift must suppress cleanup')
+        self.assertEqual(target.read_bytes(), raw)
+
+    def test_review_cleanup_leaves_staging_when_configuration_is_unreadable(self):
+        mod = self.module()
+        original = mod._observe
+        calls = 0
+        target = None
+        def mutate(*args, **kwargs):
+            nonlocal calls, target
+            calls += 1
+            if calls == 2:
+                target = next(self.root.glob('.sxc-okf-*')) / 'contracts/q01_explosion.md'
+                self.path.unlink()
+            return original(*args, **kwargs)
+        with patch.object(mod, '_observe', side_effect=mutate):
+            self.assertNotEqual(self.cli('--export', self.bundle, '--select', 'q01_explosion'), 0)
+        self.assertTrue(target.exists(), 'unreadable configuration cannot authorize cleanup')
+
+    def test_review_valid_profile_distinguishes_trusted_input_drift(self):
+        self.export()
+        before = {p: p.read_bytes() for p in self.bundle.rglob('*') if p.is_file()}
+        for path in (self.root / 'q01.sql', self.path):
+            with self.subTest(kind=path.suffix):
+                raw = path.read_bytes()
+                path.write_bytes(raw + (b'\n# comment' if path == self.path else b'\n-- comment'))
+                self.assertNotEqual(self.cli('--import-preview', self.bundle), 0)
+                self.assertEqual(self.result()['checks'][0]['detail']['reason'], 'trusted_inputs_changed')
+                self.assertEqual(before, {p: p.read_bytes() for p in before})
+                path.write_bytes(raw)
+
+    def test_review_unknown_nested_metadata_remains_unsupported(self):
+        self.export()
+        original = self.manifest()
+        for section in ('inputs', 'contract', 'source_bindings', 'binding'):
+            with self.subTest(section=section):
+                manifest = json.loads(json.dumps(original))
+                target = (manifest['inputs']['contracts'][0] if section == 'contract' else
+                          manifest['source_bindings']['items'][0] if section == 'binding' else manifest[section])
+                target['verified'] = 'PRIVATE_UNTRUSTED_CLAIM'
+                self.write_manifest(manifest)
+                raw = (self.bundle / 'manifest.json').read_bytes()
+                self.assertNotEqual(self.cli('--import-preview', self.bundle), 0)
+                self.assertIn('unsupported_profile', self.last_output)
+                self.assertNotIn('PRIVATE_UNTRUSTED_CLAIM', self.last_output)
+                self.assertEqual((self.bundle / 'manifest.json').read_bytes(), raw)
+
+    def test_review_configuration_selection_change_is_changed_evidence(self):
+        self.export()
+        self.path.write_text(self.path.read_text().replace('q01_explosion', 'renamed'), encoding='utf-8')
+        self.assertNotEqual(self.cli('--import-preview', self.bundle), 0)
+        self.assertIn('trusted_inputs_changed', self.last_output)
+
     def test_direct_run_protects_input_alias(self):
         cfg = config.load(self.path)
         result = self.module().run(cfg, SimpleNamespace(export=str(self.bundle), import_preview=None, select=['q01_explosion']), self.root)

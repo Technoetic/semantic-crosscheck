@@ -102,14 +102,22 @@ def _inventory_path(value):
         raise _Issue('unsupported_profile')
 
 
-def _selected(cfg, ids):
+def _selection_ids(ids):
     if (not isinstance(ids, list) or not 1 <= len(ids) <= 64
             or any(not isinstance(i, str) or not _ID.fullmatch(i) or sources._DEVICE.match(i) for i in ids)
             or len(set(ids)) != len(ids)):
         raise _Issue('invalid_selection')
+
+
+def _selected(cfg, ids):
+    _selection_ids(ids)
     available = {g.id for g in cfg.gold}
     if not set(ids) <= available:
         raise _Issue('invalid_selection')
+    return _available_selection(cfg, ids)
+
+
+def _available_selection(cfg, ids):
     return [(gi, g) for gi, g in enumerate(cfg.gold) if g.id in ids]
 
 
@@ -310,7 +318,56 @@ def _preview_read(bundle):
     if (not isinstance(manifest, dict) or set(manifest) != keys or manifest.get('schema') != SCHEMA
             or manifest.get('profile') != PROFILE or manifest.get('okf_version') != '0.2'):
         raise _Issue('unsupported_profile', len(manifest) if isinstance(manifest, dict) else 0, _sha(raw))
+    _validate_payload(manifest, raw)
     return manifest, inventory, raw
+
+
+def _validate_payload(manifest, raw):
+    """Validate the closed producer shape without consulting current inputs."""
+    def keys(value, expected):
+        return isinstance(value, dict) and set(value) == set(expected.split())
+    def digest(value):
+        return isinstance(value, str) and re.fullmatch('[0-9a-f]{64}', value) is not None
+    def count(value):
+        return type(value) is int and value >= 0
+    def require(condition):
+        if not condition:
+            raise _Issue('unsupported_profile', len(manifest), _sha(raw))
+    try:
+        ids = manifest['selected']
+        _selection_ids(ids)
+        inputs, bindings = manifest['inputs'], manifest['source_bindings']
+        require(keys(inputs, 'configuration_sha256 engine_sha256 contracts'))
+        require(digest(inputs['configuration_sha256']) and digest(inputs['engine_sha256']))
+        contracts = inputs['contracts']
+        require(isinstance(contracts, list) and len(contracts) == len(ids))
+        for i, contract in zip(ids, contracts):
+            require(keys(contract, 'id sql_sha256 members case_count omitted_count omitted_sha256'))
+            require(contract['id'] == i and digest(contract['sql_sha256']) and digest(contract['omitted_sha256']))
+            members = contract['members']
+            require(isinstance(members, list) and all(isinstance(m, str) and re.fullmatch(
+                r'[a-z_][a-z0-9_]{0,62}\.[a-z_][a-z0-9_]{0,62}', m) for m in members))
+            require(members == sorted(set(members)))
+            require(count(contract['case_count']) and count(contract['omitted_count'])
+                    and contract['omitted_count'] >= contract['case_count'])
+        require(keys(bindings, 'schema count current digest items'))
+        require(bindings['schema'] == 'sxc-spec-sources/v1' and count(bindings['count'])
+                and count(bindings['current']) and isinstance(bindings['items'], list))
+        items = bindings['items']
+        require(bindings['count'] == bindings['current'] == len(items) <= sources.MAX_CASES)
+        require(digest(bindings['digest']) and bindings['digest'] == _sha(_json(items)))
+        indices = []
+        for item in items:
+            require(keys(item, 'gold_index case_index state expected_sha256 observed_sha256 binding_sha256'))
+            require(count(item['gold_index']) and count(item['case_index']) and item['state'] == 'current')
+            require(all(digest(item[k]) for k in ('expected_sha256', 'observed_sha256', 'binding_sha256'))
+                    and item['expected_sha256'] == item['observed_sha256'])
+            indices.append((item['gold_index'], item['case_index']))
+        require(indices == sorted(set(indices)))
+        expected, _ = _bundle(ids, inputs, bindings)
+        require(_json(manifest) == _json(expected))
+    except (KeyError, TypeError, ValueError, _Issue):
+        raise _Issue('unsupported_profile', len(manifest), _sha(raw)) from None
 
 
 def _validate_frontmatter(raw):
@@ -369,10 +426,11 @@ def _verify_generated(bundle, files):
     return inventory
 
 
-def _cleanup_owned(staging, identity, files):
+def _cleanup_owned(staging, identity, files, authorize):
     # Delete only the original owned directory and files with the exact bytes
     # this invocation wrote. Unexpected substitutions are left untouched.
     try:
+        authorize()
         meta = _inspect(staging)
         if (meta.st_dev, meta.st_ino) != identity:
             return
@@ -384,8 +442,11 @@ def _cleanup_owned(staging, identity, files):
             if raw != expected:
                 return
         for name in files:
+            authorize()
             (staging / name).unlink()
+        authorize()
         (staging / 'contracts').rmdir()
+        authorize()
         staging.rmdir()
     except (OSError, _Issue):
         return
@@ -438,13 +499,13 @@ def run(cfg, args, out):
             ids = manifest['selected']
         else:
             ids = getattr(args, 'select', [])
-        selected = _selected(cfg, ids)
-        ids = [g.id for _, g in selected]
+        selected = _selected(cfg, ids) if export else _available_selection(cfg, ids)
+        if export:
+            ids = [g.id for _, g in selected]
         protect(cfg, selected, out, bundle, export)
-        initial = _observe(cfg, selected, cfg_sha)
-        expected, files = _bundle(ids, *initial[:2])
         if preview:
-            if _json(manifest) != _json(expected) or set(inventory[0]) != set(files):
+            expected, files = _bundle(ids, manifest['inputs'], manifest['source_bindings'])
+            if set(inventory[0]) != set(files):
                 raise _Issue('unsupported_profile', len(manifest), _sha(manifest_raw))
             for name, expected_raw in files.items():
                 raw, identity = _read(bundle / name, MAX_MANIFEST if name == 'manifest.json' else MAX_DOCUMENT, bundle)
@@ -458,7 +519,16 @@ def run(cfg, args, out):
                     raise _Issue('input_changed')
             if _inventory(bundle) != inventory:
                 raise _Issue('input_changed')
+            if manifest['inputs']['configuration_sha256'] != cfg_sha:
+                raise _Issue('trusted_inputs_changed')
+            selected = _selected(cfg, ids)
+            initial = _observe(cfg, selected, cfg_sha)
+            if (_json(manifest['inputs']) != _json(initial[0])
+                    or _json(manifest['source_bindings']) != _json(initial[1])):
+                raise _Issue('trusted_inputs_changed')
         else:
+            initial = _observe(cfg, selected, cfg_sha)
+            expected, files = _bundle(ids, *initial[:2])
             bundle.parent.mkdir(parents=True, exist_ok=True)
             protect(cfg, selected, out, bundle, True)
             staging = Path(tempfile.mkdtemp(prefix='.sxc-okf-', dir=bundle.parent))
@@ -475,16 +545,19 @@ def run(cfg, args, out):
             _verify_generated(staging, files)
             _publish(staging, bundle)
             staging = None
-            _verify_generated(bundle, files)
-        final_inventory = _inventory(bundle)
+            inventory = _verify_generated(bundle, files)
+        if _inventory(bundle) != inventory:
+            raise _Issue('input_changed')
         if _observe(cfg, selected, cfg_sha) != initial:
+            raise _Issue('input_changed')
+        if _inventory(bundle) != inventory:
             raise _Issue('input_changed')
         res.inputs = {'okf_profile': {'profile': PROFILE, 'mode': 'export' if export else 'import_preview',
                                     'selected_count': len(ids), 'manifest_sha256': _sha(_json(expected)),
                                     'configuration_sha256': cfg_sha, 'engine_sha256': initial[0]['engine_sha256'],
                                     'source_binding_sha256': initial[1]['digest']}}
         res._okf_observation = initial
-        res._okf_inventory = final_inventory
+        res._okf_inventory = inventory
         res.add('okf:profile', 'pass', '', selected_count=len(ids), document_count=len(files) - 1)
         return res
     except _Issue as exc:
@@ -493,7 +566,11 @@ def run(cfg, args, out):
         return _failure(res, _Issue('input_unavailable'))
     finally:
         if staging is not None:
-            _cleanup_owned(staging, owned, files)
+            def authorize_cleanup():
+                if _sha(_read(Path(cfg.path), MAX_TOTAL)[0]) != cfg_sha:
+                    raise _Issue('configuration_changed')
+                protect(cfg, selected, out, staging, False)
+            _cleanup_owned(staging, owned, files, authorize_cleanup)
 
 
 def cli(argv, parser, summary):
@@ -517,7 +594,7 @@ def cli(argv, parser, summary):
             selected = _selected(cfg, args.select)
         else:
             manifest, _, _ = _preview_read(bundle)
-            selected = _selected(cfg, manifest['selected'])
+            selected = _available_selection(cfg, manifest['selected'])
         protect(cfg, selected, candidate, bundle, bool(args.export))
         if _sha(_read(path, MAX_TOTAL)[0]) != cfg_sha:
             raise _Issue('configuration_changed')
@@ -544,7 +621,7 @@ def cli(argv, parser, summary):
             # suppresses writes, preserving an unverified input alias.
             if args.import_preview:
                 manifest, _, _ = _preview_read(bundle)
-                selected = _selected(cfg, manifest['selected'])
+                selected = _available_selection(cfg, manifest['selected'])
             if _sha(_read(Path(cfg.path), MAX_TOTAL)[0]) != cfg_sha:
                 raise _Issue('configuration_changed')
             # Publication succeeded: destination now exists and must be allowed.

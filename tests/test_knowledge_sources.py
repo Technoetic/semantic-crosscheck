@@ -458,6 +458,93 @@ class SourceTests(unittest.TestCase):
             final = mod.finish(snap, Result('expect'))
         self.assertTrue(final.ok)
 
+    def test_actual_expect_configuration_drift_preserves_newly_declared_source(self):
+        import sxc
+        self.load()
+        text = self.path.read_text(encoding='utf-8')
+        expect = importlib.import_module('semantic_crosscheck.expect')
+        target = self.out / 'expect' / 'result.json'
+        new = b'new synthetic opaque source must remain intact'
+        def stage(result, *unused):
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(new)
+            self.path.write_text(text.replace('definition.md', 'out/expect/result.json')
+                                 .replace(digest(self.raw), digest(new)), encoding='utf-8')
+            result.add('expect:q01_explosion[0]', 'pass')
+        output = io.StringIO()
+        with patch.object(expect, 'fixture_env', return_value='synthetic'), \
+                patch.object(expect, 'operational_variables', return_value=([], [])), \
+                patch.object(expect.db, 'connect', return_value=SimpleNamespace(close=lambda: None)), \
+                patch.object(expect, '_stage', side_effect=stage), contextlib.redirect_stdout(output), \
+                contextlib.redirect_stderr(output):
+            code = sxc.main(['expect', '--config', str(self.path), '--out', str(self.out)])
+        self.assertNotEqual(code, 0)
+        self.assertTrue(target.read_bytes() == new, 'newly declared source bytes must survive error publication')
+        self.assertNotIn(str(self.root), output.getvalue())
+
+    def test_all_publication_paths_suppress_writes_on_changed_or_unreadable_configuration(self):
+        import sxc
+        expect = importlib.import_module('semantic_crosscheck.expect')
+        target = self.out / 'expect' / 'result.json'
+        new = b'preserved synthetic boundary bytes'
+        for action in ('pass', 'stage_error', 'interrupt', 'exception'):
+            for drift in ('changed', 'missing'):
+                with self.subTest(action=action, drift=drift):
+                    self.load()
+                    def execute(*unused):
+                        target.parent.mkdir(parents=True, exist_ok=True)
+                        target.write_bytes(new)
+                        if drift == 'missing':
+                            self.path.unlink()
+                        else:
+                            self.path.write_bytes(b'configuration changed at execution boundary')
+                        if action == 'stage_error':
+                            raise StageError('private error text', 2)
+                        if action == 'interrupt':
+                            raise KeyboardInterrupt()
+                        if action == 'exception':
+                            raise RuntimeError('private error text')
+                        result = Result('expect')
+                        result.add('expect:q01_explosion[0]', 'pass')
+                        return result
+                    output = io.StringIO()
+                    with patch.object(expect, 'run', side_effect=execute), contextlib.redirect_stdout(output), \
+                            contextlib.redirect_stderr(output):
+                        code = sxc.main(['expect', '--config', str(self.path), '--out', str(self.out)])
+                    self.assertNotEqual(code, 0)
+                    self.assertTrue(target.read_bytes() == new, 'changed or unreadable configuration blocks publication')
+                    self.assertNotIn('private error text', output.getvalue())
+
+    def test_verified_unbound_consent_error_retains_legacy_actionable_message(self):
+        import sxc
+        self.path.write_text(BASE + GOLD + CASE, encoding='utf-8')
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
+            code = sxc.main(['expect', '--config', str(self.path), '--out', str(self.out)])
+        self.assertEqual(code, 2)
+        stored = json.loads((self.out / 'expect' / 'result.json').read_text(encoding='utf-8'))
+        self.assertIn('--allow-fixture-database', stored['checks'][0]['detail'].get('message', ''))
+        self.assertIn('--allow-fixture-database', output.getvalue())
+
+    def test_configuration_drift_before_cleanup_preserves_new_source(self):
+        import sxc
+        self.load()
+        text = self.path.read_text(encoding='utf-8')
+        target = self.out / 'expect' / 'result.json'
+        new = b'new synthetic source before cleanup'
+        ensure = sxc.ensure_out
+        def change(out):
+            ensure(out)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(new)
+            self.path.write_text(text.replace('definition.md', 'out/expect/result.json')
+                                 .replace(digest(self.raw), digest(new)), encoding='utf-8')
+        with patch.object(sxc, 'ensure_out', side_effect=change), contextlib.redirect_stdout(io.StringIO()), \
+                contextlib.redirect_stderr(io.StringIO()):
+            code = sxc.main(['expect', '--config', str(self.path), '--out', str(self.out)])
+        self.assertNotEqual(code, 0)
+        self.assertTrue(target.read_bytes() == new, 'configuration drift suppresses stale cleanup')
+
 
 if __name__ == '__main__':
     unittest.main()

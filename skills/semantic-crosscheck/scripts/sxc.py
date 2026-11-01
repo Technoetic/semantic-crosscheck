@@ -463,16 +463,36 @@ def _expect_prepare(args, out):
     return cfg, before, candidate, path
 
 
-def _expect_write(res, out, cfg):
+def _expect_verified(cfg, configuration_sha):
+    """A stale parsed configuration cannot authorize cleanup or publication."""
+    if cfg is None or configuration_sha is None:
+        return False
+    try:
+        return hashlib.sha256(Path(cfg.path).read_bytes()).hexdigest() == configuration_sha
+    except (OSError, ValueError):
+        return False
+
+
+def _expect_legacy(cfg, configuration_sha):
+    return (_expect_verified(cfg, configuration_sha)
+            and not any(getattr(c, 'spec_source', None) is not None for g in cfg.gold for c in g.expect))
+
+
+def _expect_write(res, out, cfg, configuration_sha):
     """A changed alias must not turn an error-result write into input loss."""
     if out is None:
         return None
     try:
         from semantic_crosscheck import knowledge_sources
-        if cfg is not None:
-            knowledge_sources.preflight(cfg, out)
-        return _write(res, out)
+        if not _expect_verified(cfg, configuration_sha):
+            raise StageError('expect: configuration_changed', EXIT_CONFIG)
+        knowledge_sources.preflight(cfg, out)
+        ensure_out(out)
+        if not _expect_verified(cfg, configuration_sha):
+            raise StageError('expect: configuration_changed', EXIT_CONFIG)
+        return res.write(out)
     except Exception:
+        res._suppress_paths = True
         res.add('stage', 'error', '', reason='protected_output_unavailable')
         return None
 
@@ -533,7 +553,11 @@ def main(argv=None) -> int:
             cfg_file = config_path(stage, args.config)
         if out is None:
             out = (cfg_file.resolve().parent if cfg_file else Path.cwd()) / ".sxc"
+        if stage == 'expect' and not _expect_verified(expect_cfg, expect_cfg_sha):
+            raise StageError('expect: configuration_changed', EXIT_CONFIG)
         ensure_out(out)
+        if stage == 'expect' and not _expect_verified(expect_cfg, expect_cfg_sha):
+            raise StageError('expect: configuration_changed', EXIT_CONFIG)
         discard(out, result_name)
         if stage == "report":
             discard_report_files(out)
@@ -584,13 +608,13 @@ def main(argv=None) -> int:
             res.add("stage", "error", "", reason="invalid_constraint_audit_inputs")
         elif diagnostic_mode:
             res.add("stage", "error", "", reason="diagnostic_environment_missing" if e.exit_code == 3 else "invalid_diagnostic_inputs")
-        elif stage == 'expect':
+        elif stage == 'expect' and not _expect_legacy(expect_cfg, expect_cfg_sha):
             res._suppress_paths = True
             res.add('stage', 'error', '', reason='expect_environment_unavailable' if e.exit_code == 3 else 'invalid_expect_inputs')
         else:
             res.add("stage", "error", "", message=str(e))
         res.next_safe_action = "fix the configuration or environment named in the message, then rerun this stage"
-        path = (_expect_write(res, out, expect_cfg) if stage == 'expect' else
+        path = (_expect_write(res, out, expect_cfg, expect_cfg_sha) if stage == 'expect' else
                 _diagnostic_write(res, out) if diagnostic_mode else _write(res, out))
         print(_summary(res, path, args.quiet), file=sys.stderr)
         return e.exit_code
@@ -601,10 +625,10 @@ def main(argv=None) -> int:
         if audit_mode:
             res.inputs = {"constraint_audit": {"mode": "constraint_audit"}}
         res.add("stage", "error", "", reason="interrupted")
-        if stage == 'expect':
+        if stage == 'expect' and not _expect_legacy(expect_cfg, expect_cfg_sha):
             res._suppress_paths = True
         res.next_safe_action = "the run was interrupted before it finished: rerun this stage"
-        path = (_expect_write(res, out, expect_cfg) if stage == 'expect' else
+        path = (_expect_write(res, out, expect_cfg, expect_cfg_sha) if stage == 'expect' else
                 _diagnostic_write(res, out) if diagnostic_mode else _write(res, out))
         print(_summary(res, path, args.quiet), file=sys.stderr)
         return EXIT_FAIL
@@ -617,17 +641,17 @@ def main(argv=None) -> int:
             res.add("stage", "error", "", reason="constraint_audit_error")
         elif diagnostic_mode:
             res.add("stage", "error", "", reason="diagnostic_error")
-        elif stage == 'expect':
+        elif stage == 'expect' and not _expect_legacy(expect_cfg, expect_cfg_sha):
             res._suppress_paths = True
             res.add('stage', 'error', '', reason='expect_error')
         else:
             res.add("stage", "error", "", exception=type(e).__name__, sqlstate=_db_error_code(e))
             _crash_note(e)
-        path = (_expect_write(res, out, expect_cfg) if stage == 'expect' else
+        path = (_expect_write(res, out, expect_cfg, expect_cfg_sha) if stage == 'expect' else
                 _diagnostic_write(res, out) if diagnostic_mode else _write(res, out))
         print(_summary(res, path, args.quiet), file=sys.stderr)
         return EXIT_FAIL
-    path = (_expect_write(res, out, expect_cfg) if stage == 'expect' else
+    path = (_expect_write(res, out, expect_cfg, expect_cfg_sha) if stage == 'expect' else
             _diagnostic_write(res, out) if diagnostic_mode else res.write(out))
     print(_summary(res, path, args.quiet))
     return res.exit_code()

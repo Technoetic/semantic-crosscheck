@@ -2,6 +2,26 @@
 
 ## [Unreleased]
 
+### Added
+
+- Optional authored `gold.expect.spec_source` binds opaque source bytes with a
+  project-relative path and SHA-256 pin. Missing, changed, blocked or unavailable
+  sources stop fixture cases before DB access; completion drift demotes passes.
+  Public metadata uses states and hashes only. Legacy unbound cases keep their
+  behavior; source equality is not semantic approval. See [scope](docs/knowledge-sources.md).
+- The diagnostic `okf` exports explicitly selected metadata or previews a local
+  bundle using closed profile `sxc-verification-contract-metadata/v1`, OKF 0.2.
+  Preview applies nothing; receipts and raw source/SQL/rows/paths are omitted.
+  Integrity is not authenticity. See [profile and bounds](docs/okf.md).
+- Standalone `knowledge-evolution` replays the bundled T0-T4 synthetic source
+  transitions through actual config/source/fingerprint/report APIs. Its fixed
+  26 contracts retain missing observations, restore without case promotion, and
+  reject stale synthetic receipts on retirement. No DB, engine or model executes,
+  and semantic coverage is not measured. See [offline replay](docs/knowledge-evolution.md).
+
+All three additions are opt-in unreleased source, outside operational report
+requirements. Package and release metadata remain 0.14.0.
+
 ## [0.14.0] - 2026-10-31
 
 Release notes: [docs/releases/v0.14.0.md](docs/releases/v0.14.0.md).

@@ -5,6 +5,15 @@ description: "Use when verifying an ontology plus semantic layer built on Postgr
 
 # semantic-crosscheck
 
+Unreleased source: [xc-knowledge-evolution](../../commands/xc-knowledge-evolution.md)
+replays a fixed bundled five-checkpoint source-contract scenario offline. It
+rejects `--config`, ignores cwd configuration and accepts no external fixture.
+Its 26 contracts check harness behavior with zero engine, DB or model execution;
+semantic coverage is not measured and no operational result is generated.
+Source restoration never promotes retained not_run evidence. See
+[offline replay](../../docs/knowledge-evolution.md) and
+[authored source binding scope](../../docs/knowledge-sources.md).
+
 Unreleased source: [xc-okf](../../commands/xc-okf.md) exports explicitly selected
 Gold contracts as a closed metadata-only OKF profile, or previews a local bundle
 against current trusted inputs. No SQL/source text, rows, parameter values,

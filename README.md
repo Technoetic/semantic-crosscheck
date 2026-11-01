@@ -801,6 +801,17 @@ The first two are standalone diagnostics outside the default report pipeline. Th
 | `shacl-repair` | `--spec FILE`, `--timeout-ms 30000` |
 | `grain` | `--spec FILE`, `--max-rows 100000` |
 | `okf` | Unreleased metadata only: `--export DIR --select GOLD_ID` (repeatable selection) or `--import-preview DIR`; explicit `--config FILE` required |
+| `knowledge-evolution` | Unreleased fixed offline synthetic replay: `--out DIR`, `--quiet`; rejects `--config`, accepts no external fixture; no engines |
+
+The unreleased [offline knowledge evolution diagnostic](docs/knowledge-evolution.md)
+checks five fixed source transitions and 26 contracts through actual source and
+report APIs. Restoration leaves retained expectation evidence `not_run`; retiring
+the authored case changes the configuration fingerprint and stales old synthetic
+operational receipts. PASS measures only harness behavior, with no semantic
+coverage, DB, engine or model execution. Together with
+[authored source binding](docs/knowledge-sources.md) and
+[selected OKF metadata exchange](docs/okf.md), it remains opt-in and outside
+operational report gates. All three are unreleased source; version stays 0.14.0.
 
 The opt-in reason diagnostic accepts `--explain-inconsistency`, `--explain-max-axioms 128`, `--explain-max-checks 64` and `--explain-timeout-ms 10000`. Limits and nonpassing partial outcomes are documented above.
 

@@ -1,0 +1,10 @@
+{
+  "schema": "sxc/knowledge-evolution-fixture/v1",
+  "checkpoints": [
+    {"id": "T0", "operation": "normal"},
+    {"id": "T1", "operation": "change_spec"},
+    {"id": "T2", "operation": "delete_spec"},
+    {"id": "T3", "operation": "restore_spec"},
+    {"id": "T4", "operation": "retire_case"}
+  ]
+}

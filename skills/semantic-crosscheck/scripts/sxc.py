@@ -53,9 +53,10 @@ STAGES = {
     "shacl-repair": "shacl_repair",
     "grain": "grain",
     "okf": "okf",
+    "knowledge-evolution": "knowledge_evolution",
 }
 NEEDS_CONFIG = {"demo", "build", "reason", "cube", "verify", "report", "expect", "grain"}
-DIAGNOSTIC_STAGES = {"shacl-repair", "grain", "okf"}
+DIAGNOSTIC_STAGES = {"shacl-repair", "grain", "okf", "knowledge-evolution"}
 DEFAULT_CONFIG = "crosscheck.toml"
 
 
@@ -193,6 +194,9 @@ def parser(*, audit_errors=False) -> argparse.ArgumentParser:
     mode.add_argument("--import-preview", metavar="DIR", help="preview only; never apply imported definitions")
     s.add_argument("--select", action="append", default=[], metavar="GOLD_ID", help="explicit selected Gold ID (repeatable, export only)")
 
+    sub.add_parser("knowledge-evolution", parents=[common], allow_abbrev=False,
+                   help="replay five fixed offline synthetic source-contract checkpoints; no engines")
+
     s = sub.add_parser("expect", parents=[common], help="run the gold queries and Cube on a dedicated fixture database and compare "
                                                        "both with the literal expected rows of [[gold.expect]]")
     s.add_argument("--dsn-env", default="SXC_EXPECT_DSN", help="NAME of the environment variable holding the DSN of the dedicated "
@@ -212,7 +216,7 @@ def config_path(stage: str, given: str | None) -> Path | None:
             raise StageError("counterexample uses synthetic fixtures, not --config; pass the trusted SQL instead "
                              "(--reference-sql and --candidate-sql, or --metamorphic-sql)", EXIT_CONFIG)
         return None
-    if stage in {"cube-replay", "tlp", "shacl-corpus", "shacl-repair"}:
+    if stage in {"cube-replay", "tlp", "shacl-corpus", "shacl-repair", "knowledge-evolution"}:
         if given is not None:
             raise StageError(f"{stage} uses standalone synthetic inputs, not --config", EXIT_CONFIG)
         return None
@@ -249,7 +253,7 @@ def _brief(detail: dict) -> str:
 
 
 def _summary(res: Result, path, quiet: bool) -> str:
-    standalone = (res.stage in {"cube_replay", "tlp", "shacl_corpus", "shacl_repair", "grain", "okf"}
+    standalone = (res.stage in {"cube_replay", "tlp", "shacl_corpus", "shacl_repair", "grain", "okf", "knowledge_evolution"}
                   or 'constraint_audit' in res.inputs or 'spec_sources' in res.inputs
                   or getattr(res, '_suppress_paths', False))
     if standalone:
@@ -398,7 +402,7 @@ def _diagnostic_prepare(args, out):
         if directory.exists() and not directory.is_dir():
             raise StageError("diagnostic output unavailable", EXIT_CONFIG)
     outputs = [stage_dir / name for name in ("result.json", "result.json.part")]
-    for value in (args.spec, args.config):
+    for value in (getattr(args, 'spec', None), args.config):
         if not value:
             continue
         source = Path(value)
@@ -609,6 +613,8 @@ def main(argv=None) -> int:
                 res.inputs['spec_sources'] = sources
         if stage == "grain":
             res.inputs["configuration"] = inputs
+        if stage == "knowledge-evolution":
+            res.inputs = {'knowledge_evolution': res.inputs['knowledge_evolution']}
         res = provenance.finish(None if diagnostic_mode else cfg, res, revision_start)
     except StageError as e:
         if stage == "report":

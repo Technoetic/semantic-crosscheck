@@ -253,6 +253,17 @@ since 0.11.0, `<iri>shape/<id>/pair` for the reason-time property-pair shape of 
 
 ## 6. Check catalogue
 
+Unreleased [offline evolution](knowledge-evolution.md) uses one packaged bounded
+fixture and a separate literal oracle. Five checkpoints retain 26 contracts even
+on observation errors. Actual config, fingerprint, source capture/finish and
+report staleness/counting APIs operate only on a temporary synthetic project and
+fixed-time in-memory evidence. Restoration never promotes a retained case;
+retirement changes configuration and rejects old synthetic receipts. There is
+no new operational result, engine execution, semantic measurement or report gate.
+Related [source pins](knowledge-sources.md) and [OKF metadata](okf.md) preserve
+their authored-only and selected-metadata-only scopes; all remain unreleased
+source with version 0.14.0.
+
 Every check id a result can hold. `<entity>`, `<h>`, `<id>`, `<gold>`, `<name>` and `<target>` are
 configuration ids; `<member>` is a Cube member (`cube.member`); `<stratum>` is a stratum name, `values`,
 `param_sets` or `all`.
@@ -321,6 +332,7 @@ configuration ids; `<member>` is a Cube member (`cube.member`); `<stratum>` is a
 | grain | `grain:c<case>:evidence` | actual bounded visible source/node key and join obligations all completed and passed | `fail` on null/duplicate keys, orphan/fanout or disallowed exclusion; `not_run` on empty/unsupported/oversized scope |
 | grain | `grain:execution` | never passes | `error` on incomplete SQL, input binding or connection cleanup |
 | okf | `okf:profile` | unreleased: selected metadata export or local preview completed within the closed profile | `error` for unsupported profiles, noncurrent inputs, unsafe output or exceeded bounds; runtime, correctness, authenticity and application remain unproven |
+| knowledge-evolution | `knowledge_evolution:<checkpoint>:<contract>` | unreleased: fixed synthetic observation agrees with independent literal oracle; five checkpoints, 26 contracts | `fail` on disagreement, `error` on missing/unavailable observations; no engine or semantic coverage claim |
 | shacl-repair | `fixture:<case>:profile` | local graph and shapes are inside the supported nonrecursive profile | `not_run` for unsupported profile; `error` for malformed input |
 | shacl-repair | `fixture:<case>:before`, `fixture:<case>:after` | actual normalized report bags equal independent authored expectations | `fail` on disagreement; `error` on validation/protocol failure |
 | shacl-repair | `fixture:<case>:retention` | explicit shape targets remain targeted before and after | `fail` when an obligation is absent or erased |

@@ -78,7 +78,8 @@ def load_json(rel: str) -> dict:
 def docs() -> list[Path]:
     """Every Markdown document shipped with the plugin."""
     return [ROOT / "README.md", ROOT / "SECURITY.md", THIRD_PARTY, ROOT / "CHANGELOG.md", SKILL,
-            ROOT / "docs" / "design.md", ROOT / "docs" / "okf.md", *sorted((ROOT / "docs" / "releases").glob("*.md")),
+            ROOT / "docs" / "design.md", ROOT / "docs" / "okf.md", ROOT / "docs" / "knowledge-sources.md",
+            ROOT / "docs" / "knowledge-evolution.md", *sorted((ROOT / "docs" / "releases").glob("*.md")),
             *sorted(REFERENCES.glob("*.md")), *sorted(COMMANDS.glob("*.md"))]
 
 

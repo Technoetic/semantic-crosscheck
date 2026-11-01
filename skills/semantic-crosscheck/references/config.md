@@ -1,5 +1,11 @@
 # crosscheck.toml reference
 
+Unreleased source: the optional [OKF metadata profile](../../../docs/okf.md)
+uses explicit local configuration and selected Gold contracts without new
+configuration keys. Export/preview never changes configuration, executes SQL,
+or contributes operational report authority. Business-source paths/labels are
+represented only by binding hashes in exported metadata.
+
 `crosscheck.toml` is the single source of truth for every stage. The generated SQL, SHACL shapes, Cube
 model and OWL ontology are derived from it; when a check fails, fix this file (or the gold SQL, or the
 data), never the generated output. The demo configuration `demo/crosscheck.toml` uses every section.

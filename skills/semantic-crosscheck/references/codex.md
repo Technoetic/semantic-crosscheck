@@ -48,6 +48,7 @@ default.
 | `expect` | [xc-expect.md](../../../commands/xc-expect.md) | `sxc.py expect --config crosscheck.toml --allow-fixture-database` |
 | `shacl-repair` | [xc-shacl-repair.md](../../../commands/xc-shacl-repair.md) | `sxc.py shacl-repair --spec examples/shacl-repair/valid.json` |
 | `grain` | [xc-grain.md](../../../commands/xc-grain.md) | `sxc.py grain --config crosscheck.toml --spec contract.json` |
+| `okf` (unreleased) | [xc-okf.md](../../../commands/xc-okf.md) | `sxc.py okf --config crosscheck.toml --export contract-bundle --select q01_explosion` |
 
 `cube-replay`, `tlp` and `shacl-corpus` are optional standalone synthetic checks. They reject `--config`, ignore any
 working-directory configuration and preserve independent Result stages; their success does not change

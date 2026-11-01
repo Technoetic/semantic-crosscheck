@@ -52,9 +52,10 @@ STAGES = {
     "expect": "expect",
     "shacl-repair": "shacl_repair",
     "grain": "grain",
+    "okf": "okf",
 }
 NEEDS_CONFIG = {"demo", "build", "reason", "cube", "verify", "report", "expect", "grain"}
-DIAGNOSTIC_STAGES = {"shacl-repair", "grain"}
+DIAGNOSTIC_STAGES = {"shacl-repair", "grain", "okf"}
 DEFAULT_CONFIG = "crosscheck.toml"
 
 
@@ -185,6 +186,13 @@ def parser(*, audit_errors=False) -> argparse.ArgumentParser:
     s.add_argument("--spec", required=True, metavar="FILE", help="strict version 1 intended-grain and key-provenance contract")
     s.add_argument("--max-rows", type=int, default=100000, help="maximum source or node rows per contract (default: 100000)")
 
+    s = sub.add_parser("okf", parents=[common], allow_abbrev=False,
+                       help="export selected metadata-only OKF contracts or preview a local bundle")
+    mode = s.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--export", metavar="DIR", help="new metadata bundle directory (never overwritten)")
+    mode.add_argument("--import-preview", metavar="DIR", help="preview only; never apply imported definitions")
+    s.add_argument("--select", action="append", default=[], metavar="GOLD_ID", help="explicit selected Gold ID (repeatable, export only)")
+
     s = sub.add_parser("expect", parents=[common], help="run the gold queries and Cube on a dedicated fixture database and compare "
                                                        "both with the literal expected rows of [[gold.expect]]")
     s.add_argument("--dsn-env", default="SXC_EXPECT_DSN", help="NAME of the environment variable holding the DSN of the dedicated "
@@ -241,7 +249,7 @@ def _brief(detail: dict) -> str:
 
 
 def _summary(res: Result, path, quiet: bool) -> str:
-    standalone = (res.stage in {"cube_replay", "tlp", "shacl_corpus", "shacl_repair", "grain"}
+    standalone = (res.stage in {"cube_replay", "tlp", "shacl_corpus", "shacl_repair", "grain", "okf"}
                   or 'constraint_audit' in res.inputs or 'spec_sources' in res.inputs
                   or getattr(res, '_suppress_paths', False))
     if standalone:
@@ -499,6 +507,9 @@ def _expect_write(res, out, cfg, configuration_sha):
 
 def main(argv=None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0] == 'okf':
+        from semantic_crosscheck import okf
+        return okf.cli(argv, parser, _summary)
     cli = parser()
     audit_inputs = _audit_cli_inputs(argv, cli)
     diagnostic_inputs = _diagnostic_cli_inputs(argv)

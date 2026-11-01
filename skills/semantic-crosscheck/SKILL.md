@@ -5,6 +5,14 @@ description: "Use when verifying an ontology plus semantic layer built on Postgr
 
 # semantic-crosscheck
 
+Unreleased source: [xc-okf](../../commands/xc-okf.md) exports explicitly selected
+Gold contracts as a closed metadata-only OKF profile, or previews a local bundle
+against current trusted inputs. No SQL/source text, rows, parameter values,
+paths, DSN names or runtime receipts are exported. Both modes need explicit
+configuration; export also needs repeatable `--select`. Preview applies nothing.
+Operation PASS leaves execution, correctness, authenticity and application
+`not_proven`; operational report gates remain unchanged. See [OKF profile](../../docs/okf.md).
+
 semantic-crosscheck generates four layers from one configuration file, `crosscheck.toml`, and checks
 that they agree with each other and with hand-written gold SQL:
 

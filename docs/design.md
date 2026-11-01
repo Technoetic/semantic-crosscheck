@@ -320,6 +320,7 @@ configuration ids; `<member>` is a Cube member (`cube.member`); `<stratum>` is a
 | grain | `grain:c<case>:contract` | independently authored source/group/output/key/filter/null-policy operation agrees with the supported derived fragment | `fail` on a declared mismatch; malformed or unsupported requests are configuration errors |
 | grain | `grain:c<case>:evidence` | actual bounded visible source/node key and join obligations all completed and passed | `fail` on null/duplicate keys, orphan/fanout or disallowed exclusion; `not_run` on empty/unsupported/oversized scope |
 | grain | `grain:execution` | never passes | `error` on incomplete SQL, input binding or connection cleanup |
+| okf | `okf:profile` | unreleased: selected metadata export or local preview completed within the closed profile | `error` for unsupported profiles, noncurrent inputs, unsafe output or exceeded bounds; runtime, correctness, authenticity and application remain unproven |
 | shacl-repair | `fixture:<case>:profile` | local graph and shapes are inside the supported nonrecursive profile | `not_run` for unsupported profile; `error` for malformed input |
 | shacl-repair | `fixture:<case>:before`, `fixture:<case>:after` | actual normalized report bags equal independent authored expectations | `fail` on disagreement; `error` on validation/protocol failure |
 | shacl-repair | `fixture:<case>:retention` | explicit shape targets remain targeted before and after | `fail` when an obligation is absent or erased |

@@ -2,7 +2,10 @@ Unreleased source: authored `gold.expect` cases can opt into local opaque-byte
 [`spec_source` bindings](docs/knowledge-sources.md). Missing or changed evidence
 stops execution before DB; completion drift invalidates affected expectation
 passes. Source pins add no operational report or grain authority. Version metadata
-remains 0.14.0.
+remains 0.14.0. The optional unreleased [OKF metadata diagnostic](docs/okf.md)
+exports explicitly selected Gold contracts or previews a local bundle against
+current trusted inputs. It performs no execution or import application; PASS
+means scoped metadata completion, with authenticity and correctness unproven.
 
 <div align="center">
 
@@ -797,6 +800,7 @@ The first two are standalone diagnostics outside the default report pipeline. Th
 |---|---|
 | `shacl-repair` | `--spec FILE`, `--timeout-ms 30000` |
 | `grain` | `--spec FILE`, `--max-rows 100000` |
+| `okf` | Unreleased metadata only: `--export DIR --select GOLD_ID` (repeatable selection) or `--import-preview DIR`; explicit `--config FILE` required |
 
 The opt-in reason diagnostic accepts `--explain-inconsistency`, `--explain-max-axioms 128`, `--explain-max-checks 64` and `--explain-timeout-ms 10000`. Limits and nonpassing partial outcomes are documented above.
 

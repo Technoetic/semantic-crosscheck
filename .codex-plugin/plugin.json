@@ -1,6 +1,6 @@
 {
   "name": "semantic-crosscheck",
-  "version": "0.14.0",
+  "version": "0.15.0",
   "description": "Cross-layer verification for an ontology plus semantic layer on PostgreSQL 17, for Codex and Claude Code.",
   "author": {
     "name": "전문준"
@@ -9,7 +9,7 @@
   "interface": {
     "displayName": "Semantic Crosscheck",
     "shortDescription": "Prove that a PostgreSQL closure, SHACL rules, OWL reasoning and a Cube model agree.",
-    "longDescription": "Release v0.14.0: cross-checks PostgreSQL17 closures, SQL/SHACL rules, OWL/HermiT and Cube against gold SQL. A Cube /load answer outside Cube's load envelope, or a gold-query row without a mapped member, is now an error instead of zero rows or NULL, so such an answer can no longer pass V1/V2 vacuously, pass a V3 pair test over no keys or count as a V4 kill; a body that is not JSON was already an error and is now reported like them. The closure_join_swap mutation witness counts closure pairs whose ends join different measure rows, so for a model generated from crosscheck.toml witness 0 means every query answers the same, and observable mutants are served instead of skipped as equivalent. reason --explain-inconsistency reports whether a completed subset-minimal explanation is unique over the generated axiom groups (unique, not_unique or not_proven) with one extra same-HermiT check per retained group. A repeated ontology.no_children value is a configuration error. Same-engine explanation is not independent certification. Dependency pins and defaults stay unchanged. Rerun build, reason, cube, verify and report after upgrading.",
+    "longDescription": "Release v0.15.0: cross-check PostgreSQL 17 closures, SQL/SHACL rules, OWL/HermiT and Cube against independently authored gold SQL. Optional authored expectation cases can pin a local business-definition file by SHA-256; missing, changed, blocked or unavailable source evidence stops fixture cases before DB access and completion drift demotes affected passes. The okf diagnostic exports explicitly selected contract metadata or previews the closed SXC OKF 0.2 profile without SQL, source text, rows, credentials, runtime receipts or import application. Standalone knowledge-evolution exercises five fixed source transitions and 26 independent synthetic contracts through actual input/source/report APIs, with no DB, engine or model execution. Source currency, profile completion and synthetic replay never grant semantic approval or operational PASS. Existing report requirements and dependency pins remain unchanged. Rerun operational stages after upgrading.",
     "developerName": "Technoetic",
     "category": "Coding",
     "capabilities": [

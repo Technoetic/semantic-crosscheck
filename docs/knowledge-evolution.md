@@ -1,8 +1,7 @@
-# Offline knowledge evolution (unreleased source)
+# Offline knowledge evolution (since v0.15.0)
 
 The standalone `knowledge-evolution` diagnostic exercises source binding and
-existing report staleness through a fixed reviewed synthetic fixture. Package
-and release metadata remain **0.14.0**. This is a harness check, with no measured
+existing report staleness through a fixed reviewed synthetic fixture. Available since **v0.15.0**. This is a harness check, with no measured
 semantic coverage, business truth, engine verification or production data evidence.
 
 ```text

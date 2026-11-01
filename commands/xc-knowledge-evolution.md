@@ -3,7 +3,7 @@ description: "Replay five fixed offline synthetic source-contract checkpoints wi
 argument-hint: "[--out DIR] [--quiet]"
 ---
 
-Run the optional unreleased `knowledge-evolution` diagnostic. Pass user arguments
+Run the optional `knowledge-evolution` diagnostic. Pass user arguments
 `$ARGUMENTS` as separate argv elements; never interpolate them into shell code.
 
 ```text

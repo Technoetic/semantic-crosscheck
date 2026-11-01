@@ -1,6 +1,8 @@
 # Changelog
 
-## [Unreleased]
+## [0.15.0] - 2026-11-01
+
+Release notes: [docs/releases/v0.15.0.md](docs/releases/v0.15.0.md).
 
 ### Added
 
@@ -19,8 +21,18 @@
   reject stale synthetic receipts on retirement. No DB, engine or model executes,
   and semantic coverage is not measured. See [offline replay](docs/knowledge-evolution.md).
 
-All three additions are opt-in unreleased source, outside operational report
-requirements. Package and release metadata remain 0.14.0.
+All three additions are opt-in and outside operational report requirements.
+Dependency pins and default pipeline stages remain unchanged.
+
+### Fixed
+
+- Result publication uses a unique exclusively created temporary file instead
+  of truncating a fixed `.part` path. Source-bound expectation and OKF error
+  paths preserve inputs after observed configuration drift; preview retains
+  its validated inventory through final publication.
+- Windows junction fixtures are registered only on Windows, preserving real
+  junction checks there without introducing unavoidable skips in the strict
+  Linux integration runner.
 
 ## [0.14.0] - 2026-10-31
 
@@ -519,4 +531,5 @@ First release. Release notes: [docs/releases/v0.1.0.md](docs/releases/v0.1.0.md)
 [0.11.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.11.0
 
 [0.13.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.13.0
+[0.15.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.15.0
 [0.14.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.14.0

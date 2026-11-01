@@ -3,7 +3,7 @@ description: "Export selected metadata-only OKF contracts or preview a local bun
 argument-hint: "--config FILE (--export DIR --select GOLD_ID | --import-preview DIR) [--out DIR] [--quiet]"
 ---
 
-Run the optional unreleased `okf` diagnostic. Pass user arguments `$ARGUMENTS`
+Run the optional `okf` diagnostic. Pass user arguments `$ARGUMENTS`
 as separate argv elements; never interpolate them into shell code.
 
 ```text

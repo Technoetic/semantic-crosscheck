@@ -1,8 +1,7 @@
-# Authored source bindings (unreleased source)
+# Authored source bindings (since v0.15.0)
 
 An authored `[[gold.expect]]` case can pin an opaque local definition file. The
-existing `spec` citation remains required. This capability is unreleased source
-on top of version 0.14.0; it adds no operational report or grain authority.
+existing `spec` citation remains required. This capability is available since v0.15.0; it adds no operational report or grain authority.
 
 ```toml
 [[gold.expect]]

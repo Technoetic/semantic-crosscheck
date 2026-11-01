@@ -5,7 +5,7 @@ argument-hint: "--config crosscheck.toml --allow-fixture-database [--dsn-env SXC
 
 Run the `expect` stage. Pass user arguments as separate argv entries.
 
-Unreleased source: authored cases may additionally declare a closed `spec_source`
+Since v0.15.0: authored cases may additionally declare a closed `spec_source`
 table with required `file`/`sha256` and optional `object_id`/`revision`. The existing
 `spec` citation remains required. Source pins are opaque-byte evidence: noncurrent
 sources stop all cases before DB, and completion drift demotes affected passing

@@ -452,23 +452,22 @@ class OKFTests(unittest.TestCase):
         self.assertNotEqual(self.cli('--export', self.bundle, '--select', 'q01_explosion'), 0)
         self.assertEqual(target.read_bytes(), b'PRIVATE_OUTSIDE')
 
-    def test_windows_junction_source_and_destination_parent_are_blocked(self):
-        if os.name != 'nt':
-            self.skipTest('Windows junction fixture')
-        outside = self.root / 'outside'
-        outside.mkdir()
-        target = outside / 'definition.md'
-        target.write_bytes(self.source.read_bytes())
-        junction = self.root / 'junction'
-        created = subprocess.run(['cmd', '/c', 'mklink', '/J', str(junction), str(outside)], capture_output=True)
-        if created.returncode:
-            self.skipTest('junction creation unavailable')
-        self.addCleanup(os.rmdir, junction)
-        self.assertNotEqual(self.cli('--export', junction / 'bundle', '--select', 'q01_explosion'), 0)
-        self.assertFalse((outside / 'bundle').exists())
-        self.path.write_text(self.path.read_text().replace('file="definition.md"', 'file="junction/definition.md"'), encoding='utf-8')
-        self.assertNotEqual(self.cli('--export', self.bundle, '--select', 'q01_explosion'), 0)
-        self.assertEqual(target.read_bytes(), b'PRIVATE_BUSINESS_BODY')
+    if os.name == 'nt':  # Platform-specific coverage is registered only where executable.
+        def test_windows_junction_source_and_destination_parent_are_blocked(self):
+            outside = self.root / 'outside'
+            outside.mkdir()
+            target = outside / 'definition.md'
+            target.write_bytes(self.source.read_bytes())
+            junction = self.root / 'junction'
+            created = subprocess.run(['cmd', '/c', 'mklink', '/J', str(junction), str(outside)], capture_output=True)
+            if created.returncode:
+                self.skipTest('junction creation unavailable')
+            self.addCleanup(os.rmdir, junction)
+            self.assertNotEqual(self.cli('--export', junction / 'bundle', '--select', 'q01_explosion'), 0)
+            self.assertFalse((outside / 'bundle').exists())
+            self.path.write_text(self.path.read_text().replace('file="definition.md"', 'file="junction/definition.md"'), encoding='utf-8')
+            self.assertNotEqual(self.cli('--export', self.bundle, '--select', 'q01_explosion'), 0)
+            self.assertEqual(target.read_bytes(), b'PRIVATE_BUSINESS_BODY')
 
     def test_unsupported_os_publication_fails_closed(self):
         mod = self.module()

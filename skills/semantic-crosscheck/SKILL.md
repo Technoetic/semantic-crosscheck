@@ -5,7 +5,7 @@ description: "Use when verifying an ontology plus semantic layer built on Postgr
 
 # semantic-crosscheck
 
-Unreleased source: [xc-knowledge-evolution](../../commands/xc-knowledge-evolution.md)
+Since v0.15.0: [xc-knowledge-evolution](../../commands/xc-knowledge-evolution.md)
 replays a fixed bundled five-checkpoint source-contract scenario offline. It
 rejects `--config`, ignores cwd configuration and accepts no external fixture.
 Its 26 contracts check harness behavior with zero engine, DB or model execution;
@@ -14,7 +14,7 @@ Source restoration never promotes retained not_run evidence. See
 [offline replay](../../docs/knowledge-evolution.md) and
 [authored source binding scope](../../docs/knowledge-sources.md).
 
-Unreleased source: [xc-okf](../../commands/xc-okf.md) exports explicitly selected
+Since v0.15.0: [xc-okf](../../commands/xc-okf.md) exports explicitly selected
 Gold contracts as a closed metadata-only OKF profile, or previews a local bundle
 against current trusted inputs. No SQL/source text, rows, parameter values,
 paths, DSN names or runtime receipts are exported. Both modes need explicit
@@ -93,7 +93,7 @@ Additional standalone synthetic stages are available when explicitly requested:
 
 All three reject `--config`, ignore default operational configuration, and remain outside the required pipeline. Their passes must not erase real-data `not_proven` disclosures. Missing engines, malformed output, timeout or partial comparison cannot pass. Synthetic rows remain in labelled replay artifacts, never count-only results.
 
-Unreleased source: authored expectation cases may opt into opaque-byte
+Since v0.15.0: authored expectation cases may opt into opaque-byte
 `spec_source` pins ([source bindings](../../docs/knowledge-sources.md)). A
 noncurrent source gates cases before DB; completion drift demotes affected
 passes. This adds no grain or operational report authority. Existing unbound

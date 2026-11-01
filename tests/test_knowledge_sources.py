@@ -428,24 +428,23 @@ class SourceTests(unittest.TestCase):
             self.assertNotIn('private exception text', output.getvalue() + error.getvalue())
             target.unlink()
 
-    def test_windows_junction_parent_is_blocked_without_reading_target(self):
-        if os.name != 'nt':
-            self.skipTest('Windows junction fixture')
-        actual = self.root / 'actual'
-        actual.mkdir()
-        (actual / 'definition.md').write_bytes(self.raw)
-        junction = self.root / 'junction'
-        created = subprocess.run(['cmd', '/c', 'mklink', '/J', str(junction), str(actual)], capture_output=True)
-        if created.returncode:
-            self.skipTest('junction creation unavailable')
-        self.addCleanup(os.rmdir, junction)
-        cfg = self.load({'file': 'junction/definition.md', 'sha256': digest(self.raw)})
-        mod = self.module()
-        with patch.object(mod.os, 'open', side_effect=AssertionError('must not read target')):
-            snapshot = mod.capture(cfg, self.cases(cfg))
-            self.assertEqual(snapshot.public()['items'][0]['state'], 'blocked')
-            with self.assertRaises(StageError):
-                mod.preflight(cfg, self.out)
+    if os.name == 'nt':  # Platform-specific coverage is registered only where executable.
+        def test_windows_junction_parent_is_blocked_without_reading_target(self):
+            actual = self.root / 'actual'
+            actual.mkdir()
+            (actual / 'definition.md').write_bytes(self.raw)
+            junction = self.root / 'junction'
+            created = subprocess.run(['cmd', '/c', 'mklink', '/J', str(junction), str(actual)], capture_output=True)
+            if created.returncode:
+                self.skipTest('junction creation unavailable')
+            self.addCleanup(os.rmdir, junction)
+            cfg = self.load({'file': 'junction/definition.md', 'sha256': digest(self.raw)})
+            mod = self.module()
+            with patch.object(mod.os, 'open', side_effect=AssertionError('must not read target')):
+                snapshot = mod.capture(cfg, self.cases(cfg))
+                self.assertEqual(snapshot.public()['items'][0]['state'], 'blocked')
+                with self.assertRaises(StageError):
+                    mod.preflight(cfg, self.out)
 
     def test_metadata_observation_has_no_database_network_or_subprocess_effects(self):
         cfg = self.load()

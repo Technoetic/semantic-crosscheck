@@ -253,7 +253,7 @@ since 0.11.0, `<iri>shape/<id>/pair` for the reason-time property-pair shape of 
 
 ## 6. Check catalogue
 
-Unreleased [offline evolution](knowledge-evolution.md) uses one packaged bounded
+Since v0.15.0, [offline evolution](knowledge-evolution.md) uses one packaged bounded
 fixture and a separate literal oracle. Five checkpoints retain 26 contracts even
 on observation errors. Actual config, fingerprint, source capture/finish and
 report staleness/counting APIs operate only on a temporary synthetic project and
@@ -261,8 +261,8 @@ fixed-time in-memory evidence. Restoration never promotes a retained case;
 retirement changes configuration and rejects old synthetic receipts. There is
 no new operational result, engine execution, semantic measurement or report gate.
 Related [source pins](knowledge-sources.md) and [OKF metadata](okf.md) preserve
-their authored-only and selected-metadata-only scopes; all remain unreleased
-source with version 0.14.0.
+their authored-only and selected-metadata-only scopes; all are available
+since v0.15.0.
 
 Every check id a result can hold. `<entity>`, `<h>`, `<id>`, `<gold>`, `<name>` and `<target>` are
 configuration ids; `<member>` is a Cube member (`cube.member`); `<stratum>` is a stratum name, `values`,
@@ -300,7 +300,7 @@ configuration ids; `<member>` is a Cube member (`cube.member`); `<stratum>` is a
 | expect | `expect:build`, `expect:cube` | the fixture's closure checks passed in the inner build; `cube:meta` passed in the inner cube stage | the worst closure status (`fail`, `error`); the `cube:meta` status (`error` when it is missing) |
 | expect | `expect:fixture` | the fixture's source tables hashed the same before the build and after the cases, and its source and built closure tables the same before and after the cases (`fixture_sha256` of the source tables, `locked`, `operational_variables_compared`) | `error` (`fixture_changed`, `fingerprint_failed`); `not_run` (`no_case_ran`): every case was gated |
 | expect | `expect:cases` | never passes | `not_run` (`no_cases`): no `[[gold.expect]]` case in the configuration |
-| expect | `expect:spec_source:<gold-id>[<case-index>]` | unreleased source: authored source bytes match the pin at observation boundaries | `not_run` when changed, missing, blocked or unavailable; affected passing cases become `not_run`; no semantic validity, object existence, approval or operational report authority |
+| expect | `expect:spec_source:<gold-id>[<case-index>]` | since v0.15.0: authored source bytes match the pin at observation boundaries | `not_run` when changed, missing, blocked or unavailable; affected passing cases become `not_run`; no semantic validity, object existence, approval or operational report authority |
 | shacl-corpus | `pyshacl:<case>`, `jena:<case>` | each actual engine independently matches the case's hand-written canonical constraint-report multiset | `fail` on a constraint, path, severity or semantic value mismatch; `error` on timeout, nonzero engine exit, malformed/missing report or cleanup failure; valid conforming empty reports are compared explicitly |
 | shacl-corpus | `w3c:<engine>:<case>` | since 0.9.0, with `--w3c-suite`: the engine (`pyshacl` or `jena`) matches the W3C suite's expected report for an approved core `sht:Validate` entry inside the sxc profile (canonical multiset; absent path/value compared, `sh:sourceShape` ignored) | `not_run` with `reason` for every entry outside the profile, and for every entry of an unpinned suite without `--allow-unpinned-suite` (`suite_not_pinned`, `duplicate_entry`, `unsupported_component`, `complex_path`, `non_iri_focus`, ...); `fail` on a mismatch; `error` as for the fixed corpus |
 | shacl-corpus | `w3c:suite` | never passes | `not_run` (`suite_not_pinned`): an unpinned suite ran under `--allow-unpinned-suite`, so its expected reports are not verified as the W3C suite's and the stage cannot pass |
@@ -331,8 +331,8 @@ configuration ids; `<member>` is a Cube member (`cube.member`); `<stratum>` is a
 | grain | `grain:c<case>:contract` | independently authored source/group/output/key/filter/null-policy operation agrees with the supported derived fragment | `fail` on a declared mismatch; malformed or unsupported requests are configuration errors |
 | grain | `grain:c<case>:evidence` | actual bounded visible source/node key and join obligations all completed and passed | `fail` on null/duplicate keys, orphan/fanout or disallowed exclusion; `not_run` on empty/unsupported/oversized scope |
 | grain | `grain:execution` | never passes | `error` on incomplete SQL, input binding or connection cleanup |
-| okf | `okf:profile` | unreleased: selected metadata export or local preview completed within the closed profile | `error` for unsupported profiles, noncurrent inputs, unsafe output or exceeded bounds; runtime, correctness, authenticity and application remain unproven |
-| knowledge-evolution | `knowledge_evolution:<checkpoint>:<contract>` | unreleased: fixed synthetic observation agrees with independent literal oracle; five checkpoints, 26 contracts | `fail` on disagreement, `error` on missing/unavailable observations; no engine or semantic coverage claim |
+| okf | `okf:profile` | since v0.15.0: selected metadata export or local preview completed within the closed profile | `error` for unsupported profiles, noncurrent inputs, unsafe output or exceeded bounds; runtime, correctness, authenticity and application remain unproven |
+| knowledge-evolution | `knowledge_evolution:<checkpoint>:<contract>` | since v0.15.0: fixed synthetic observation agrees with independent literal oracle; five checkpoints, 26 contracts | `fail` on disagreement, `error` on missing/unavailable observations; no engine or semantic coverage claim |
 | shacl-repair | `fixture:<case>:profile` | local graph and shapes are inside the supported nonrecursive profile | `not_run` for unsupported profile; `error` for malformed input |
 | shacl-repair | `fixture:<case>:before`, `fixture:<case>:after` | actual normalized report bags equal independent authored expectations | `fail` on disagreement; `error` on validation/protocol failure |
 | shacl-repair | `fixture:<case>:retention` | explicit shape targets remain targeted before and after | `fail` when an obligation is absent or erased |

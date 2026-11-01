@@ -1,6 +1,6 @@
-# Limited OKF metadata exchange (unreleased source)
+# Limited OKF metadata exchange (since v0.15.0)
 
-Version metadata remains 0.14.0. The optional `okf` diagnostic exports selected
+Available since v0.15.0. The optional `okf` diagnostic exports selected
 local Gold contracts or previews a directory against trusted local inputs. It
 never executes SQL, connects to a database, calls a model, fetches a URL, runs an
 executor, applies imported definitions, or alters operational report gates.

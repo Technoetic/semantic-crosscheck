@@ -28,7 +28,7 @@ class SourceTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(prefix='sxc_source_')
         self.addCleanup(self.tmp.cleanup)
-        self.root = Path(self.tmp.name)
+        self.root = Path(self.tmp.name).resolve()
         self.path = self.root / 'crosscheck.toml'
         self.source = self.root / 'definition.md'
         self.raw = b'private synthetic definition\x00\xff'

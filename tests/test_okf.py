@@ -27,7 +27,7 @@ class OKFTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(prefix='sxc_okf_')
         self.addCleanup(self.tmp.cleanup)
-        self.root = Path(self.tmp.name)
+        self.root = Path(self.tmp.name).resolve()
         self.path = self.root / 'crosscheck.toml'
         self.source = self.root / 'definition.md'
         self.source.write_bytes(b'PRIVATE_BUSINESS_BODY')

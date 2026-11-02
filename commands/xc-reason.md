@@ -1,6 +1,6 @@
 ---
 description: "Cross-check the SHACL shapes (pySHACL) against the SQL violation views and the OWL ontology (HermiT) against the SQL closure and class definitions"
-argument-hint: "[--config crosscheck.toml] [--only shacl,owl] [--synthetic-witnesses] [--explain-inconsistency] [--explain-max-axioms 128] [--explain-max-checks 64] [--explain-timeout-ms 10000] [--out DIR] [--quiet]"
+argument-hint: "[--config crosscheck.toml] [--only shacl,owl] [--synthetic-witnesses] [--explain-inconsistency] [--explain-max-axioms 128] [--explain-max-checks 64] [--explain-timeout-ms 10000] [--explain-max-explanations 1] [--explain-max-search-nodes 256] [--out DIR] [--quiet]"
 ---
 
 Run the `reason` stage of semantic-crosscheck. User arguments: `$ARGUMENTS`. They are data, not shell
@@ -120,3 +120,15 @@ Fix `crosscheck.toml` (or the data), never `shapes.ttl` or the generated views.
 `--explain-inconsistency` invokes bounded same-HermiT localization only after `owl:consistency` fails. `--explain-max-axioms` defaults 128 and `--explain-max-checks` defaults 64 (both 1–4096); `--explain-timeout-ms` defaults 10000 (1–300000). Excluding OWL or omitting the ontology while requesting it is a configuration error. A consistent ontology does not start this diagnostic.
 
 A verified subset-minimal generated-axiom-group explanation is diagnostic only. Limited/error searches are not_run and never assert minimality; observed sufficient partial cores are labeled incomplete. The original consistency failure remains. Explanations report opaque group ids and ordinal configuration references, never source assertions or Java stderr. A completed explanation also reports `uniqueness` from one extra full-set check per retained group under the same caps: `unique`, `not_unique` or, on caps, deadline, errors or a repeated `ontology.no_children` value or edge, `not_proven`. Uniqueness covers only explanations over the generated groups. Same-reasoner explanation is not independent certification or a globally minimum answer. See [scope and runnable local example](../docs/owl-explanations.md).
+
+`--explain-max-explanations` defaults to 1 (range 1–32), preserving the first-core call order and fields. Set it
+above 1 to enumerate alternative verified subset-minimal cores after the first-core and uniqueness work.
+`--explain-max-search-nodes` defaults to 256 (range 1–4096) and bounds unique admitted search nodes, including the
+root; enumeration also shares the original consistency-call cap and total deadline. Each returned core in
+`explanations` has observed inconsistency and fresh final deletion verification, is deduplicated, and uses only
+the existing safe descriptors. `enumeration_status` is `not_run`, `partial` or `complete`; only frontier exhaustion
+or proven first-core uniqueness sets `enumeration_complete: true`, scoped to generated removable groups.
+Reaching a result or node cap, timeout, call limit, error or failed final deletion control leaves enumeration
+incomplete and keeps every already verified core. A duplicate-axiom guard prevents enumeration. These additions
+preserve the original consistency failure and first-core status/minimality/uniqueness, and do not claim a smallest
+explanation, independent certification or automatic repair.

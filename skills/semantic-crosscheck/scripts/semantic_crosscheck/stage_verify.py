@@ -21,8 +21,8 @@ One Cube process (cube_run.serve on <out>/cube, log in verify/server.log) serves
                         shape_q.PAIR_KEY_CAP but not more than verify.pair_key_budget compares every key in chunks
                         plus the NULL key group and says in not_proven that the chunks share no snapshot; above the
                         budget it compares a deterministic sample and says so in not_proven, with the sample's
-                        detection bound and the budget. V4 replays such a test against its sample (the first chunk),
-                        says so too, and marks a survivor of a suite with such an item sample_blind_possible; the
+                        detection bound and the budget. V4 replays every bounded chunk plus the NULL group; only
+                        above that key budget is a survivor marked sample_blind_possible; the
                         measure / class-column pairs Cube can join that get no additive test (a join path with a
                         one_to_many step) are listed in not_proven (shape_q.not_applicable)
 Gold and Cube values are compared in the form of the Cube member type of each mapped column (compare.member_kinds of
@@ -49,7 +49,7 @@ import contextlib
 from pathlib import Path
 from typing import Callable
 
-from . import closure_oracle, compare, cube_gen, cube_run, db, mutate, naming, shape_q, sweep
+from . import closure_oracle, compare, cube_gen, cube_run, db, mutate, mutation_coverage, naming, shape_q, sweep
 from .result import EXIT_CONFIG, Check, Result, StageError, check_status, require_stage
 
 PARTS = ("v1", "v2", "v3", "v4")
@@ -264,7 +264,7 @@ class _Verify:
 
     def _test_fn(self, conn, t: dict):
         def fn(client) -> str:
-            return shape_q.run_test(conn, client, self.cfg, self.model, t)[0]
+            return shape_q.replay_test(conn, client, self.cfg, self.model, t)[0]
         return fn
 
     def _needs_cube(self, plans: list, tests: list) -> bool:
@@ -411,27 +411,62 @@ class _Verify:
 
     def v4(self, conn):
         items = [(iid, fn) for iid, _cid, fn in self.items if self.baseline.get(iid) == "pass"]
+        excluded_items = [{"id": iid, "baseline_status": self.baseline.get(iid, "not_run")}
+                          for iid, _cid, _fn in self.items if self.baseline.get(iid) != "pass"]
         dropped = len(self.items) - len(items)
         if dropped:
+            self.excluded.add("baseline_not_passed")
             self.res.not_proven.append(f"v4: {dropped} suite item(s) do not pass on the unmutated model and are not "
                                        "replayed against mutants")
         if not items:
             self.res.add("v4:suite", "not_run", "verify", reason="no_passing_suite_item", suite_items=len(self.items))
+            suite = mutation_coverage.Suite([(iid, fn) for iid, _cid, fn in self.items],
+                                            max_items=self.cfg.verify.mutant_max_items)
+            mutation_coverage.write(self.out, mutate.unrun_coverage(self.cfg, suite, "no_passing_suite_item"),
+                                    max_items=self.cfg.verify.mutant_max_items, reason="no_passing_suite_item",
+                                    excluded_items=excluded_items)
             return
+        pair_tests = {f"v3:{t['id']}": t for t in self.suite_tests}
+        expanded = []
+        for iid, fn in items:
+            parts = shape_q.replay_parts(pair_tests[iid]) if iid in pair_tests else []
+            if parts:
+                expanded.extend((iid + suffix, part) for suffix, part in parts)
+            else:
+                expanded.append((iid, fn))
         replayed = {iid for iid, _fn in items}
         sampled = [f"v3:{t['id']}" for t in self.suite_tests
-                   if shape_q.sampled(t) and f"v3:{t['id']}" in replayed and len(t["sample_keys"]) < t["total_keys"]]
-        checks, not_proven = mutate.run_mutants(self.cfg, self.out, conn, self.model, mutation_suite(items),
-                                                closure=self.closure, sampled_items=sampled)
+                   if shape_q.sampled(t) and t.get("replay_keys") is None and f"v3:{t['id']}" in replayed
+                   and len(t["sample_keys"]) < t["total_keys"]]
+        ledger = []
+        checks, not_proven = mutate.run_mutants(
+            self.cfg, self.out, conn, self.model,
+            mutation_coverage.Suite(expanded, max_items=self.cfg.verify.mutant_max_items),
+            closure=self.closure, sampled_items=sampled, coverage=ledger)
+        summaries = next((dict(detail["summary"]) for _cid, _st, _ref, detail in checks
+                          if detail and "summary" in detail), None)
+        changed = []
         for cid, st, ref, detail in checks:
             detail = dict(detail or {})
             if st == "fail" and self.excluded:
+                if summaries is not None:
+                    summaries["survived"] -= 1
+                    summaries["not_run"] += 1
                 st, detail = "not_run", {**detail, "reason": "suite_incomplete", "excluded": sorted(self.excluded)}
+                for row in ledger:
+                    if row["id"] == cid:
+                        row.update(outcome="not_run", reason="suite_incomplete", excluded=sorted(self.excluded))
                 self.res.not_proven.append(f"{cid}: survived a suite with items left out ({', '.join(sorted(self.excluded))}),"
                                            " which might have killed it; not judged")
-            self.res.checks.append(Check(cid, st, detail, ref))
+            changed.append(Check(cid, st, detail, ref))
+        for check in changed:
+            if summaries is not None and "summary" in check.detail:
+                check.detail["summary"] = dict(summaries)
+            self.res.checks.append(check)
+        mutation_coverage.write(self.out, ledger, max_items=self.cfg.verify.mutant_max_items,
+                                excluded_items=excluded_items)
         self.res.not_proven.extend(not_proven)
-        partial = [f"v3:{t['id']}" for t in self.suite_tests if shape_q.sampled(t)]
+        partial = [f"v3:{t['id']}" for t in self.suite_tests if shape_q.sampled(t) and t.get("replay_keys") is None]
         if partial:
             self.res.not_proven.append(f"v4: the suite's pair tests compare a sample of their keys ({', '.join(partial)}), "
                                        "so a mutant that changes only other keys can survive them")
@@ -478,6 +513,9 @@ def _error_action(c: Check) -> str:
 
 def _not_run_action(c: Check) -> str:
     why = c.detail.get("reason", "not_run")
+    if why == "suite_budget":
+        return (f"{c.id} reached verify.mutant_max_items before the suite finished: raise that explicit item budget "
+                "or narrow the selected model, then rerun verify; no survival verdict was established")
     if c.id.startswith("v3:closure_oracle:") and why == "budget_exceeded":
         return (f"{c.id} exceeded the independent oracle limit {c.detail['limit']}: use a smaller hierarchy or review "
                 "closure_oracle.Limits before raising the bound; no partial closure was certified")

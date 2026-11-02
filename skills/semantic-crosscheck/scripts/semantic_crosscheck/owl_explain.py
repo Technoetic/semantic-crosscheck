@@ -21,14 +21,16 @@ from .result import EXIT_CONFIG, StageError
 
 CHECK_ID = "owl:explanation"
 WORKER = Path(__file__).with_name("_owl_explain_worker.py")
-LIMITS = {"max_axioms": 4096, "max_checks": 4096, "timeout_ms": 300000}
-NOTE = ("owl:explanation uses the same HermiT and generated ontology as owl:consistency; subset minimality and "
-        "uniqueness concern only the generated removable axiom groups over fixed declarations. It is not independent "
+LIMITS = {"max_axioms": 4096, "max_checks": 4096, "timeout_ms": 300000,
+          "max_explanations": 32, "max_search_nodes": 4096}
+NOTE = ("owl:explanation uses the same HermiT and generated ontology as owl:consistency; subset minimality, "
+        "uniqueness and enumeration concern only the generated removable axiom groups over fixed declarations. It is not independent "
         "certification and does not establish a globally minimum explanation or exclude causes outside those groups")
 
 
-def validate_limits(max_axioms=128, max_checks=64, timeout_ms=10000):
-    for name, value in (("max_axioms", max_axioms), ("max_checks", max_checks), ("timeout_ms", timeout_ms)):
+def validate_limits(max_axioms=128, max_checks=64, timeout_ms=10000, max_explanations=1, max_search_nodes=256):
+    for name, value in (("max_axioms", max_axioms), ("max_checks", max_checks), ("timeout_ms", timeout_ms),
+                        ("max_explanations", max_explanations), ("max_search_nodes", max_search_nodes)):
         if type(value) is not int or not 1 <= value <= LIMITS[name]:
             raise StageError(f"--explain-{name.replace('_', '-')} must be an integer from 1 to {LIMITS[name]}",
                              EXIT_CONFIG)
@@ -36,7 +38,8 @@ def validate_limits(max_axioms=128, max_checks=64, timeout_ms=10000):
 
 def validate_args(args):
     validate_limits(getattr(args, "explain_max_axioms", 128), getattr(args, "explain_max_checks", 64),
-                    getattr(args, "explain_timeout_ms", 10000))
+                    getattr(args, "explain_timeout_ms", 10000), getattr(args, "explain_max_explanations", 1),
+                    getattr(args, "explain_max_search_nodes", 256))
 
 
 class _WindowsJob:
@@ -223,15 +226,17 @@ def _preflight(cfg, graph, maximum, deadline):
     return count, True, ""
 
 
-def explain(cfg, graph, java, *, max_axioms=128, max_checks=64, timeout_ms=10000):
-    """Return counts and safe descriptors only. All interrupted diagnostics explicitly remain not_run.
+def explain(cfg, graph, java, *, max_axioms=128, max_checks=64, timeout_ms=10000,
+            max_explanations=1, max_search_nodes=256):
+    """Return counts and safe descriptors only. An interrupted first-core search explicitly remains not_run.
 
     A full-set check comes first; only an observed inconsistent set can be reported as a sufficient core. A final
     pass checks deletion of every retained group from the exact final core before subset_minimal is claimed.
     After that, one check per retained group removes only that group from the full set: unique needs every such
     check finished and consistent. Caps, deadline or errors there leave uniqueness not_proven, never the status.
+    Opt-in enumeration shares those budgets and preserves the first-core fields when it stops early.
     """
-    validate_limits(max_axioms, max_checks, timeout_ms)
+    validate_limits(max_axioms, max_checks, timeout_ms, max_explanations, max_search_nodes)
     deadline = time.monotonic() + timeout_ms / 1000
     count, complete, stop = _preflight(cfg, graph, max_axioms, deadline)
     result = {"status": "not_run", "reason": "not_started", "reasoner": "HermiT",
@@ -241,7 +246,12 @@ def explain(cfg, graph, java, *, max_axioms=128, max_checks=64, timeout_ms=10000
               "retained_axiom_groups": 0, "checks_completed": 0, "deletion_checks_completed": 0,
               "minimality_checks_completed": 0, "max_axioms": max_axioms, "max_checks": max_checks,
               "timeout_ms": timeout_ms, "core": [], "uniqueness": "not_proven",
-              "uniqueness_reason": "minimality_not_proven", "uniqueness_checks_completed": 0}
+              "uniqueness_reason": "minimality_not_proven", "uniqueness_checks_completed": 0,
+              "max_explanations": max_explanations, "max_search_nodes": max_search_nodes,
+              "explanations": [], "explanations_found": 0, "enumeration_status": "not_run",
+              "enumeration_complete": False,
+              "enumeration_reason": "not_requested" if max_explanations == 1 else "minimality_not_proven",
+              "enumeration_checks_completed": 0, "search_nodes_visited": 0}
     if stop:
         result["reason"] = stop
         return result
@@ -320,7 +330,83 @@ def explain(cfg, graph, java, *, max_axioms=128, max_checks=64, timeout_ms=10000
             result["uniqueness_reason"] = "timeout"
         except Exception:  # same handling as the explanation: incompleteness only, never private error text
             result["uniqueness_reason"] = "reasoner_error"
+        result["explanations"] = [result["core"]]
+        result["explanations_found"] = 1
+        if max_explanations > 1:
+            _enumerate(groups, core, checked, deadline, result)
     return result
+
+
+def _enumerate(groups, first, checked, deadline, result):
+    """Bounded hitting-set traversal over removable groups, after the unchanged first-core path.
+
+    A node blocks a set of group ids. A verified core within the remaining set labels that node, whose children
+    each block one group of that core. A consistent remaining set closes its entire branch. Exhausting these
+    branches therefore covers every subset-minimal inconsistent group set. Integer masks bound stored node size;
+    the node cap counts every unique admitted node, including the root, so the frontier cannot grow without bound.
+    """
+    if result["uniqueness_reason"] == "duplicate_axiom_groups":
+        result["enumeration_reason"] = "duplicate_axiom_groups"
+        return
+    if result["uniqueness"] == "unique":
+        result.update(enumeration_status="complete", enumeration_complete=True, enumeration_reason="unique")
+        return
+    result.update(enumeration_status="partial", enumeration_reason="not_started")
+    start_checks = result["checks_completed"]
+    bits = {group.id: 1 << index for index, group in enumerate(groups)}
+    known = [frozenset(first)]
+    # Reverse-push children so a stable depth-first traversal visits ascending group ordinals first.
+    frontier, admitted = [0], {0}
+    try:
+        while frontier:
+            if time.monotonic() >= deadline:
+                raise TimeoutError()
+            blocked = frontier.pop()
+            result["search_nodes_visited"] += 1
+            active = {group.id for group in groups if not blocked & bits[group.id]}
+            label = next((core for core in known if core <= active), None)
+            if label is None:
+                if checked(active):
+                    continue
+                candidate = active
+                for group in groups:
+                    if group.id in candidate:
+                        remaining = candidate - {group.id}
+                        if not checked(remaining):
+                            candidate = remaining
+                # These are fresh checks against the exact final core, as in the first-core path.
+                for group in groups:
+                    if group.id in candidate and not checked(candidate - {group.id}):
+                        result["enumeration_reason"] = "verification_disagreement"
+                        return
+                label = frozenset(candidate)
+                if label not in known:
+                    known.append(label)
+                    result["explanations"].append([
+                        {"id": group.id, "kind": group.kind, "config_ref": group.config_ref}
+                        for group in groups if group.id in label])
+                    result["explanations_found"] = len(known)
+                    if len(known) >= result["max_explanations"]:
+                        result["enumeration_reason"] = "explanation_limit"
+                        return
+            for group in reversed(groups):
+                if group.id in label:
+                    child = blocked | bits[group.id]
+                    if child not in admitted:
+                        if len(admitted) >= result["max_search_nodes"]:
+                            result["enumeration_reason"] = "search_node_limit"
+                            return
+                        admitted.add(child)
+                        frontier.append(child)
+        result.update(enumeration_status="complete", enumeration_complete=True, enumeration_reason="completed")
+    except _CheckLimit:
+        result["enumeration_reason"] = "check_limit"
+    except TimeoutError:
+        result["enumeration_reason"] = "timeout"
+    except Exception:  # diagnostic errors never expose private worker messages or damage verified first-core data
+        result["enumeration_reason"] = "reasoner_error"
+    finally:
+        result["enumeration_checks_completed"] = result["checks_completed"] - start_checks
 
 
 def _repeated_axioms(cfg, graph):
@@ -336,7 +422,9 @@ class _CheckLimit(Exception):
 def run(cfg, graph, java, args, res):
     got = explain(cfg, graph, java, max_axioms=getattr(args, "explain_max_axioms", 128),
                   max_checks=getattr(args, "explain_max_checks", 64),
-                  timeout_ms=getattr(args, "explain_timeout_ms", 10000))
+                  timeout_ms=getattr(args, "explain_timeout_ms", 10000),
+                  max_explanations=getattr(args, "explain_max_explanations", 1),
+                  max_search_nodes=getattr(args, "explain_max_search_nodes", 256))
     status = got.pop("status")
     res.add(CHECK_ID, status, "ontology", **got)
     res.not_proven.append(NOTE)
@@ -344,8 +432,13 @@ def run(cfg, graph, java, args, res):
         res.not_proven.append("owl:explanation was bounded or incomplete; the original owl:consistency failure "
                               "remains and no subset-minimal explanation was established")
     elif got["uniqueness"] == "not_unique":
-        res.not_proven.append("owl:explanation showed that another subset-minimal explanation over the generated "
-                              "axiom groups exists; only one is reported and the others were not enumerated")
+        if got.get("enumeration_status", "not_run") == "not_run":
+            res.not_proven.append("owl:explanation showed that another subset-minimal explanation over the generated "
+                                  "axiom groups exists; only one is reported and the others were not enumerated")
     elif got["uniqueness"] != "unique":
         res.not_proven.append(f"owl:explanation did not establish uniqueness ({got['uniqueness_reason']}); other "
                               "subset-minimal explanations over the generated axiom groups were not ruled out")
+    if got.get("enumeration_status") == "partial":
+        res.not_proven.append(f"owl:explanation enumeration is incomplete ({got['enumeration_reason']}); "
+                              f"{got['explanations_found']} verified subset-minimal generated-group explanations "
+                              "were reported and other explanations were not ruled out")

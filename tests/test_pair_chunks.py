@@ -7,8 +7,7 @@
                        and keys missing from the together answers (answered_keys) make it not_run, never a pass
   BudgetFallbackTest   above the budget the test keeps the sample and its d95 bound and says the budget was exceeded;
                        a mismatch on a key outside the sample is the false pass that a raised budget closes
-  ReplaySampleTest     V4 replays a chunked test against its sample (the first chunk), never every chunk, and a survivor
-                       is still marked sample_blind_possible
+  ReplaySampleTest     V4 replays every chunk and the NULL group using the baseline's in-memory keys
   UnchangedPathTest    at most PAIR_KEY_CAP keys the queries stay unfiltered (the NULL key group included), whatever the
                        budget; run_test without a budget (the replays) keeps the sample
   BudgetConfigTest     verify.pair_key_budget defaults to PAIR_KEY_CAP and is an integer of at least PAIR_KEY_CAP
@@ -278,7 +277,7 @@ class BudgetFallbackTest(unittest.TestCase):
 
 
 class ReplaySampleTest(unittest.TestCase):
-    def test_v4_replays_the_first_chunk_as_its_sample(self):
+    def test_v4_replays_every_chunk_and_null_group(self):
         every = keys(2 * CAP + 1)
         conn = KeysConn(every)
         v, c, t = baseline(self, 5000, conn, KeyedClient(every))
@@ -287,18 +286,16 @@ class ReplaySampleTest(unittest.TestCase):
         replay = KeyedClient(every)
         self.assertEqual(v._test_fn(conn, t)(replay), "pass")
         self.assertEqual(len(conn.queries), reads, "the replay reads no keys: it reuses the baseline's key read")
-        self.assertEqual([q["filters"][0]["values"] for q in replay.queries], [every[:CAP]] * 3,
-                         "the sample is the first chunk, replayed alone")
-        self.assertEqual(replay.filtered("notSet"), [])
-        self.assertEqual(v._test_fn(conn, t)(KeyedClient(every, bad=[every[-1]])), "pass",
-                         "a mutant that changes only keys outside the sample survives the replay")
+        self.assertEqual([q["filters"][0]["values"] for q in replay.filtered("equals")],
+                         [every[:CAP]] * 3 + [every[CAP:2 * CAP]] * 3 + [every[2 * CAP:]] * 3)
+        self.assertEqual(len(replay.filtered("notSet")), 3)
+        self.assertEqual(v._test_fn(conn, t)(KeyedClient(every, bad=[every[-1]])), "fail")
         cid = f"v3:{PAIR}"
         v.items, v.suite_tests = [(cid, cid, v._test_fn(conn, t))], [t]
         with mock.patch.object(stage_verify.mutate, "run_mutants", return_value=([], [])) as run:
             v.v4(conn)
-        self.assertEqual(run.call_args.kwargs["sampled_items"], [cid], "survivors are marked sample_blind_possible")
-        self.assertIn(f"v4: the suite's pair tests compare a sample of their keys ({cid}), so a mutant that changes "
-                      "only other keys can survive them", v.res.not_proven)
+        self.assertEqual(run.call_args.kwargs["sampled_items"], [])
+        self.assertFalse(any("sample of their keys" in note for note in v.res.not_proven))
 
 
 class UnchangedPathTest(unittest.TestCase):

@@ -812,7 +812,23 @@ coverage, DB, engine or model execution. Together with
 [selected OKF metadata exchange](docs/okf.md), it remains opt-in and outside
 operational report gates. All three are opt-in additions available since v0.15.0.
 
-The opt-in reason diagnostic accepts `--explain-inconsistency`, `--explain-max-axioms 128`, `--explain-max-checks 64` and `--explain-timeout-ms 10000`. Limits and nonpassing partial outcomes are documented above.
+The opt-in reason diagnostic accepts `--explain-inconsistency`, `--explain-max-axioms 128`, `--explain-max-checks 64`,
+`--explain-timeout-ms 10000`, `--explain-max-explanations 1` (1..32) and `--explain-max-search-nodes 256` (1..4096).
+For example, request up to five alternative causes with
+`reason --explain-inconsistency --explain-max-explanations 5 --explain-max-checks 256 --explain-timeout-ms 60000`.
+Each reported alternative is a verified subset-minimal generated-group core. `enumeration_status: partial` means
+the result, node, call or time budget interrupted the search; only an exhausted search or established first-core
+uniqueness gives `complete`. Original consistency failure and first-core fields remain unchanged.
+
+V4 now replays every eligible chunk of a bounded V3 pair baseline and its NULL group, using the same in-memory key
+partition. Chunk replay item ids append `:chunk[<index>]` to the V3 check id; the NULL group appends `:null`.
+These are suite item ids in `killed_by` and coverage, not additional top-level checks. The configurable
+`verify.mutant_max_items` (positive integer, default 10000) caps logical replay items per mutant. Exhaustion is
+`not_run` (`suite_budget`), not a survival verdict. `verify/mutation-coverage.json` records each selected mutant
+instance, executed items/attempt counts and unexecuted reasons, including equivalent-on-current-data and
+not-applicable instances. Mutant details also retain their execution receipts. An early confirmed kill remains
+valid with remaining items explicitly unrun. Above `pair_key_budget`, sampling and its disclosures remain;
+Cube queries and SQL still do not share an MVCC snapshot. See [replay coverage](docs/mutation-coverage.md).
 
 ## 한국어 요약
 

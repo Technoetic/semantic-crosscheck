@@ -201,3 +201,8 @@ Every check id is listed in [docs/design.md](../../docs/design.md).
 - `reason --explain-inconsistency` adds bounded same-HermiT generated-axiom localization only to a failed OWL consistency check; original failure is preserved. A completed explanation reports `uniqueness` over the same generated groups (`not_proven` on caps, deadline, errors, or a repeated `ontology.no_children` value or edge). See [xc-reason](../../commands/xc-reason.md).
 
 The first two are standalone diagnostics, not prerequisites of report. None certifies business intent, whole-snapshot consistency across the existing pipeline, complete report equivalence or global-minimum explanations. Keep count-only results and alias guards; missing/unsupported work must not pass.
+
+V4 replays all eligible bounded pair chunks and their NULL group; `verify.mutant_max_items` bounds logical items
+per mutant (default 10000). Read `verify/mutation-coverage.json` and the existing result limitations before
+claiming coverage. OWL `--explain-max-explanations 5` opts into bounded alternative generated-group causes;
+`enumeration_status: partial` never means all causes were found.

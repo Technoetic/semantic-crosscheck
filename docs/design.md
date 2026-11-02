@@ -666,9 +666,12 @@ NULL key group (or, when the answers held fewer, how many of the keys asked for 
 from one `REPEATABLE READ` snapshot at the start, and that each Cube query (the together query and every alone query
 of every chunk and of the NULL key group) reads its own snapshot, shared with no other query and not with SQL: the
 longer the run, the longer that unshared window. Above the budget the sample and its bound stay, the
-detail gains `pair_key_budget`, and the `not_proven` line adds that the key count exceeds the budget. V4 replays a
-chunked test against its sample, the first chunk of the same key read, never every chunk: the item enters the suite
-on its chunked V3 status, and the `sample_blind_possible` marking and the V4 `not_proven` line are unchanged.
+detail gains `pair_key_budget`, and the `not_proven` line adds that the key count exceeds the budget. V4 now
+replays every chunk and the NULL group of a passing chunked baseline from the same in-memory key partition,
+without a new key read. Each chunk is an explicit suite item; above the key budget, the sample and
+`sample_blind_possible` disclosure remain. The separate positive `verify.mutant_max_items` budget (default 10000)
+limits logical items per mutant. Exhaustion is `not_run` (`suite_budget`), never a survival verdict.
+[Per-mutant coverage](mutation-coverage.md) records executed and unexecuted items, including early stops.
 
 **V3 additivity over join paths.** Predefined joins inflate totals when a row matches several rows of the
 joined cube ("Aggregation Consistency Errors in Semantic Layers and How to Avoid Them", HILDA 2023,
@@ -722,7 +725,7 @@ suite; witness 0 means the mutant is equivalent here and goes to `not_proven` wi
 operators (and `closure_join_swap`, through the hierarchy its measure joins) are gated like V1–V3: when build's
 `closure:<h>` did not pass, their checks are `not_run` (`closure_not_passed`) and no Cube process starts. When
 suite items are missing because a closure gated them, their gold query could not be planned
-(`members_not_in_model`, `bindings_failed`) or `--gold` left it out, a surviving mutant is `not_run`
+(`members_not_in_model`, `bindings_failed`), an item failed its baseline, or `--gold` left it out, a surviving mutant is `not_run`
 (`suite_incomplete`, detail `excluded`) instead of failed: the missing items might have killed it. A kill by part
 of the suite is still a pass. A closure operator whose closure cube is not in the model is listed in
 `not_proven` (not applicable). Every V4 detail holds `witness` and the run's `summary` counts (`killed`,

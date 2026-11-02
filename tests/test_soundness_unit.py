@@ -261,7 +261,7 @@ class ClosureGateTest(unittest.TestCase):
         self.assertEqual(v.excluded, {"excluded_by_gold"})
         v.items, v.baseline = [("v1:q03_stock", "v1:q03_stock", lambda client: "pass")], {"v1:q03_stock": "pass"}
 
-        def run_mutants(cfg_, out_, conn, model, suite, closure=None, sampled_items=()):
+        def run_mutants(cfg_, out_, conn, model, suite, closure=None, sampled_items=(), coverage=None):
             return [("v4:measure_filter_drop:firm_open", "fail", "measures.firm_open", {"witness": 2, "killed_by": ""}),
                     ("v4:measure_filter_drop:firm_open_dated", "pass", "measures.firm_open_dated",
                      {"witness": 2, "killed_by": "v1:q03_stock"})], []

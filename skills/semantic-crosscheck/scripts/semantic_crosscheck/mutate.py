@@ -424,10 +424,12 @@ def verdict(status: str, item: str) -> tuple[str, dict]:
         return "pass", {"killed_by": item}
     if status == "pass":
         return "fail", {"killed_by": ""}
+    if status == "budget_exceeded":
+        return "not_run", {"reason": "suite_budget", "item": item}
     return "error", {"reason": "suite_error", "item": item}
 
 
-def _judge(cfg, out: Path, mutant: Mutant, n: int, suite) -> tuple[str, dict]:
+def _judge_raw(cfg, out: Path, mutant: Mutant, n: int, suite) -> tuple[str, dict]:
     """Serve the mutant with a fresh Cube and run the suite: pass when killed, fail when it survives."""
     run_dir = out / "verify" / "mutants" / f"{mutant.operator}__{mutant.target}"
     log = run_dir / "server.log"
@@ -450,8 +452,27 @@ def _judge(cfg, out: Path, mutant: Mutant, n: int, suite) -> tuple[str, dict]:
     return check, {"witness": n, **detail}
 
 
+def _judge(cfg, out: Path, mutant: Mutant, n: int, suite) -> tuple[str, dict]:
+    tracked = callable(getattr(suite, "receipt", None))
+    if tracked:
+        suite.reset()
+    status, detail = _judge_raw(cfg, out, mutant, n, suite)
+    if tracked:
+        receipt = suite.receipt()
+        if receipt["executed_items"] == 0:
+            receipt = suite.skipped(detail.get("reason", "not_started"))
+        detail = {**detail, "coverage": receipt}
+    return status, detail
+
+
+def unrun_coverage(cfg, suite, reason):
+    """Describe selected instances without touching their witness SQL or starting Cube."""
+    return [{"id": f"v4:{target.operator}:{target.target}", "outcome": "not_run", "reason": reason,
+             "coverage": suite.skipped(reason)} for target in _plan(cfg)]
+
+
 def run_mutants(cfg, out: Path, conn, model: dict, suite, closure: dict | None = None,
-                sampled_items=()) -> tuple[list[tuple], list[str]]:
+                sampled_items=(), coverage: list | None = None) -> tuple[list[tuple], list[str]]:
     """Witness, serve and judge every selected mutant.
 
     suite(client) -> (status, item) runs the gold suite against one CubeClient and stops at the first item that does
@@ -472,6 +493,21 @@ def run_mutants(cfg, out: Path, conn, model: dict, suite, closure: dict | None =
     rows: list[tuple] = []
     not_proven: list[str] = []
     tally = dict.fromkeys(OUTCOMES, 0)
+
+    def record(cid, outcome, detail=None):
+        if coverage is None:
+            return
+        row = {"id": cid, "outcome": outcome}
+        detail = detail or {}
+        if "coverage" in detail:
+            row["coverage"] = detail["coverage"]
+        elif callable(getattr(suite, "skipped", None)):
+            row["coverage"] = suite.skipped(detail.get("reason", outcome))
+        for name in ("reason", "witness", "killed_by", "item"):
+            if name in detail:
+                row[name] = detail[name]
+        coverage.append(row)
+
     for t in _plan(cfg):
         cid = f"v4:{t.operator}:{t.target}"
         built = closure.get(t.hierarchy) if t.hierarchy else "pass"
@@ -481,16 +517,19 @@ def run_mutants(cfg, out: Path, conn, model: dict, suite, closure: dict | None =
                          {"reason": "closure_not_passed", "hierarchy": t.hierarchy, "build_check": built}))
             not_proven.append(f"{cid}: closure:{t.hierarchy} did not pass in build ({built})")
             tally["not_run"] += 1
+            record(cid, "not_run", {"reason": "closure_not_passed"})
             continue
         try:
             mutant = t.build(cfg, model)
         except NotApplicable as e:
             not_proven.append(f"{cid} not run: {e}")
             tally["not_applicable"] += 1
+            record(cid, "not_applicable")
             continue
         except MutationError as e:
             rows.append((cid, "error", t.config_ref, {"reason": "model_mismatch", "element": str(e)}))
             tally["error"] += 1
+            record(cid, "error", {"reason": "model_mismatch"})
             continue
         try:
             n = witness(conn, cfg, mutant)
@@ -498,14 +537,18 @@ def run_mutants(cfg, out: Path, conn, model: dict, suite, closure: dict | None =
             rows.append((cid, "error", t.config_ref, {"reason": "witness", "exception": type(e).__name__,
                                                        "sqlstate": _sqlstate(e)}))
             tally["error"] += 1
+            record(cid, "error", {"reason": "witness"})
             continue
         if n == 0:
             not_proven.append(f"{cid} equivalent on this data")
             tally["equivalent"] += 1
+            record(cid, "equivalent", {"reason": "data_equivalent", "witness": 0})
             continue
         status, detail = _judge(cfg, out, mutant, n, suite)
         if status == "fail" and sampled:
             detail = {**detail, "sample_blind_possible": True, "sampled_items": sampled}
-        tally[{"pass": "killed", "fail": "survived"}.get(status, "error")] += 1
+        outcome = {"pass": "killed", "fail": "survived", "not_run": "not_run"}.get(status, "error")
+        tally[outcome] += 1
         rows.append((cid, status, mutant.config_ref, detail))
+        record(cid, outcome, detail)
     return [(cid, st, ref, {**detail, "summary": dict(tally)}) for cid, st, ref, detail in rows], not_proven

@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Per-mutant execution coverage with safe item ids, attempts and explicit unexecuted reasons in
+  `verify/mutation-coverage.json` and mutant details. Positive `verify.mutant_max_items` (default 10000)
+  bounds logical replay items; budget exhaustion is unjudged (`not_run`, `suite_budget`).
+- Optional bounded enumeration of alternative subset-minimal OWL generated-group cores through
+  `--explain-max-explanations` (default 1, ceiling 32) and `--explain-max-search-nodes` (default 256,
+  ceiling 4096). Shared check/time budgets and explicit partial/complete state preserve the original
+  failure, first core and uniqueness fields. No dependency or report authority is added.
+
+### Changed
+
+- V4 replays every eligible bounded V3 pair chunk and its NULL group instead of only the first chunk,
+  reusing baseline key partitions in memory. Above `pair_key_budget` it still discloses sampling.
+  Early kills retain unexecuted items in the receipt; baseline failures cannot establish survivor verdicts.
+
 ## [0.15.0] - 2026-11-01
 
 Release notes: [docs/releases/v0.15.0.md](docs/releases/v0.15.0.md).

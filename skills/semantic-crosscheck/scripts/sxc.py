@@ -107,6 +107,10 @@ def parser(*, audit_errors=False) -> argparse.ArgumentParser:
     s.add_argument("--explain-max-axioms", type=int, default=128, help="maximum diagnostic axiom groups (default: 128)")
     s.add_argument("--explain-max-checks", type=int, default=64, help="maximum explanation subset checks (default: 64)")
     s.add_argument("--explain-timeout-ms", type=int, default=10000, help="total explanation process deadline in milliseconds (default: 10000)")
+    s.add_argument("--explain-max-explanations", type=int, default=1,
+                   help="maximum verified generated-group explanations; 1 disables enumeration (default: 1)")
+    s.add_argument("--explain-max-search-nodes", type=int, default=256,
+                   help="maximum admitted alternative-explanation search nodes (default: 256)")
 
     s = sub.add_parser("verify", parents=[common], help="V1 strict compare, V2 strata sweep, V3 query shapes, V4 mutation tests")
     s.add_argument("--only", type=_csv, default=["v1", "v2", "v3", "v4"], help="subset of v1,v2,v3,v4 (default: all)")

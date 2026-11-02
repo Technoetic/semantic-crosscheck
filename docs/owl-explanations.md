@@ -32,7 +32,7 @@ core is the only explanation exactly when this holds for each retained group ([U
 Justifications](https://arxiv.org/abs/2109.11216), ESWC 2022, applied here to generated axiom groups over fixed
 declarations). One further check per retained group therefore gives `uniqueness: unique` when every removal is
 consistent and `uniqueness: not_unique` at the first removal that stays inconsistent, because another explanation
-without that group exists; the others are not enumerated. Each of these checks covers the complete group set, so it
+without that group exists; the default result cap leaves the others unenumerated. Each of these checks covers the complete group set, so it
 costs about as much as the initial check. They share the call cap and deadline: a cap, deadline or worker failure
 leaves `uniqueness: not_proven` with `uniqueness_reason` `check_limit`, `timeout` or `reasoner_error`, and keeps the
 verified `status: pass` and `minimality: subset_minimal`; finished checks give `uniqueness_reason: completed`.
@@ -46,6 +46,50 @@ diagnostic, such as a caller-supplied graph that repeats an edge (database snaps
 `uniqueness: not_proven` with `duplicate_axiom_groups` and no extra call: the surviving copy would otherwise imitate
 a second explanation. Only these two repeats are detected; a caller that bypasses the configuration checks and maps
 two entries to one OWL name can get a group-level `not_unique`, never a false `unique`.
+
+To request alternatives, add `--explain-max-explanations 3`, for example:
+
+```powershell
+python skills/semantic-crosscheck/scripts/sxc.py reason --config demo/crosscheck.toml --out <existing-build-output> --explain-inconsistency --explain-max-explanations 3 --explain-max-search-nodes 256 --explain-max-checks 512 --explain-timeout-ms 120000
+```
+
+`--explain-max-explanations` defaults to 1, which preserves the first-core algorithm, its consistency-call order
+and its minimality and uniqueness fields without running alternative enumeration. Its range is 1–32.
+`--explain-max-search-nodes` defaults to 256 and accepts 1–4,096. Enumeration runs after the first-core and
+uniqueness work, sharing the same `--explain-max-checks` cap and `--explain-timeout-ms` deadline; a larger requested
+result count does not reserve calls or time for alternatives. The first-core `status`, `reason`, `core`,
+`minimality` and `uniqueness` fields retain their original meaning and survive interrupted enumeration.
+
+The deterministic hitting-set traversal starts from the verified first core. Each search node blocks some group
+ids. An already verified core contained in the remaining groups can label that node without another oracle call;
+otherwise HermiT checks the remaining set. A consistent set closes that branch. An inconsistent set is shrunk by
+stable deletion, followed by a fresh deletion check for every group in its exact final core. Only then may that
+core enter `explanations`. Each child blocks one group from its node's verified core, which ensures that an exhausted
+frontier covers all subset-minimal inconsistent sets of these removable groups over the fixed declarations.
+The same core is reported once. This search does not rank explanations or find a minimum-size explanation.
+
+The result adds the following fields, all scoped to the same generated removable groups:
+
+| Field | Meaning |
+| --- | --- |
+| `explanations`, `explanations_found` | Verified cores and their count; the first entry equals `core`. An incomplete first-core search leaves this list empty even when `core` is sufficient. |
+| `enumeration_status` | `not_run` when not requested, first-core minimality was not established or duplicate groups prevent enumeration; `partial` when the search stopped early; `complete` only after frontier exhaustion or already established first-core uniqueness. |
+| `enumeration_complete` | True exactly when `enumeration_status` is `complete`; completeness covers generated removable groups only. |
+| `enumeration_reason` | `not_requested`, `minimality_not_proven`, `duplicate_axiom_groups`, `unique`, `completed`, or an interruption reason below. |
+| `enumeration_checks_completed` | Finished consistency calls during enumeration; these are also included in `checks_completed`. |
+| `search_nodes_visited` | Processed search nodes, including the root when traversal runs. A first-core uniqueness proof completes enumeration without visiting search nodes. |
+| `max_explanations`, `max_search_nodes` | Requested result and search-node caps. |
+
+The node cap bounds every unique admitted node, including the root, rather than only oracle calls. Thus both the
+frontier and visited-node storage stay within this cap; blocked groups use bounded integer masks. The result count
+is bounded independently by `max_explanations`. Reaching that count stops with `explanation_limit` and
+`enumeration_complete: false`, even if those happen to be all the causes: the remaining branches were not checked.
+Reaching the node cap gives `search_node_limit`. Shared-budget interruptions give `check_limit` or `timeout`;
+worker failures give `reasoner_error`, and a failed final deletion control gives `verification_disagreement`.
+Each leaves `enumeration_status: partial`, retains only fully verified cores and preserves the verified first-core
+fields. A repeated axiom group keeps the existing conservative `duplicate_axiom_groups` guard and performs no
+enumeration checks. With the default result cap of 1, `enumeration_status: not_run` and
+`enumeration_reason: not_requested` remain even when first-core `uniqueness` is `unique`.
 
 A group cap, call cap, timeout or worker failure produces `status: not_run` and `minimality: not_proven`.
 `sufficient: true` then means the reported partial core was actually checked and found inconsistent. If the
@@ -77,7 +121,8 @@ the check. POSIX workers run in their own process group. Timeouts terminate the 
 This is the same reasoner as the baseline check. Subset minimality and uniqueness concern the removable groups
 and fixed background only: `unique` means that no other set of these generated groups is a subset-minimal
 inconsistent set for this HermiT. It is not independent certification, a globally minimum explanation, a
-statement about axioms outside the generated groups or an enumeration of every cause. No additional Java
+statement about axioms outside the generated groups or a statement that every source-level cause was enumerated.
+Even a complete enumeration covers only the generated removable groups. No additional Java
 dependency or external implementation is bundled.
 
 The source-independent synthetic runner exercises actual HermiT without a database. Set `SXC_JAVA` when Java is
@@ -93,3 +138,8 @@ subset-minimal explanation and prints the bounded, key-free diagnostic JSON. Tes
 returned core and every retained deletion with actual HermiT. Each fixture has a single explanation, so a run
 that finishes reports `uniqueness: unique`; tests confirm with direct HermiT calls that removing each retained
 group from the complete set restores consistency, and that two independent violations give `not_unique`.
+
+Design references: [Fast, flexible MUS enumeration](https://doi.org/10.1007/s10601-015-9183-0),
+[MARCO](https://github.com/liffiton/MARCO), and
+[OWL Explanation](https://github.com/matthewhorridge/owlexplanation). These are algorithm/design references;
+no external implementation or Java library is bundled by this extension.

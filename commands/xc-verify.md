@@ -50,7 +50,8 @@ python "${CLAUDE_PLUGIN_ROOT}/skills/semantic-crosscheck/scripts/sxc.py" verify 
   `d95_keys`); a key Cube leaves out of a chunk's together or (since 0.10.0) alone answer is not fully compared, so such a test is
   `not_run` (`keys_not_answered`) unless it fails. Not proven says that each Cube query reads its own
   snapshot, shared with no other query and not with SQL. Above the budget the sample stays and not
-  proven names the budget. V4 still replays the 2,000-key sample, the first chunk. Since 0.11.0,
+  proven names the budget. V4 replays all bounded baseline chunks plus the NULL group from the same in-memory
+  key partition; it retains sampling only above that budget. Since 0.11.0,
   `verify.existence_witness = true` adds `v3w:pair_witness:<member>+<member>` to every
   sampled or chunked pair test: each asked key the together answer holds but an alone answer leaves out
   is read in PostgreSQL with the measure's `where_sql` (in the key-read snapshot and again after the Cube
@@ -152,3 +153,7 @@ that generated the model. Fix `crosscheck.toml` or the gold SQL file, never the 
   `/xc-doctor --require cube` and rerun [/xc-cube](xc-cube.md)).
 - Exit code 2: no cube result or model, an unknown `--only` or `--gold` value, or an unknown mutation
   operator. Exit code 3: Cube could not start; see [/xc-cube](xc-cube.md).
+
+V4 uses `verify.mutant_max_items` (positive integer, default 10000) per mutant. Budget exhaustion is
+`not_run` (`suite_budget`); `verify/mutation-coverage.json` records attempted items, retries and explicit
+unexecuted reasons for each selected mutant instance. See [coverage](../docs/mutation-coverage.md).

@@ -56,8 +56,8 @@ reads its own snapshot, shared with no other query and not with SQL (the key rea
 alone_only_keys and duplicate_keys cover the key table's keys only (the alone queries are filtered to them) and
 duplicates within one chunk. Every key up to the budget is read in one statement under source.statement_timeout_ms
 and held in memory for the baseline run. Above the budget the test keeps the sample and its detail names the budget
-(pair_key_budget). The V4 replays (run_test without a budget) compare the sample, the first chunk of the baseline's key
-read, never every chunk. Details hold counts, flags and that duration only, never totals or keys.
+(pair_key_budget). V4 replays every eligible bounded baseline chunk plus the NULL group from retained in-memory
+keys; only tests above the key budget keep the sample. Details hold counts, flags and durations, never totals or keys.
 
 The additive tests are bounded by the configuration: one per additive measure and cube with the class column that
 Cube can join it to (in a generated model: the node cube of each measure with a node, and the ancestor and
@@ -697,8 +697,9 @@ def witness_note() -> str:
 def run_test(conn, client, cfg, model: dict, test: dict, budget: int | None = None,
              witness: "PairWitness | None" = None) -> tuple[str, dict]:
     """(status, detail) of one test; errors are reported by type, never by message. `budget` is verify.pair_key_budget,
-    which only the baseline V3 run passes: a pair test over more than PAIR_KEY_CAP keys and not more than the budget
-    then compares every key in chunks. Without it (the V4 replays) such a test compares its sample. `witness` (a
+    which the baseline V3 run and a V4-only baseline pass: a pair test over more than PAIR_KEY_CAP keys and not more
+    than the budget compares every key in chunks. Without it this low-level helper keeps its sample;
+    V4 uses replay_test/replay_parts to reuse the complete bounded partition. `witness` (a
     PairWitness of a pair test, which only the baseline V3 run passes with verify.existence_witness) observes the
     sampled or chunked comparison; it never changes the status or the detail."""
     run = {"total": _run_total, "additive": _run_additive, "pair": _run_pair}[test["kind"]]
@@ -878,10 +879,11 @@ def _run_pair(conn, client, cfg, test: dict, budget: int | None = None,
               witness: "PairWitness | None" = None) -> tuple[str, dict]:
     started = time.monotonic()
     if budget is not None and "keys_from" in test:
-        # the baseline run reads the keys within the budget and leaves the first PAIR_KEY_CAP of them, the sample, to
-        # the replays (_sample), so they replay what the baseline compared first and never read the keys again
+        # Retain the bounded partition for V4. The first PAIR_KEY_CAP remains the legacy sample;
+        # replay_test/replay_parts use every retained key without selecting a new partition.
         total, keys = pair_keys(conn, cfg, test, budget, **({"witness": witness} if witness is not None else {}))
         test["total_keys"], test["sample_keys"] = total, None if keys is None else keys[:PAIR_KEY_CAP]
+        test["replay_keys"] = keys if keys is not None and total <= budget else None
         if keys is not None and total <= budget:
             return _run_chunks(client, test, total, keys, started, **({"witness": witness} if witness is not None else {}))
     else:
@@ -933,3 +935,53 @@ def _run_chunks(client, test: dict, total: int, keys: list, started: float,
     if summed["answered_keys"] < len(keys):
         return "not_run", {**detail, "reason": "keys_not_answered"}
     return "pass", detail
+
+
+def replay_test(conn, client, cfg, model: dict, test: dict) -> tuple[str, dict]:
+    """Replay the bounded baseline partition, retaining keys in memory only.
+
+    V4-only runs first establish a baseline with the configured budget. A V3
+    baseline already read the partition, so a mutant never selects new keys.
+    The SQL/Cube requests still do not share an MVCC snapshot.
+    """
+    if test["kind"] != "pair":
+        return run_test(conn, client, cfg, model, test)
+    if "sample_keys" not in test:
+        return run_test(conn, client, cfg, model, test, budget=cfg.verify.pair_key_budget)
+    if test.get("replay_keys") is not None:
+        try:
+            return _run_chunks(client, test, test["total_keys"], test["replay_keys"], time.monotonic())
+        except compare.expected_errors() as exc:
+            return "error", compare.error_detail(exc)
+    return run_test(conn, client, cfg, model, test)
+
+
+def replay_parts(test: dict) -> list:
+    """Explicit chunk and NULL-group callables for an already passing baseline.
+
+    Empty means keep the original item (unfiltered or sampled). Only suffixes,
+    statuses and count details leave these closures; the key values do not.
+    """
+    keys = test.get("replay_keys")
+    if test["kind"] != "pair" or keys is None:
+        return []
+
+    def part(chunk):
+        def run(client):
+            try:
+                asked = [None] if chunk is None else chunk
+                detail = _compare(client, test, _null_keys if chunk is None else _equals(chunk), asked)
+            except compare.expected_errors() as exc:
+                return "error", compare.error_detail(exc)
+            if detail["mismatched"] or detail["duplicate_keys"]:
+                return "fail", detail
+            if chunk is None and (detail["answered_keys"] < detail["keys"]
+                                  or any(detail["alone_only_keys"].values())):
+                return "not_run", {**detail, "reason": "keys_not_answered"}
+            if chunk is not None and detail["answered_keys"] < len(chunk):
+                return "not_run", {**detail, "reason": "keys_not_answered"}
+            return "pass", detail
+        return run
+
+    return [(f":chunk[{index}]", part(keys[start:start + PAIR_KEY_CAP]))
+            for index, start in enumerate(range(0, len(keys), PAIR_KEY_CAP))] + [(":null", part(None))]

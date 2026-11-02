@@ -1,6 +1,6 @@
 {
   "name": "semantic-crosscheck",
-  "version": "0.15.0",
+  "version": "0.16.0",
   "description": "Cross-layer verification for an ontology plus semantic layer on PostgreSQL 17, for Codex and Claude Code.",
   "author": {
     "name": "전문준"
@@ -9,7 +9,7 @@
   "interface": {
     "displayName": "Semantic Crosscheck",
     "shortDescription": "Prove that a PostgreSQL closure, SHACL rules, OWL reasoning and a Cube model agree.",
-    "longDescription": "Release v0.15.0: cross-check PostgreSQL 17 closures, SQL/SHACL rules, OWL/HermiT and Cube against independently authored gold SQL. Optional authored expectation cases can pin a local business-definition file by SHA-256; missing, changed, blocked or unavailable source evidence stops fixture cases before DB access and completion drift demotes affected passes. The okf diagnostic exports explicitly selected contract metadata or previews the closed SXC OKF 0.2 profile without SQL, source text, rows, credentials, runtime receipts or import application. Standalone knowledge-evolution exercises five fixed source transitions and 26 independent synthetic contracts through actual input/source/report APIs, with no DB, engine or model execution. Source currency, profile completion and synthetic replay never grant semantic approval or operational PASS. Existing report requirements and dependency pins remain unchanged. Rerun operational stages after upgrading.",
+    "longDescription": "Release v0.16.0: cross-check PostgreSQL 17 closures, SQL/SHACL rules, OWL/HermiT and Cube against independently authored gold SQL. V4 replays every eligible bounded V3 pair chunk and its NULL group, retaining per-mutant execution coverage with safe item ids, attempts and unexecuted reasons. A separate positive mutant_max_items budget defaults to 10000; exhaustion is not_run, never survival. Optional OWL inconsistency explanations can enumerate verified alternative subset-minimal generated-group cores, with a default result cap of 1, default node cap of 256 and hard ceilings of 32 results and 4096 nodes. Enumeration shares existing check/time budgets and preserves the original consistency failure and first-core fields. Coverage receipts and explanation completeness add no report authority or business certification. Existing report requirements and dependency pins remain unchanged. Rerun operational stages after upgrading.",
     "developerName": "Technoetic",
     "category": "Coding",
     "capabilities": [

@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## [0.16.0] - 2026-11-02
+
+Release notes: [docs/releases/v0.16.0.md](docs/releases/v0.16.0.md).
 
 ### Added
 
@@ -551,3 +553,4 @@ First release. Release notes: [docs/releases/v0.1.0.md](docs/releases/v0.1.0.md)
 [0.13.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.13.0
 [0.15.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.15.0
 [0.14.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.14.0
+[0.16.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.16.0

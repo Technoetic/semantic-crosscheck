@@ -1,12 +1,13 @@
 import json
 import unittest
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from types import SimpleNamespace
 
 import pgfixture  # noqa: F401
 from semantic_crosscheck import compare
 from semantic_crosscheck.cube_client import CubeResponseError
 from test_cube_envelope import served
+from test_compare_unit import FakeConn, demo_cfg, gold_of
 
 
 class StrictCubeJsonTest(unittest.TestCase):
@@ -47,6 +48,27 @@ class StrictCubeJsonTest(unittest.TestCase):
             served(b'{').meta()
         with self.assertRaises(UnicodeDecodeError):
             served(b'\xff').meta()
+
+    def test_unrepresentable_decimal_is_a_sanitized_load_error(self):
+        body = b'{"data": [{"secret": "private-row", "m.value": 1e9999999999999999999}]}'
+        with self.assertRaises(CubeResponseError) as caught:
+            served(body).load({})
+        self.assertEqual(compare.error_detail(caught.exception), {"error": "CubeResponseError", "cube": "invalid_response"})
+        self.assertNotIn("private-row", str(caught.exception))
+        with self.assertRaises(InvalidOperation):
+            served(body).meta()
+
+    def test_unrepresentable_decimal_becomes_a_structured_binding_error(self):
+        body = b'{"data": [{"secret": "private-row", "m.value": 1e9999999999999999999}]}'
+        cfg = demo_cfg()
+        gold = gold_of(cfg, "q04_depth_histogram")
+        conn = FakeConn(cols=["max_depth", "pairs"], data=[(1, 3)])
+        result = compare.run_binding(conn, served(body), cfg, gold, {})
+        self.assertEqual(compare.status(result), "error")
+        self.assertEqual((result.get("side"), result.get("error"), result.get("cube")),
+                         ("cube", "CubeResponseError", "invalid_response"))
+        self.assertNotIn("private-row", repr(result))
+        self.assertNotIn("9999999999999999999", repr(result))
 
     def test_json_primitives_and_fractional_precision_are_preserved(self):
         row, = served(b'{"data": [{"int": 42, "frac": 1.2500, "exp": 1e-30, "text": "1.2500", "bool": true, "null": null}]}').load({})

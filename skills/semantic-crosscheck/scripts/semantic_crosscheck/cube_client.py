@@ -17,6 +17,7 @@
 """
 
 import base64
+from decimal import DecimalException
 import hashlib
 import hmac
 import json
@@ -64,7 +65,7 @@ class CubeClient:
                 raw = r.read()
                 try:
                     return decode_json(raw)
-                except ValueError:
+                except (ValueError, DecimalException):
                     if path == "/cubejs-api/v1/load":
                         raise CubeResponseError("the load response is not valid JSON") from None
                     raise

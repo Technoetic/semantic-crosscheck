@@ -25,6 +25,13 @@ decoding. Responses of exactly the limit can succeed; the next byte is a
 reader. It requests at most 64 KiB at a time and stops after at most limit + 1
 source bytes. The reader closes the response on rejection as well as success.
 
+Redirects are disabled: the loopback Cube REST adapter does not require them.
+The client never follows a `Location` target, and urllib's default unbounded
+redirect-body drain is bypassed. A 30x response is handled as an HTTP error using
+the same bounded reader: a body within the cap reports the HTTP status, while
+an oversized body reports `invalid_response`. This applies to normal loads,
+replay, and metadata requests. Readiness returns `False` for redirects.
+
 `Content-Length` is not trusted as a substitute for counting received bytes.
 Missing lengths and chunked responses receive the same cap. A body that ends
 before a valid declared length is rejected even if the received prefix is valid
@@ -64,7 +71,7 @@ HTTP status; replay reports retain only a safe runtime failure reason.
 ## Cancellation limitations
 
 This is an **elapsed acceptance budget, not hard wall-clock cancellation**.
-DNS resolution, connection attempts, redirects, response-header parsing, and
+DNS resolution, connection attempts, response-header parsing, and
 chunk-size/trailer parsing may remain inside urllib beyond the deadline. A
 socket retains the timeout assigned when opened, so a later idle read can also
 outlast the remaining budget. Checks reject late results when control returns;

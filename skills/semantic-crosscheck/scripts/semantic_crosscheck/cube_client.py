@@ -66,6 +66,14 @@ class CubeResponseError(CubeError):
     """A /load answer outside Cube's load envelope; compare.error_detail reports it as cube = invalid_response."""
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        # Default redirects drain fp.read() without a byte limit before following
+        # Location. Let HTTPError reach our bounded reader instead. The loopback
+        # Cube REST adapter does not require redirects.
+        return None
+
+
 def _deadline(timeout_s) -> float:
     return time.monotonic() + _timeout(timeout_s)
 
@@ -86,7 +94,7 @@ class CubeClient:
         self.max_response_bytes = max_response_bytes
         self.base = base_url.rstrip("/")
         self.secret = secret
-        self._opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        self._opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect())
 
     def _read_response(self, response, deadline: float) -> bytes:
         """Bound entity bytes, checking elapsed time whenever public read1 returns.

@@ -48,6 +48,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if scenario.get('header_idle'):
                 time.sleep(scenario['header_idle'])
             self.send_response(scenario.get('status', 200))
+            if 'location' in scenario:
+                self.send_header('Location', scenario['location'])
             framing = scenario.get('framing', 'length')
             if framing in ('chunked', 'bad-chunk'):
                 self.send_header('Transfer-Encoding', 'chunked')
@@ -120,6 +122,66 @@ class CubeHttpTest(unittest.TestCase):
             return ('ok', operation())
         except Exception as error:
             return ('error', compare.error_detail(error))
+
+    def test_redirects_are_bounded_errors_and_never_contact_the_target(self):
+        for replay in (False, True):
+            for status in (301, 302, 303, 307, 308):
+                for size in (CAP, CAP + 1, CAP * 64):
+                    with self.subTest(replay=replay, status=status, size=size):
+                        target = self.client()
+                        client = self.client(status=status, location=target.base,
+                                             body=b'private-body' + b'x' * (size - 12))
+                        result = self.outcome(lambda: self.invoke(client, replay))
+                        detail = ({'error': 'CubeError', 'http_status': status} if size == CAP else
+                                  {'error': 'CubeResponseError', 'cube': 'invalid_response'})
+                        self.assertEqual(result, ('error', detail))
+                        self.assertEqual(self.server.scenarios[target.base.rsplit('/', 1)[1]]['requests'], 0)
+                        self.assertNotIn('private-body', repr(result))
+
+    def test_redirect_transport_never_drains_body_with_unbounded_read(self):
+        # Instrument public methods around real HTTP, including urllib's handler
+        # callbacks; checking only the eventual error misses intermediate drains.
+        original_read = http.client.HTTPResponse.read
+        original_read1 = http.client.HTTPResponse.read1
+        for replay in (False, True):
+            for framing in ('length', 'absent', 'chunked'):
+                with self.subTest(replay=replay, framing=framing):
+                    reads, responses = [], []
+
+                    def read(response, amount=None):
+                        data = original_read(response, amount)
+                        reads.append((amount, len(data)))
+                        responses.append(response)
+                        return data
+
+                    def read1(response, amount=-1):
+                        data = original_read1(response, amount)
+                        reads.append((amount, len(data)))
+                        responses.append(response)
+                        return data
+
+                    target = self.client()
+                    client = self.client(status=302, location=target.base,
+                                         body=b'x' * (CAP * 64), framing=framing)
+                    with mock.patch.object(http.client.HTTPResponse, 'read', read), \
+                            mock.patch.object(http.client.HTTPResponse, 'read1', read1):
+                        self.outcome(lambda: self.invoke(client, replay))
+                    self.assertTrue(reads)
+                    self.assertTrue(all(amount is not None and 0 < amount <= CAP + 1
+                                        for amount, _ in reads), reads)
+                    self.assertEqual(sum(size for _, size in reads), CAP + 1)
+                    self.assertTrue(all(response.isclosed() for response in responses))
+                    self.assertEqual(self.server.scenarios[target.base.rsplit('/', 1)[1]]['requests'], 0)
+
+    def test_meta_and_ready_do_not_follow_redirects(self):
+        for status in (301, 302, 303, 307, 308):
+            with self.subTest(status=status):
+                target = self.client()
+                client = self.client(status=status, location=target.base, body=b'private-body')
+                self.assertEqual(self.outcome(client.meta),
+                                 ('error', {'error': 'CubeError', 'http_status': status}))
+                self.assertIs(client.ready(), False)
+                self.assertEqual(self.server.scenarios[target.base.rsplit('/', 1)[1]]['requests'], 0)
 
     def test_exact_cap_and_one_extra_byte_for_all_framings_and_callers(self):
         # Missing the bounded reader allows the padded cap+1 envelope to succeed.
@@ -220,8 +282,10 @@ class CubeHttpTest(unittest.TestCase):
         self.assertIs(client.ready(), False)
 
     def test_binding_report_never_promotes_size_or_timeout_failure_to_equality(self):
+        target = self.client()
         for scenario, category in (({'body': b'{"data": [], "private": "private-body"}' + b' ' * CAP}, 'invalid_response'),
-                                   ({'timeout_s': 0.1, 'idle': 0.4}, 'timeout')):
+                                   ({'timeout_s': 0.1, 'idle': 0.4}, 'timeout'),
+                                   ({'status': 302, 'location': target.base, 'body': b'x' * (CAP + 1)}, 'invalid_response')):
             with self.subTest(category=category):
                 cfg = demo_cfg()
                 result = compare.run_binding(FakeConn(cols=['max_depth', 'pairs'], data=[]),
@@ -233,7 +297,10 @@ class CubeHttpTest(unittest.TestCase):
     def test_replay_report_cannot_call_transport_errors_survivors_or_witnesses(self):
         # Keep actual HTTP, _load and replay.run verdict/artifact handling. Replace
         # the unavailable database and Cube process setup with synthetic fixtures.
-        for scenario in ({'body': GOOD + b' ' * CAP}, {'timeout_s': 0.1, 'idle': 0.4}):
+        target = self.client()
+        for scenario in ({'body': GOOD + b' ' * CAP}, {'timeout_s': 0.1, 'idle': 0.4},
+                         {'status': 302, 'location': target.base, 'body': b'private-body'},
+                         {'status': 302, 'location': target.base, 'body': b'x' * (CAP + 1)}):
             with self.subTest(scenario=scenario), tempfile.TemporaryDirectory() as tmp, \
                     contextlib.ExitStack() as stack:
                 client = self.client(**scenario)

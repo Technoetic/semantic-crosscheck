@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.17.0] - 2026-11-03
+
+Release notes: [docs/releases/v0.17.0.md](docs/releases/v0.17.0.md).
+
+### Fixed
+
+- V3 validates every requested dimension and measure in each Cube response row
+  before canonicalization, across totals, additive groups, pair chunks, NULL
+  groups and V4 replays. Explicit NULL remains valid; a missing member is an
+  invalid response, never a passing baseline or a V4 mutation kill.
+- The trusted-SQL lexical gate recognizes quoted and schema-qualified known
+  volatile calls while preserving supported relation aliases, column lists and
+  literals. Context controls include ONLY, adjacent AS, NOT, qualified OPERATOR,
+  VALUES and ROWS FROM. No parser dependency or arbitrary SQL sandbox is added.
+- Undated filter-drop and normalization-drop witnesses compare the original and
+  mutated generated key/value bags with bidirectional EXCEPT ALL. NULL-to-zero,
+  missing keys, cancellation and MIN/MAX changes are classified by exposed
+  outputs rather than changed source-row counts. Dated witnesses are unchanged;
+  this is current-data observability, not general or future-data equivalence.
+
 ## [0.16.0] - 2026-11-02
 
 Release notes: [docs/releases/v0.16.0.md](docs/releases/v0.16.0.md).
@@ -554,3 +574,4 @@ First release. Release notes: [docs/releases/v0.1.0.md](docs/releases/v0.1.0.md)
 [0.15.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.15.0
 [0.14.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.14.0
 [0.16.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.16.0
+[0.17.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.17.0

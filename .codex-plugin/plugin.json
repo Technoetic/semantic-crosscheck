@@ -1,6 +1,6 @@
 {
   "name": "semantic-crosscheck",
-  "version": "0.16.0",
+  "version": "0.17.0",
   "description": "Cross-layer verification for an ontology plus semantic layer on PostgreSQL 17, for Codex and Claude Code.",
   "author": {
     "name": "전문준"
@@ -9,7 +9,7 @@
   "interface": {
     "displayName": "Semantic Crosscheck",
     "shortDescription": "Prove that a PostgreSQL closure, SHACL rules, OWL reasoning and a Cube model agree.",
-    "longDescription": "Release v0.16.0: cross-check PostgreSQL 17 closures, SQL/SHACL rules, OWL/HermiT and Cube against independently authored gold SQL. V4 replays every eligible bounded V3 pair chunk and its NULL group, retaining per-mutant execution coverage with safe item ids, attempts and unexecuted reasons. A separate positive mutant_max_items budget defaults to 10000; exhaustion is not_run, never survival. Optional OWL inconsistency explanations can enumerate verified alternative subset-minimal generated-group cores, with a default result cap of 1, default node cap of 256 and hard ceilings of 32 results and 4096 nodes. Enumeration shares existing check/time budgets and preserves the original consistency failure and first-core fields. Coverage receipts and explanation completeness add no report authority or business certification. Existing report requirements and dependency pins remain unchanged. Rerun operational stages after upgrading.",
+    "longDescription": "Release v0.17.0: cross-check PostgreSQL 17 closures, SQL/SHACL rules, OWL/HermiT and Cube against independently authored gold SQL. Every requested V3 dimension/measure must exist in returned rows; explicit NULL remains valid, while missing members are invalid responses and never V4 mutation kills. The trusted-SQL lexical gate also recognizes quoted and schema-qualified known volatile calls while retaining supported aliases and literals. Undated filter/normalization mutation witnesses compare original and mutated generated key/value bags with bidirectional EXCEPT ALL, covering NULL-to-zero, missing keys, cancellation and MIN/MAX observability. Dated witnesses, dependency pins and report authority are unchanged. Current-data observability is not general SQL equivalence or a SQL sandbox. Rerun operational stages after upgrading.",
     "developerName": "Technoetic",
     "category": "Coding",
     "capabilities": [

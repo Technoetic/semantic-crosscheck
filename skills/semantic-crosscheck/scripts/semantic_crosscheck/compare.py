@@ -91,6 +91,10 @@ def gold_kinds(gold, kinds: dict) -> dict[str, str]:
     return {col: kinds[member] for col, member in gold.map.items() if member in kinds}
 
 
+class GoldMetadataError(ValueError):
+    """The SQL result cannot be represented faithfully using the configured mapping."""
+
+
 def gold_rows(conn, cfg, gold, params: dict) -> list[dict]:
     """Rows of the gold SQL for one binding (bound parameters, READ ONLY, statement timeout)."""
     reserved = sorted(RESERVED_PARAMS & set(params))
@@ -101,10 +105,23 @@ def gold_rows(conn, cfg, gold, params: dict) -> list[dict]:
         ps = conn.prepare(sql)
         try:
             data = ps.run(**params)
-            cols = [c["name"] for c in (ps.columns or [])]
+            metadata = ps.columns
+            if not isinstance(metadata, (list, tuple)) or not metadata:
+                raise GoldMetadataError("invalid gold result metadata")
+            if any(not isinstance(c, dict) or not isinstance(c.get("name"), str)
+                   or not c["name"].strip() for c in metadata):
+                raise GoldMetadataError("invalid gold result column label")
+            cols = [c["name"] for c in metadata]
+            if len(set(cols)) != len(cols):
+                raise GoldMetadataError("duplicate gold result column label")
+            if not set(gold.map).issubset(cols):
+                raise GoldMetadataError("gold result lacks mapped columns")
+            if not isinstance(data, (list, tuple)) or any(
+                    not isinstance(row, (list, tuple)) or len(row) != len(cols) for row in data):
+                raise GoldMetadataError("invalid gold result row width")
+            return [dict(zip(cols, row)) for row in data]
         finally:
             ps.close()
-    return [dict(zip(cols, r)) for r in data or []]
 
 
 def cube_rows(client, gold, params: dict) -> list[dict]:

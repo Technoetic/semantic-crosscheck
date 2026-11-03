@@ -6,7 +6,7 @@ and how to report a vulnerability.
 
 ## Supported versions
 
-Security fixes are made for the latest release (currently 0.17.x). Older releases are not patched.
+Security fixes are made for the latest release (currently 0.18.x). Older releases are not patched.
 
 ## Reporting a vulnerability
 
@@ -70,6 +70,18 @@ current directory. Use `verify-full` (or `verify-ca`) whenever the connection le
 
 ## Out of scope and known limits
 
+- **Cube input boundaries.** Strict raw decoding rejects duplicate object keys
+  as checker policy, nonfinite constants and numeric parse failures; fractional
+  JSON numbers retain exact Decimal values. Gold SQL metadata is checked before
+  row dictionaries are built, including mapped columns on zero-row results.
+  Invalid bodies and schema errors cannot establish equality, a confirmed
+  witness or a mutation kill.
+- **Cube HTTP bounds are elapsed acceptance bounds.** Normal and replay loads
+  share one monotonic query budget and cap successful and HTTP-error source
+  bodies at 16 MiB by default. A late result is rejected when control returns.
+  DNS, headers and HTTP framing can delay that return; this is not hard
+  cancellation. Source-body bytes are bounded, not total heap, transport metadata
+  or JSON parsing CPU. See [Cube HTTP bounds](docs/cube-http.md).
 - **The configuration and supplied SQL are trusted code.** Anyone who can edit `crosscheck.toml` or a
   gold, reference, candidate or metamorphic SQL file can run SQL as the check role. Review them like
   code. Synthetic fixture CTEs do not sandbox qualified external references; run `counterexample` in
@@ -96,7 +108,7 @@ current directory. Use `verify-full` (or `verify-ca`) whenever the connection le
 ## Maintainer checklist for a public release
 
 - Turn on private vulnerability reporting in the repository settings, so the link above works.
-- Tag the release (`git tag -a v0.17.0`) and push the tag: README's Codex command pins `--ref v0.17.0`, and the
+- Tag the release (`git tag -a v0.18.0`) and push the tag: README's Codex command pins `--ref v0.18.0`, and the
   release archive is made from the tag with `git archive` and published with its SHA256SUMS.
 - Enable the hooks in the publishing clone with `git config core.hooksPath .githooks`, and set
   `SXC_DENYLIST` to the private deny-list (or `none`).

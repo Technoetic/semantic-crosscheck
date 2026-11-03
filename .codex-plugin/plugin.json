@@ -1,6 +1,6 @@
 {
   "name": "semantic-crosscheck",
-  "version": "0.17.0",
+  "version": "0.18.0",
   "description": "Cross-layer verification for an ontology plus semantic layer on PostgreSQL 17, for Codex and Claude Code.",
   "author": {
     "name": "전문준"
@@ -9,7 +9,7 @@
   "interface": {
     "displayName": "Semantic Crosscheck",
     "shortDescription": "Prove that a PostgreSQL closure, SHACL rules, OWL reasoning and a Cube model agree.",
-    "longDescription": "Release v0.17.0: cross-check PostgreSQL 17 closures, SQL/SHACL rules, OWL/HermiT and Cube against independently authored gold SQL. Every requested V3 dimension/measure must exist in returned rows; explicit NULL remains valid, while missing members are invalid responses and never V4 mutation kills. The trusted-SQL lexical gate also recognizes quoted and schema-qualified known volatile calls while retaining supported aliases and literals. Undated filter/normalization mutation witnesses compare original and mutated generated key/value bags with bidirectional EXCEPT ALL, covering NULL-to-zero, missing keys, cancellation and MIN/MAX observability. Dated witnesses, dependency pins and report authority are unchanged. Current-data observability is not general SQL equivalence or a SQL sandbox. Rerun operational stages after upgrading.",
+    "longDescription": "Release v0.18.0: cross-check PostgreSQL 17 closures, SQL/SHACL rules, OWL/HermiT and Cube against independently authored gold SQL. Strict raw Cube decoding rejects duplicate object keys and nonfinite constants before information is lost, and preserves fractional numbers as exact Decimal values. Gold SQL result metadata must contain valid unique labels and every mapped column even with zero rows; distinct extra columns remain allowed. Normal and replay Cube loads share a monotonic elapsed acceptance budget and a default 16 MiB source-body cap, including HTTP errors. These bounds do not guarantee hard cancellation of DNS, headers or HTTP framing, or limit total heap use. Invalid bodies and schema errors cannot establish equality, a witness or a mutation kill. Dependency pins, default stages and report authority are unchanged. Rerun operational stages after upgrading.",
     "developerName": "Technoetic",
     "category": "Coding",
     "capabilities": [

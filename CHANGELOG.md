@@ -1,5 +1,36 @@
 # Changelog
 
+## [0.18.0] - 2026-11-04
+
+Release notes: [docs/releases/v0.18.0.md](docs/releases/v0.18.0.md).
+
+### Fixed
+
+- Cube load responses are decoded from raw JSON before duplicate keys can be
+  overwritten or fractional numbers rounded. The strict checker policy rejects
+  duplicate object keys at every depth and nonfinite constants; fractional
+  numbers use exact Decimal values. Invalid JSON, encoding and Decimal parse
+  failures become sanitized invalid-response errors.
+- Gold SQL returned metadata is validated before tuple-to-dictionary conversion:
+  invalid or duplicate labels, missing mapped columns even on zero-row results,
+  and mismatched row widths are rejected. Distinct extra unmapped columns and
+  valid empty results remain allowed.
+- Normal and replay Cube loads share a monotonic elapsed acceptance budget across
+  polls and final success, and bound successful and HTTP-error source bodies at
+  16 MiB by default. Late results are rejected when control returns; this does
+  not guarantee hard cancellation of DNS, headers or HTTP framing, or cap total
+  heap use. See [Cube HTTP bounds](docs/cube-http.md).
+
+### Compatibility
+
+Previously accepted lossy or malformed answers may now be errors; they cannot
+establish equality, a confirmed witness or a mutation kill. Repair the response
+or SQL metadata rather than treating an error as a mismatch. The CubeClient
+constructor requires a finite positive nonboolean numeric timeout and a positive
+nonboolean integer `max_response_bytes` override. Dependency and runtime pins,
+default stages and report authority are unchanged. Rerun operational stages after
+upgrading; installation does not refresh evidence.
+
 ## [0.17.0] - 2026-11-03
 
 Release notes: [docs/releases/v0.17.0.md](docs/releases/v0.17.0.md).
@@ -575,3 +606,4 @@ First release. Release notes: [docs/releases/v0.1.0.md](docs/releases/v0.1.0.md)
 [0.14.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.14.0
 [0.16.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.16.0
 [0.17.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.17.0
+[0.18.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.18.0

@@ -12,8 +12,8 @@ element, and the check names the configuration entry the element comes from.
   closure_depth_shift         <h>_closure.min_depth -> (min_depth) + 1          closure rows
   closure_path_count_one      <h>_closure.path_count -> 1                       pairs with path_count > 1
   closure_qty_single_path     <h>_closure.qty -> (qty) / (path_count)           pairs with path_count > 1 and qty <> 0
-  measure_filter_drop         m_<m> SQL without the exact filter                rows the filter excludes
-  measure_normalization_drop  m_<m> SQL comparing raw values                    rows only the normalised match keeps
+  measure_filter_drop         m_<m> SQL without the exact filter                exposed row differences
+  measure_normalization_drop  m_<m> SQL comparing raw values                    exposed row differences
   measure_agg_to_max          m_<m>.value type -> max (sum and count only)      groups of the cube's rows whose sum (or
                                                                                 count) differs from their max: each key,
                                                                                 the total, and two keys queried together
@@ -22,8 +22,8 @@ element, and the check names the configuration entry the element comes from.
                                                                                 rows, whatever their values
   closure_end_swap            <h>_closure join to <h>_descendant on ancestor    pairs whose ends are different node rows
 
-The filter witnesses count rows that can move the measure (a non-null value, non-zero for sums) plus the grain
-keys (key and day for a dated measure) that only one of the two filtered row sets contains, whatever their value.
+For undated measures, filter witnesses count the bidirectional bag difference of generated key/value rows.
+Dated witnesses count rows that can move the measure plus key/day pairs present in only one row set.
 Filter mutants replace cube_gen.where_sql(measure) inside the measure cube's SQL with where_sql of a copy
 changed by dataclasses.replace. That is exactly the SQL cube_gen.measure_cube generates for the copy, without
 needing column types. When the model's SQL does not contain the configured clause, the model came from
@@ -249,11 +249,16 @@ def _rewrite_where(model: dict, m, m2) -> dict:
     return _mutated(model, patch)
 
 
-def _filter_witness(cfg, m, m2) -> str:
-    """Rows selected by exactly one of the two WHERE clauses that can move the measure, plus the result rows that only
-    one clause produces whatever their value: grain keys (and, for a dated measure, key and day pairs, since a date
-    window then shows a key it did not show before) present in one filtered row set and not in the other. A row worth
-    0 that adds a key changes the result as much as a row that changes a value."""
+def _filter_witness(cfg, m, m2, original: dict, changed: dict) -> str:
+    """Compare generated undated key/value bags; preserve the dated row and key/day witness."""
+    if not m.date_column:
+        # Compare the generated pre-aggregated key/value rows, including NULL and missing keys.
+        # EXCEPT ALL is NULL-aware and preserves bag multiplicity in both directions.
+        cube = naming.cube_measure(m.name)
+        before, after = _row_sql(original, cube), _row_sql(changed, cube)
+        return (f"WITH original AS ({before}), mutant AS ({after}) "
+                "SELECT (SELECT count(*) FROM (TABLE original EXCEPT ALL TABLE mutant) a)"
+                " + (SELECT count(*) FROM (TABLE mutant EXCEPT ALL TABLE original) b)")
     table, w1, w2 = _table(cfg, m), cube_gen.where_sql(m), cube_gen.where_sql(m2)
     grain = [f"t.{ident.quote(m.by)}"] + ([f"(t.{ident.quote(m.date_column)})::date"] if m.date_column else [])
     cols = ", ".join(grain)
@@ -265,13 +270,15 @@ def _filter_witness(cfg, m, m2) -> str:
 
 def _filter_drop(cfg, model: dict, m) -> Mutant:
     m2 = dataclasses.replace(m, filter={})
-    return Mutant("measure_filter_drop", m.name, _rewrite_where(model, m, m2), _filter_witness(cfg, m, m2), {},
+    changed = _rewrite_where(model, m, m2)
+    return Mutant("measure_filter_drop", m.name, changed, _filter_witness(cfg, m, m2, model, changed), {},
                   f"measures.{m.name}")
 
 
 def _normalization_drop(cfg, model: dict, m) -> Mutant:
     m2 = dataclasses.replace(m, filter={**m.filter, **m.filter_normalized}, filter_normalized={})
-    return Mutant("measure_normalization_drop", m.name, _rewrite_where(model, m, m2), _filter_witness(cfg, m, m2), {},
+    changed = _rewrite_where(model, m, m2)
+    return Mutant("measure_normalization_drop", m.name, changed, _filter_witness(cfg, m, m2, model, changed), {},
                   f"measures.{m.name}")
 
 

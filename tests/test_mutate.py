@@ -189,9 +189,14 @@ class OperatorTest(unittest.TestCase):
         self.assertEqual(mu[("closure_qty_single_path", "has_component")].witness_sql,
                          f"SELECT count(*) FROM {closure_table} WHERE path_count > 1 AND qty <> 0")
         drop = mu[("measure_filter_drop", "firm_open")].witness_sql
-        self.assertIn(cube_gen.where_sql(self.cfg.measures["firm_open"]), drop)
-        self.assertIn("""AND t."qty_open" IS NOT NULL AND t."qty_open" <> 0)""", drop)
-        self.assertEqual(drop.count(' EXCEPT SELECT t."part_id" FROM '), 2, "keys only one filtered row set has")
+        original = element(self.model, ("cubes", "m_firm_open", "sql"))
+        changed = element(mu[("measure_filter_drop", "firm_open")].model, ("cubes", "m_firm_open", "sql"))
+        self.assertEqual(drop, f"WITH original AS ({original}), mutant AS ({changed}) "
+                         "SELECT (SELECT count(*) FROM (TABLE original EXCEPT ALL TABLE mutant) a)"
+                         " + (SELECT count(*) FROM (TABLE mutant EXCEPT ALL TABLE original) b)")
+        dated = mu[("measure_filter_drop", "firm_open_dated")].witness_sql
+        self.assertIn('AND t."qty_open" IS NOT NULL AND t."qty_open" <> 0)', dated)
+        self.assertEqual(dated.count(' EXCEPT SELECT t."part_id", (t."due_date")::date FROM '), 2)
         self.assertEqual(mu[("closure_end_swap", "has_component")].witness_sql,
                          f'SELECT count(*) FROM {closure_table} p LEFT JOIN "sxc_demo"."part" a ON a."part_id" = p.ancestor '
                          'LEFT JOIN "sxc_demo"."part" d ON d."part_id" = p.descendant WHERE a."part_id" IS DISTINCT FROM d."part_id"')
@@ -675,8 +680,17 @@ class DirtyDemoTest(unittest.TestCase):
         mutants = {mu.check_id: mu for mu in mutate.operators(cfg, model)}
         self.assertNotIn("v4:closure_depth_shift:has_component", mutants)
         n = mutate.witness(conn, cfg, mutants["v4:measure_normalization_drop:on_hand"])
-        self.assertGreater(n, 0)
-        self.assertEqual(n, fx.data["expected"]["location_variants"])
+        original_sql = element(model, ("cubes", "m_on_hand", "sql"))
+        mutant_sql = element(mutants["v4:measure_normalization_drop:on_hand"].model, ("cubes", "m_on_hand", "sql"))
+        with db.read_only(conn):
+            original = {tuple(row) for row in conn.run(original_sql)}
+            changed = {tuple(row) for row in conn.run(mutant_sql)}
+        # Three keys change value; each contributes one old and one new exposed row.
+        old_rows, new_rows = original - changed, changed - original
+        self.assertEqual(len(old_rows), fx.data["expected"]["location_variants"])
+        self.assertEqual(len(old_rows), 3)
+        self.assertEqual({key for key, _ in old_rows}, {key for key, _ in new_rows})
+        self.assertEqual((len(new_rows), n), (3, 6))
         self.assertEqual(mutate.witness(conn, cfg, mutants["v4:measure_normalization_drop:consigned"]), 0)
 
 

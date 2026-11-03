@@ -90,7 +90,10 @@ CTEs freeze the relation and the predicate once per row before partitioning.
 The statement runs twice in a single READ ONLY, REPEATABLE READ transaction;
 different baseline bags, predicate outcomes or aggregates produce an error.
 Known volatile primitives such as random(), clock_timestamp() and sequence
-updates are unsupported. The relation is bounded at 10001 rows; crossing the
+updates are unsupported. Quoted and schema-qualified invocations are checked in both the relation and
+predicate, including calls after qualified PostgreSQL operators. Quoted non-function identifiers and string
+literals retain their existing support. This remains a conservative lexical gate, not a PostgreSQL parser or
+verification of custom-function volatility. The relation is bounded at 10001 rows; crossing the
 10000-row comparison limit produces an error rather than checking a prefix.
 Statement timeouts, malformed engine responses and unsupported types also fail
 closed. An unavailable PostgreSQL engine is `not_run`.

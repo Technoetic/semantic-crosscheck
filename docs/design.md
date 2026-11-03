@@ -541,9 +541,11 @@ such an answer would pass V1 and V2 vacuously against empty gold rows, pass a V3
 keys over no keys whatever the source data holds, and kill a V4 mutant against non-empty gold rows. A V1 or V3 check
 and an `expect` case carry `cube` = `invalid_response`, and a V1 or V3 check gets the adapter next action; a V2
 stratum check counts such bindings by type under `errors` and keeps the general next action, as for its other
-binding errors. A V3 test whose answer is outside the envelope is an `error` as well; the member check covers the
-rows of gold queries only (V1, V2, their V4 replays and `expect`). Both sides empty still passes when Cube really
-answered an empty `data` list.
+binding errors. Every V3 load also checks each returned row for every requested dimension and measure before
+canonicalization, including totals, additive groups, pair samples, chunks and NULL groups. Missing members are
+`MissingMember`/`invalid_response`; an explicitly present NULL remains valid. The same check applies to their V4
+replays, where invalid responses remain suite errors rather than kills. Both sides empty still passes when Cube
+really answered an empty `data` list.
 
 **Bindings.** No parameters: one binding in stratum `all`. `param_sets`: stratum `param_sets` with each set.
 One swept parameter: `values` (stratum `values`), `values_of = "entity.column"` (every distinct non-null value,
@@ -721,7 +723,13 @@ computed once. It stops at the first item that does not pass:
 - when every item passes the mutant **survived** and the check fails (`killed_by` is empty).
 
 Before Cube starts, a witness SQL query counts what the mutation changes on the current data, independent of the
-suite; witness 0 means the mutant is equivalent here and goes to `not_proven` without a check. The closure
+suite; witness 0 means the mutant is equivalent here and goes to `not_proven` without a check. For undated
+`measure_filter_drop` and `measure_normalization_drop`, it compares the generated original/mutant key-value
+relations with `EXCEPT ALL` in both directions. Counts describe differing output rows, not changed source rows:
+three changed keys can contribute three original plus three mutant rows. This preserves NULL versus zero and
+missing keys while recognizing cancellation in SUM and unchanged MIN/MAX values. Dated measures retain the
+existing conservative source-row and key/day witness. This is current exposed-data observability, not arbitrary
+SQL equivalence or a shared Cube/SQL snapshot. The closure
 operators (and `closure_join_swap`, through the hierarchy its measure joins) are gated like V1–V3: when build's
 `closure:<h>` did not pass, their checks are `not_run` (`closure_not_passed`) and no Cube process starts. When
 suite items are missing because a closure gated them, their gold query could not be planned

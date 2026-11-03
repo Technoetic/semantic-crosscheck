@@ -712,6 +712,16 @@ def run_test(conn, client, cfg, model: dict, test: dict, budget: int | None = No
         return "error", compare.error_detail(e)
 
 
+def _load(client, query: dict) -> list[dict]:
+    """Require each requested member in every returned row; explicit NULL remains valid."""
+    rows = client.load(query)
+    members = (*query.get("dimensions", ()), *query.get("measures", ()))
+    if not isinstance(rows, list) or any(not isinstance(row, dict) or any(m not in row for m in members)
+                                         for row in rows):
+        raise compare.MissingMember("a Cube row lacks a requested member")
+    return rows
+
+
 def _single(rows: list[dict], member: str):
     if len(rows) != 1:
         raise ValueError(f"expected one total row for {member}, got {len(rows)}")
@@ -725,7 +735,7 @@ def _sql_value(conn, cfg, sql: str):
 
 def _run_total(conn, client, cfg, test: dict) -> tuple[str, dict]:
     member = test["members"][0]
-    cube_v = _single(client.load({"measures": [member]}), member)
+    cube_v = _single(_load(client, {"measures": [member]}), member)
     detail = {}
     if "measure" in test:
         m = cfg.measures[test["measure"]]
@@ -768,8 +778,8 @@ def _null_group(conn, cfg, test: dict) -> tuple:
 
 def _run_additive(conn, client, cfg, test: dict) -> tuple[str, dict]:
     measure, dim = test["measure"], test["dimension"]
-    total = _single(client.load({"measures": [measure]}), measure)
-    groups = client.load({"dimensions": [dim], "measures": [measure]})
+    total = _single(_load(client, {"measures": [measure]}), measure)
+    groups = _load(client, {"dimensions": [dim], "measures": [measure]})
     sql_null, null_rows, orphans = _null_group(conn, cfg, test)
     cube_null = _sum([g.get(measure) for g in groups if g.get(dim) is None])
     if test["agg"] == "count":   # a count over no rows is 0 in SQL, NULL as a sum of per-key counts
@@ -837,14 +847,14 @@ def _compare(client, test: dict, restrict, asked: list | None = None, witness: "
     not masquerade as NULL-valued measures. Expected keys use each queried dimension's canonical type. With `asked`
     and a `witness`, the witness classifies the asked keys missing from an answer once every query has answered."""
     measures, group, kinds = test["measures"], test["group_by"], test.get("kinds", {})
-    together, dups = _keyed(client.load(restrict({"dimensions": [group], "measures": measures}, group)), group,
+    together, dups = _keyed(_load(client, restrict({"dimensions": [group], "measures": measures}, group)), group,
                             kinds.get(group))
     answered = ({i for i, k in enumerate(asked) if canon.canon(k, kinds.get(group)) in together}
                 if asked is not None else None)
     mismatched, alone_only, alones = {}, {}, {}
     for m in measures:
         dim = test["alone"][m]
-        alone, d = _keyed(client.load(restrict({"dimensions": [dim], "measures": [m]}, dim)), dim, kinds.get(dim))
+        alone, d = _keyed(_load(client, restrict({"dimensions": [dim], "measures": [m]}, dim)), dim, kinds.get(dim))
         alones[m] = alone
         if answered is not None:
             answered.intersection_update(i for i, k in enumerate(asked) if canon.canon(k, kinds.get(dim)) in alone)

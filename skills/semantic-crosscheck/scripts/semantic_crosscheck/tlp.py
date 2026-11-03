@@ -33,6 +33,78 @@ _FORBIDDEN = {'WITH', 'RECURSIVE', 'INTO', 'INSERT', 'UPDATE', 'DELETE', 'MERGE'
 _VOLATILE = {'RANDOM', 'CLOCK_TIMESTAMP', 'TIMEOFDAY', 'NEXTVAL', 'SETVAL', 'GEN_RANDOM_UUID'}
 
 
+def _quoted_call_names(lexemes):
+    """Exclude column-list aliases only in a lexical FROM/JOIN relation slot.
+
+    Each delimiter scope has its own clause and relation state. In particular,
+    commas inside SELECT lists, function arguments and arrays cannot introduce
+    table aliases. This recognizes common relation forms, not arbitrary SQL.
+    """
+    aliases = set()
+    stack = []
+    clause, relation = None, None
+    clause_ends = {'WHERE', 'GROUP', 'HAVING', 'ORDER', 'LIMIT', 'OFFSET',
+                   'FETCH', 'WINDOW', 'UNION', 'INTERSECT', 'EXCEPT', 'VALUES'}
+    join_words = {'ON', 'USING', 'INNER', 'OUTER', 'LEFT', 'RIGHT', 'FULL',
+                  'CROSS', 'NATURAL'}
+    for index, (kind, value) in enumerate(lexemes):
+        if value in ('(', '[') and kind == 'symbol':
+            relation_open = value == '(' and clause == 'from' and relation in ('start', 'name')
+            # A parenthesized relation may contain a joined table or SELECT;
+            # a table function's arguments always begin in expression context.
+            grouped_relation = relation_open and relation == 'start'
+            stack.append((clause, 'alias' if relation_open else None))
+            clause, relation = ('from', 'start') if grouped_relation else (None, None)
+            continue
+        if value in (')', ']') and kind == 'symbol':
+            clause, relation = stack.pop() if stack else (None, None)
+            continue
+        if kind == 'word':
+            if value == 'SELECT':
+                clause, relation = 'select', None
+                continue
+            if value in clause_ends:
+                clause, relation = None, None
+                continue
+            # IS [NOT] DISTINCT FROM is an expression, not a FROM clause.
+            if (value == 'FROM' and clause == 'select'
+                    and (index == 0 or lexemes[index - 1] != ('word', 'DISTINCT'))):
+                clause, relation = 'from', 'start'
+                continue
+            if (value == 'FROM' and clause == 'from' and relation == 'name'
+                    and lexemes[index - 1] == ('word', 'ROWS')):
+                # ROWS FROM (...) is a table-function group, not a subquery.
+                continue
+            if clause == 'from' and value == 'JOIN':
+                relation = 'start'
+                continue
+            if clause == 'from' and value in join_words:
+                relation = None
+                continue
+        if clause != 'from':
+            continue
+        if (kind, value) == ('symbol', ','):
+            relation = 'start'
+        elif relation == 'start' and kind == 'word' and value in ('LATERAL', 'ONLY'):
+            continue
+        elif relation in ('start', 'qualified') and kind in ('word', 'quoted'):
+            relation = 'name'
+        elif relation == 'name' and (kind, value) == ('symbol', '.'):
+            relation = 'qualified'
+        elif relation == 'name' and (kind, value) == ('symbol', '*'):
+            relation = 'alias'
+        elif relation in ('name', 'alias') and (kind, value) == ('word', 'AS'):
+            relation = 'explicit_alias'
+        elif relation in ('name', 'alias', 'explicit_alias') and kind in ('word', 'quoted'):
+            aliases.add(index)
+            relation = None
+        else:
+            relation = None
+    return [value for index, (kind, value) in enumerate(lexemes[:-1])
+            if kind == 'quoted' and value in _VOLATILE and index not in aliases
+            and lexemes[index + 1] == ('symbol', '(')]
+
+
 def _read(path, maximum):
     with Path(path).open('rb') as stream:
         value = stream.read(maximum + 1)
@@ -41,11 +113,12 @@ def _read(path, maximum):
     return value
 
 
-def _tokens(sql):
+def _tokens(sql, quoted_calls=False):
     """Small, conservative lexical gate, deliberately not a PostgreSQL parser."""
     if not isinstance(sql, str) or not sql.strip() or '\0' in sql or len(sql) > SPEC_LIMIT:
         raise ValueError('SQL text')
     code = []
+    lexemes = []
     i = 0
     while i < len(sql):
         character = sql[i]
@@ -53,6 +126,7 @@ def _tokens(sql):
             quote = character
             code.append(' ')
             i += 1
+            start = i
             while i < len(sql):
                 if sql[i] == '\\':
                     # Backslash strings depend on session settings; unsupported.
@@ -66,12 +140,26 @@ def _tokens(sql):
                 i += 1
             else:
                 raise ValueError('Unclosed SQL quote')
+            if quoted_calls:
+                lexemes.append(('quoted', sql[start:i - 1].replace('""', '"').upper())
+                               if quote == '"' else ('literal', ''))
             continue
         if character in ';$' or sql[i:i + 2] in ('--', '/*', '*/'):
             raise ValueError('Unsupported SQL lexical form')
+        if quoted_calls and (character.isalpha() or character == '_'):
+            start = i
+            while i < len(sql) and (sql[i].isalnum() or sql[i] == '_'):
+                i += 1
+            word = sql[start:i]
+            code.append(word)
+            lexemes.append(('word', word.upper()))
+            continue
         code.append(character)
+        if quoted_calls and not character.isspace():
+            lexemes.append(('symbol', character))
         i += 1
-    return re.findall(r'[A-Za-z_][A-Za-z_0-9]*', ''.join(code).upper())
+    calls = _quoted_call_names(lexemes) if quoted_calls else []
+    return re.findall(r'[A-Za-z_][A-Za-z_0-9]*', ''.join(code).upper()) + calls
 
 
 def load_spec(path):
@@ -155,7 +243,8 @@ def _partition_sql():
 def _query(spec):
     # Known volatile inputs are unsupported even when a coincidental second
     # evaluation happens to agree. Custom functions remain trusted SQL.
-    if (_VOLATILE & set(_tokens(spec['relation_sql']) + _tokens(spec['predicate_sql']))):
+    if (_VOLATILE & set(_tokens(spec['relation_sql'], quoted_calls=True)
+                        + _tokens(spec['predicate_sql'], quoted_calls=True))):
         raise ValueError('Known unstable SQL input')
     aggregate = spec['aggregate']
     column = '*' if aggregate['column'] == '*' else ident.quote(aggregate['column'])
@@ -223,7 +312,8 @@ def _norec_query(spec):
     Diagnostic rows are a third evaluation used for observable stability, not a shared predicate for the oracle.
     Materialization bounds the comparison but limits optimizer/index coverage relative to unrestricted NoREC.
     """
-    if _VOLATILE & set(_tokens(spec['relation_sql']) + _tokens(spec['predicate_sql'])):
+    if _VOLATILE & set(_tokens(spec['relation_sql'], quoted_calls=True)
+                       + _tokens(spec['predicate_sql'], quoted_calls=True)):
         raise ValueError('Known unstable SQL input')
     predicate = spec['predicate_sql']
     return f'''WITH sxc_tlp_relation AS MATERIALIZED (

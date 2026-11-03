@@ -26,6 +26,13 @@ witness found no observable change **on current data**, not general SQL equivale
 inapplicable, gated or failed-to-start instance has no executed items. Executed mutant result details
 also contain their `coverage` receipt.
 
+For undated filter/normalization-drop measures, the witness compares the generated original and mutant
+key/value output bags in both directions with `EXCEPT ALL`. Its count is the number of differing output
+rows, not the number of changed input facts. NULL versus zero and missing keys remain distinguishable;
+cancelling SUM inputs and non-extremal MIN/MAX additions can be equivalent on the exposed data. Dated
+measures keep their existing conservative row/key-day witness. Separate Cube and SQL requests still do
+not share a snapshot, and witness zero is not a claim about future data or arbitrary SQL equivalence.
+
 Each receipt lists safe item ids, `status`, `attempts`, `planned_items`, `executed_items`, `max_items` and
 `complete`. Unexecuted items are `not_run` with a categorical reason, such as `early_stop`, `item_budget`,
 `data_equivalent`, `not_applicable` or `closure_not_passed`. `complete` means every selected item was

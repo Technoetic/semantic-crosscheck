@@ -9,7 +9,8 @@
   response would pass V1 and V2 vacuously against empty gold rows, pass a V3 pair test of at most PAIR_KEY_CAP keys
   over no keys whatever the source data holds, and count as a V4 kill against non-empty gold rows. A 2xx body that is
   not JSON raises it too, so every malformed answer gets one category; meta() keeps the decode error, which the cube
-  stage reports by type.
+  stage reports by type. Duplicate keys and nonfinite JSON constants are rejected; fractional numbers keep exact
+  decimal precision before comparison.
 - Talks to the loopback adapter directly. urllib's default opener applies HTTP_PROXY and the system proxy settings,
   and does not bypass 127.0.0.1 unless NO_PROXY lists it, so the JWT and the query values (bound filter values from
   the database) would go to the proxy; every request therefore uses an opener without proxies.
@@ -22,6 +23,8 @@ import json
 import time
 import urllib.error
 import urllib.request
+
+from .constraints import decode_json
 
 DEFAULT_LIMIT = 50000
 
@@ -58,7 +61,13 @@ class CubeClient:
         req = urllib.request.Request(self.base + path, data=data, headers={"Content-Type": "application/json", "Authorization": jwt(self.secret)})
         try:
             with self._opener.open(req, timeout=30) as r:
-                return json.loads(r.read())
+                raw = r.read()
+                try:
+                    return decode_json(raw)
+                except ValueError:
+                    if path == "/cubejs-api/v1/load":
+                        raise CubeResponseError("the load response is not valid JSON") from None
+                    raise
         except urllib.error.HTTPError as e:
             body = e.read().decode("utf-8", "replace")[:500]
             raise CubeError(f"HTTP {e.code}: {body}") from e

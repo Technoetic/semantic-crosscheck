@@ -21,6 +21,7 @@ import time
 from . import (canon, closure, config, constraints, counterexample as ce, cube_gen,
                cube_run, db, ident, mutate, mutation_fixtures, naming, procutil, provenance)
 from .result import EXIT_CONFIG, Result, StageError
+from .cube_client import _deadline, _remaining
 
 FORMAT = 'sxc-synthetic-cube-replay'
 VERSION = 1
@@ -230,20 +231,21 @@ def _load(client, query):
     run() reports every malformed answer as a runtime error, never as a kill.
     """
     request = dict(query, limit=ce.ROW_LIMIT + 1)
-    deadline = time.monotonic() + client.timeout_s
+    deadline = _deadline(client.timeout_s)
     while True:
-        response = client._req('/cubejs-api/v1/load', {'query': request})
+        _remaining(deadline)
+        response = client._req('/cubejs-api/v1/load', {'query': request}, deadline=deadline)
+        _remaining(deadline)
         if not isinstance(response, dict):
             raise ValueError('invalid Cube envelope')
         if response.get('error') == 'Continue wait':
-            if time.monotonic() >= deadline:
-                raise ValueError('Cube timeout')
-            time.sleep(0.1)
+            time.sleep(min(0.1, _remaining(deadline)))
             continue
         if 'error' in response or not isinstance(response.get('data'), list):
             raise ValueError('invalid Cube data')
         if len(response['data']) >= request['limit']:
             raise ValueError('Cube row limit')
+        _remaining(deadline)
         return response['data']
 
 

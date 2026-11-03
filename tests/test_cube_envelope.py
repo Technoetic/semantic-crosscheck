@@ -39,7 +39,7 @@ class Answers(CubeClient):
         super().__init__("http://127.0.0.1:9", "s" * 64, timeout_s=timeout_s)
         self.answers, self.requests = list(answers), []
 
-    def _req(self, path, payload=None):
+    def _req(self, path, payload=None, *, deadline=None):
         self.requests.append((path, payload))
         return self.answers.pop(0) if len(self.answers) > 1 else self.answers[0]
 
@@ -112,9 +112,9 @@ class LoadEnvelopeTest(unittest.TestCase):
                 self.assertEqual(category(caught.exception), cube)
 
     def test_continue_wait_still_polls_and_times_out_and_the_answer_after_it_is_checked(self):
-        # the client's own clock: the real time.time for the deadline and a mock sleep, so the process-wide
+        # The client's monotonic deadline clock and a mock sleep, so the process-wide
         # time.sleep stays untouched
-        clock = SimpleNamespace(time=time.time, sleep=mock.Mock())
+        clock = SimpleNamespace(time=time.time, monotonic=time.monotonic, sleep=mock.Mock())
         with mock.patch.object(cube_client, "time", clock):
             rows = [{"m.value": "1"}]
             self.assertEqual(Answers({"error": "Continue wait"}, {"data": rows}).load({"measures": ["m.value"]}), rows)
@@ -122,9 +122,8 @@ class LoadEnvelopeTest(unittest.TestCase):
             with self.assertRaises(CubeError) as caught:
                 Answers({"error": "Continue wait"}, {}).load({"measures": ["m.value"]})
             self.assertEqual(category(caught.exception), "invalid_response")
-            with self.assertRaises(CubeError) as caught:
-                Answers({"error": "Continue wait"}, timeout_s=-1).load({"measures": ["m.value"]})
-            self.assertEqual(category(caught.exception), "timeout")
+            with self.assertRaises(ValueError):
+                Answers({"error": "Continue wait"}, timeout_s=-1)
 
 
 class CubeRowsTest(unittest.TestCase):

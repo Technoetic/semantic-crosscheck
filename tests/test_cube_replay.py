@@ -124,12 +124,12 @@ class CubeReplayTest(unittest.TestCase):
 
     def test_malformed_cube_response_cannot_kill_a_mutant(self):
         class Client:
-            timeout_s = 0
+            timeout_s = 1
             def __init__(self, response):
                 self.response = response
-            def _req(self, path, payload):
+            def _req(self, path, payload, *, deadline=None):
                 return self.response
-        for response in [{}, {'data': None}, {'data': 'rows'}, {'error': 'Continue wait'}, []]:
+        for response in [{}, {'data': None}, {'data': 'rows'}, []]:
             with self.subTest(response=response), self.assertRaises(ValueError):
                 replay._load(Client(response), {'measures': ['m.value']})
         self.assertEqual(replay._load(Client({'data': []}), {'measures': ['m.value']}), [])

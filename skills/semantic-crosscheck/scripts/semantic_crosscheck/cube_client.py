@@ -20,7 +20,10 @@ import base64
 from decimal import DecimalException
 import hashlib
 import hmac
+import http.client
 import json
+import math
+from numbers import Number
 import time
 import urllib.error
 import urllib.request
@@ -28,6 +31,19 @@ import urllib.request
 from .constraints import decode_json
 
 DEFAULT_LIMIT = 50000
+DEFAULT_MAX_RESPONSE_BYTES = 16 * 1024 * 1024
+
+
+def _timeout(value) -> float:
+    if isinstance(value, bool) or not isinstance(value, Number):
+        raise ValueError("timeout_s must be finite and positive")
+    try:
+        seconds = float(value)
+    except (ValueError, TypeError, OverflowError):
+        raise ValueError("timeout_s must be finite and positive") from None
+    if not math.isfinite(seconds) or seconds <= 0:
+        raise ValueError("timeout_s must be finite and positive")
+    return seconds
 
 
 def _b64(b: bytes) -> str:
@@ -50,28 +66,92 @@ class CubeResponseError(CubeError):
     """A /load answer outside Cube's load envelope; compare.error_detail reports it as cube = invalid_response."""
 
 
+def _deadline(timeout_s) -> float:
+    return time.monotonic() + _timeout(timeout_s)
+
+
+def _remaining(deadline: float) -> float:
+    seconds = deadline - time.monotonic()
+    if seconds <= 0:
+        raise CubeError("timed out waiting for Cube")
+    return seconds
+
+
 class CubeClient:
-    def __init__(self, base_url: str, secret: str, timeout_s: float = 120.0):
+    def __init__(self, base_url: str, secret: str, timeout_s: float = 120.0,
+                 max_response_bytes: int = DEFAULT_MAX_RESPONSE_BYTES):
+        self.timeout_s = _timeout(timeout_s)
+        if isinstance(max_response_bytes, bool) or not isinstance(max_response_bytes, int) or max_response_bytes <= 0:
+            raise ValueError("max_response_bytes must be a positive integer")
+        self.max_response_bytes = max_response_bytes
         self.base = base_url.rstrip("/")
         self.secret = secret
-        self.timeout_s = timeout_s
         self._opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
-    def _req(self, path: str, payload: dict | None = None):
+    def _read_response(self, response, deadline: float) -> bytes:
+        """Bound entity bytes, checking elapsed time whenever public read1 returns.
+
+        This is not hard cancellation: headers, DNS and chunk framing may keep
+        control inside urllib longer than the budget. No private sockets/workers.
+        """
+        headers = getattr(response, "headers", {})
+        expected = None
+        if headers.get("Transfer-Encoding", "").lower() != "chunked":
+            try:
+                expected = int(headers.get("Content-Length", ""))
+            except ValueError:
+                pass
+            if expected is not None and expected < 0:
+                expected = None
+        raw = bytearray()
+        while True:
+            _remaining(deadline)
+            try:
+                chunk = response.read1(min(64 * 1024, self.max_response_bytes + 1 - len(raw)))
+            except TimeoutError:
+                raise CubeError("timed out waiting for Cube") from None
+            except http.client.HTTPException:
+                raise CubeResponseError("the response body has invalid HTTP framing") from None
+            _remaining(deadline)
+            raw.extend(chunk)
+            if len(raw) > self.max_response_bytes:
+                raise CubeResponseError("Cube response exceeds byte limit")
+            if not chunk:
+                # read1 can return EOF without IncompleteRead, unlike read().
+                if expected is not None and len(raw) != expected:
+                    raise CubeResponseError("the response body is incomplete")
+                return bytes(raw)
+
+    def _req(self, path: str, payload: dict | None = None, *, deadline: float | None = None):
+        if deadline is None:
+            deadline = _deadline(self.timeout_s)
+        _remaining(deadline)
         data = json.dumps(payload).encode() if payload is not None else None
         req = urllib.request.Request(self.base + path, data=data, headers={"Content-Type": "application/json", "Authorization": jwt(self.secret)})
         try:
-            with self._opener.open(req, timeout=30) as r:
-                raw = r.read()
-                try:
-                    return decode_json(raw)
-                except (ValueError, DecimalException):
-                    if path == "/cubejs-api/v1/load":
-                        raise CubeResponseError("the load response is not valid JSON") from None
-                    raise
+            with self._opener.open(req, timeout=min(30.0, _remaining(deadline))) as r:
+                raw = self._read_response(r, deadline)
         except urllib.error.HTTPError as e:
-            body = e.read().decode("utf-8", "replace")[:500]
+            with e:
+                raw = self._read_response(e, deadline)
+            body = raw.decode("utf-8", "replace")[:500]
+            _remaining(deadline)
             raise CubeError(f"HTTP {e.code}: {body}") from e
+        except TimeoutError:
+            raise CubeError("timed out waiting for Cube") from None
+        except urllib.error.URLError as e:
+            if isinstance(e.reason, TimeoutError):
+                raise CubeError("timed out waiting for Cube") from None
+            raise
+        _remaining(deadline)
+        try:
+            result = decode_json(raw)
+        except (ValueError, DecimalException):
+            if path == "/cubejs-api/v1/load":
+                raise CubeResponseError("the load response is not valid JSON") from None
+            raise
+        _remaining(deadline)
+        return result
 
     def ready(self) -> bool:
         try:
@@ -87,18 +167,18 @@ class CubeClient:
         q = dict(query)
         q.pop("renewQuery", None)
         q.setdefault("limit", DEFAULT_LIMIT)
-        deadline = time.time() + self.timeout_s
+        deadline = _deadline(self.timeout_s)
         while True:
+            _remaining(deadline)
             try:
-                r = self._req("/cubejs-api/v1/load", {"query": q})
+                r = self._req("/cubejs-api/v1/load", {"query": q}, deadline=deadline)
             except (json.JSONDecodeError, UnicodeDecodeError) as e:   # an HTTP 200 whose body is not JSON
                 raise CubeResponseError("the load response is not JSON") from e
+            _remaining(deadline)
             if not isinstance(r, dict):
                 raise CubeResponseError("the load response is not a JSON object")
             if r.get("error") == "Continue wait":
-                if time.time() > deadline:
-                    raise CubeError("timed out waiting for Cube")
-                time.sleep(0.25)
+                time.sleep(min(0.25, _remaining(deadline)))
                 continue
             if "error" in r:
                 raise CubeError(str(r["error"])[:500])
@@ -107,4 +187,5 @@ class CubeClient:
                 raise CubeResponseError("the load response has no data list of row objects")
             if len(data) >= q["limit"]:
                 raise CubeError(f"result reached the limit ({q['limit']}); raise the limit or page the query")
+            _remaining(deadline)
             return data

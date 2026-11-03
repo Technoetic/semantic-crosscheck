@@ -11,14 +11,18 @@ answers from becoming comparison evidence:
 
 - Strict raw Cube JSON decoding rejects duplicate object keys and nonfinite
   constants and preserves fractional numbers as exact `Decimal` values, including
-  safe handling of numeric parse failures. Duplicate rejection is checker policy.
+  safe handling of numeric parse failures. Before comparison, an additional
+  aggregate raw-number expansion budget uses the byte cap's integer as a character
+  allowance; oversized fixed-point representations are rejected without formatting.
+  Admitted values remain exact. Duplicate rejection is checker policy.
 - Gold SQL metadata requires valid unique labels, all mapped columns even with
   zero rows, and matching row widths before dictionary conversion. Distinct extra
   unmapped columns remain allowed.
 - Normal and replay Cube loads share a monotonic elapsed acceptance budget and
   a default **16 MiB source-body cap**, including HTTP-error bodies. This does not
   cap total heap use or guarantee hard cancellation of DNS, headers or HTTP
-  framing. See [Cube HTTP bounds](docs/cube-http.md).
+  framing, and the numeric guard does not cover numeric strings.
+  See [Cube HTTP bounds](docs/cube-http.md).
 
 Invalid bodies and schema errors cannot establish equality, a confirmed witness
 or a mutation kill. Dependency pins, default stages and report authority stay the

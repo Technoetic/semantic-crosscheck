@@ -1,8 +1,9 @@
 # Cube HTTP response limits
 
 The normal Cube client and synthetic Cube replay apply the same response-byte
-limit and elapsed acceptance budget. A response that fails either check cannot
-become an equal comparison, a surviving mutant, or a confirmed witness.
+limit, raw-number expansion budget and elapsed acceptance budget. A response
+that fails these checks cannot become an equal comparison, a surviving mutant,
+or a confirmed witness.
 
 ## Configuration
 
@@ -15,6 +16,8 @@ max_response_bytes=16 * 1024 * 1024)` accepts:
   supplies this from `[cube].query_timeout_s`.
 - `max_response_bytes`: a positive integer, excluding booleans. The default is
   **16 MiB (16,777,216 bytes)** per HTTP response, including HTTP error responses.
+  The same integer also sets a separate raw-number expansion character budget
+  for each successfully decoded JSON response, including metadata responses.
   This is a conservative default, not a measured workload requirement. Direct
   Python callers can override it in the constructor; there is no corresponding
   TOML or CLI option.
@@ -44,11 +47,36 @@ This is **not a total-memory limit**. Socket and HTTP metadata buffering, a copy
 of the accumulated bytes, decoded strings, and the parsed JSON object also use
 memory. The source-byte cap does not impose an independent JSON parsing CPU cap.
 
+## Raw-number expansion budget
+
+After strict JSON decoding and before returning the response, the client sums
+the potential fixed-point character lengths of all raw fractional/exponent
+numbers decoded as `Decimal`, including values in nested arrays and objects and
+unmapped envelope fields. The separate aggregate allowance is
+`max_response_bytes` characters: exactly the allowance is admitted; exceeding
+it raises a fixed-message `CubeResponseError` without returned values. For
+example, `1e127` requires 128 characters, while `1e-127` requires 129.
+
+The estimate uses only the Decimal sign, coefficient digits and exponent. It
+counts the sign, decimal point, leading fractional zeros and trailing fractional
+zeros before canonicalization strips them; every zero contributes one character,
+even with an extreme exponent. Traversal is iterative. It never formats,
+normalizes or rounds the number, and admitted values retain their exact digits
+and exponent. Canonical, RDF and hash representations are unchanged.
+
+This guard applies to normal loads, replay and metadata. Metadata keeps native
+JSON/Decimal parse exceptions for invalid JSON; a successfully decoded response
+that exceeds this numeric budget raises `CubeResponseError`, as with the body
+byte cap. The guard does not change integers or numeric strings and does not
+establish a global numeric-string policy, total-heap limit or parsing/formatting
+CPU limit. The allowance resets for each response, including each poll.
+
 ## Elapsed acceptance budget
 
 Each `load()` call and replay load establishes one monotonic deadline, shared
-across request preparation, transport, response reads, JSON decoding, all
-`Continue wait` polls, poll sleeps, and final response acceptance. Poll sleeps
+across request preparation, transport, response reads, JSON decoding and numeric
+expansion checks, all `Continue wait` polls, poll sleeps, and final response
+acceptance. Poll sleeps
 are capped to the remaining time. A successful result returned after the budget
 is rejected, including results from custom `_req` implementations. Wall-clock
 time is used for JWT claims, not elapsed query accounting.

@@ -10,14 +10,14 @@
   over no keys whatever the source data holds, and count as a V4 kill against non-empty gold rows. A 2xx body that is
   not JSON raises it too, so every malformed answer gets one category; meta() keeps the decode error, which the cube
   stage reports by type. Duplicate keys and nonfinite JSON constants are rejected; fractional numbers keep exact
-  decimal precision before comparison.
+  decimal precision before comparison, with a cumulative fixed-point expansion budget.
 - Talks to the loopback adapter directly. urllib's default opener applies HTTP_PROXY and the system proxy settings,
   and does not bypass 127.0.0.1 unless NO_PROXY lists it, so the JWT and the query values (bound filter values from
   the database) would go to the proxy; every request therefore uses an opener without proxies.
 """
 
 import base64
-from decimal import DecimalException
+from decimal import Decimal, DecimalException
 import hashlib
 import hmac
 import http.client
@@ -158,8 +158,40 @@ class CubeClient:
             if path == "/cubejs-api/v1/load":
                 raise CubeResponseError("the load response is not valid JSON") from None
             raise
+        self._check_numeric_expansion(result)
         _remaining(deadline)
         return result
+
+    def _check_numeric_expansion(self, result):
+        """Bound raw Decimal fixed-point characters without formatting or rounding.
+
+        This additional per-response budget uses the source-byte cap's integer,
+        but is not a total-memory/CPU bound or a policy for numeric strings.
+        Count before trailing-zero stripping; canonical zero needs one character.
+        Iterator traversal keeps auxiliary storage proportional to nesting depth.
+        """
+        remaining = self.max_response_bytes
+        stack = [iter((result,))]
+        while stack:
+            try:
+                value = next(stack[-1])
+            except StopIteration:
+                stack.pop()
+                continue
+            if isinstance(value, dict):
+                stack.append(iter(value.values()))
+            elif isinstance(value, list):
+                stack.append(iter(value))
+            elif isinstance(value, Decimal):
+                if value.is_zero():
+                    length = 1
+                else:
+                    sign, digits, exponent = value.as_tuple()
+                    length = sign + (len(digits) + exponent if exponent >= 0
+                                     else max(len(digits) + 1, 2 - exponent))
+                remaining -= length
+                if remaining < 0:
+                    raise CubeResponseError("Cube response exceeds numeric expansion limit")
 
     def ready(self) -> bool:
         try:

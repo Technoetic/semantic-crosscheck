@@ -9,6 +9,7 @@
 - Reports retain safe types/categories/counts, never returned row values, error bodies, credentials or DSNs.
 - Existing read-only SQL transactions, prepared-statement cleanup, row limits, proxy exclusion and replay provenance remain intact.
 - HTTP elapsed acceptance is checked across polling and final success; do not claim hard cancellation of DNS, headers or HTTP framing unless demonstrated. No leaking background transport worker.
+- Final review F1 ruling: after strict raw JSON decode, bound aggregate potential fixed-point characters of all decoded Decimal values by the same positive integer as max_response_bytes. Use only sign/digits/exponent, without formatting, normalization or rounding; zero contributes one, other lengths include fractional trailing zeros before stripping. Traverse nested arrays/maps iteratively and reject before returning decoded values. This additional per-response numeric budget applies to normal/replay/meta paths with fixed CubeResponseError; native meta JSON/Decimal parse exceptions remain intact. Preserve admitted values and canonical/RDF/hash representations. No global numeric-string policy or total-heap/CPU guarantee is implied.
 - Use TDD for changed behavior; preserve raw RED and GREEN evidence. Work in the isolated boundary-hardening worktree. Publish only after full tests and independent review.
 
 ## Task 1: Strict raw Cube JSON

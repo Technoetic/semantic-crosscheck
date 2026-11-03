@@ -11,6 +11,13 @@ Release notes: [docs/releases/v0.18.0.md](docs/releases/v0.18.0.md).
   duplicate object keys at every depth and nonfinite constants; fractional
   numbers use exact Decimal values. Invalid JSON, encoding and Decimal parse
   failures become sanitized invalid-response errors.
+- Before returning decoded Cube JSON, sum potential fixed-point characters of
+  raw Decimal numbers across nested values without formatting or rounding.
+  Exceeding the additional `max_response_bytes` character budget produces a
+  sanitized response error in load, replay and metadata paths. Zero counts as
+  one; other lengths include signs and fractional trailing zeros. Admitted
+  values and canonical/RDF/hash representations are unchanged; numeric strings
+  and global heap/CPU limits remain outside this guard.
 - Gold SQL returned metadata is validated before tuple-to-dictionary conversion:
   invalid or duplicate labels, missing mapped columns even on zero-row results,
   and mismatched row widths are rejected. Distinct extra unmapped columns and
@@ -27,8 +34,11 @@ Previously accepted lossy or malformed answers may now be errors; they cannot
 establish equality, a confirmed witness or a mutation kill. Repair the response
 or SQL metadata rather than treating an error as a mismatch. The CubeClient
 constructor requires a finite positive nonboolean numeric timeout and a positive
-nonboolean integer `max_response_bytes` override. Dependency and runtime pins,
-default stages and report authority are unchanged. Rerun operational stages after
+nonboolean integer `max_response_bytes` override, which also sets the separate
+numeric expansion character allowance. Native metadata JSON/Decimal parse
+exceptions remain intact; its numeric-budget rejection is `CubeResponseError`.
+Dependency and runtime pins, default stages and report authority are unchanged.
+Rerun operational stages after
 upgrading; installation does not refresh evidence.
 
 ## [0.17.0] - 2026-11-03

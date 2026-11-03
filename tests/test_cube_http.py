@@ -284,6 +284,7 @@ class CubeHttpTest(unittest.TestCase):
     def test_binding_report_never_promotes_size_or_timeout_failure_to_equality(self):
         target = self.client()
         for scenario, category in (({'body': b'{"data": [], "private": "private-body"}' + b' ' * CAP}, 'invalid_response'),
+                                   ({'body': b'{"data": [], "private": "private-body", "n": 1e64}'}, 'invalid_response'),
                                    ({'timeout_s': 0.1, 'idle': 0.4}, 'timeout'),
                                    ({'status': 302, 'location': target.base, 'body': b'x' * (CAP + 1)}, 'invalid_response')):
             with self.subTest(category=category):
@@ -299,6 +300,7 @@ class CubeHttpTest(unittest.TestCase):
         # the unavailable database and Cube process setup with synthetic fixtures.
         target = self.client()
         for scenario in ({'body': GOOD + b' ' * CAP}, {'timeout_s': 0.1, 'idle': 0.4},
+                         {'body': b'{"data": [], "private": "private-body", "n": 1e64}'},
                          {'status': 302, 'location': target.base, 'body': b'private-body'},
                          {'status': 302, 'location': target.base, 'body': b'x' * (CAP + 1)}):
             with self.subTest(scenario=scenario), tempfile.TemporaryDirectory() as tmp, \
@@ -339,6 +341,7 @@ class CubeHttpTest(unittest.TestCase):
                 report = json.dumps(result.to_dict())
                 self.assertNotIn('synthetic-test-secret', report)
                 self.assertNotIn('synthetic-test-connection', report)
+                self.assertNotIn('private-body', report)
 
 
 class CubeBudgetTest(unittest.TestCase):

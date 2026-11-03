@@ -1,7 +1,7 @@
 # Boundary hardening implementation and release plan
 
 **Goal:** Prevent lossy host decoding from producing false equality and bound Cube response resource use.
-**Authorization:** User requested implementation and public GitHub release on 2026-11-04, following the ninth research. Release destination is Technoetic/semantic-crosscheck; company databases and Sites hosting are outside scope.
+**Authorization:** User requested implementation and public GitHub release on 2026-11-04, following the ninth research. Current public release intent is v0.18.1 after the CI infrastructure recovery ruling below; existing authorization continues. Release destination is Technoetic/semantic-crosscheck; company databases and Sites hosting are outside scope.
 **Architecture:** Keep the existing exact comparison and authority rules. Validate raw Cube JSON before information is lost; validate PostgreSQL returned metadata before converting tuples to dictionaries. Share monotonic elapsed query accounting and bounded body handling across normal and replay Cube paths. No new dependency or engine change.
 
 ## Global constraints
@@ -39,8 +39,41 @@ Files: cube_client.py, cube_replay.py, focused transport tests and docs/cube-htt
 - Preserve no-proxy transport and existing public call behavior where possible. Document DNS/header/framing limits accurately; avoid private socket internals and background workers unless explicit reviewed evidence requires them.
 
 ## Task 4: Documentation, integration and public release
-- Document behavior/defaults/compatibility and bump all release metadata coherently to v0.18.0; no unimplemented research claims.
+- Document behavior/defaults/compatibility and bump all current release metadata coherently to v0.18.1; retain v0.18.0 source history and tag. No unimplemented research claims.
 - Run full local unittest, compile, packaging/docs/leak checks. Optional engines not provisioned locally must remain explicit skips.
 - Independent task reviews and whole-branch review; resolve important findings. Run real-engine CI on exact main and tag revisions.
-- Create deterministic source release archives and SHA-256 manifest from committed source, verify extracted source and draft assets independently, then publish immutable Latest v0.18.0 and verify public API/asset hashes.
+- Create deterministic source release archives and SHA-256 manifest from committed source, verify extracted source and draft assets independently, then publish immutable Latest v0.18.1 and verify public API/asset hashes.
 - Record six-field implementation/release evidence in NS, update only owned shared-state deltas, commit locally and synchronize only the authorized local bare mirror. Preserve unrelated dirty files.
+
+## CI infrastructure recovery ruling — v0.18.1
+
+- Observed on v0.18.0 source `fc77ea0c56f727700e968ece48bcbe2f7e08ea33`:
+  [main run 41721743823](https://github.com/Technoetic/semantic-crosscheck/actions/runs/41721743823)
+  and [tag run 41721743815](https://github.com/Technoetic/semantic-crosscheck/actions/runs/41721743815),
+  attempt 1, each completed six non-Mac jobs successfully, including strict
+  real-engine integration and hygiene. Across the two runs all four Mac jobs
+  were cancelled, had an empty runner name and zero steps. GitHub reported
+  hosted-runner acquisition failure and macOS arm64 capacity constraints.
+  No Mac test or setup failure was observed, and those jobs supply no Mac
+  execution evidence. Raw observations are retained by the release controller.
+- Ruling: replace only the Mac unit OS label `macos-latest` with standard
+  `macos-15-intel` (macOS 15 x64). Official pinned
+  [runner-image labels](https://github.com/actions/runner-images/blob/a2d4955654f519bd5b559bffaea60d9f90156630/README.md#available-images)
+  and [public runner policy](https://github.com/github/docs/blob/396218f23a6e3fa24d173ebfa74b3499adde67a3/data/reusables/actions/supported-github-runners.md)
+  establish supported standard/free-public status; `macos-latest` maps to
+  macOS 26 arm64 and macOS 14 was retired on November 2. File-bound Jev Choice
+  advised this patch at confidence 0.85; the host checked the primary facts.
+- Preserve Linux/Windows latest, Python 3.11/3.13, six unit jobs plus strict
+  integration and hygiene (eight jobs), all workflow steps/action pins and
+  no-skip real-engine guards. Add the focused matrix regression through RED
+  then GREEN. No product source behavior changes; runtime/dependency pins
+  (including Cube/Jena/PostgreSQL) remain unchanged. The CI runner label is
+  the explicit infrastructure change.
+- Preserve the pushed v0.18.0 tag without retargeting or force. It did not
+  receive a formal release. v0.18.1 is the intended first formal bundle of
+  the existing boundary fixes plus this CI-only recovery patch.
+- Release gate: frozen full local checks and independent review, then exact
+  main/new annotated-tag CI with eight successful jobs apiece. Intel capacity
+  and test success remain unobserved until those runs complete; do not claim
+  Mac arm64 coverage. Record actual future counts, source/tag SHAs, job URLs,
+  raw logs and archive hashes in v0.18.1 verification.json after observation.

@@ -1,6 +1,6 @@
 {
   "name": "semantic-crosscheck",
-  "version": "0.18.0",
+  "version": "0.18.1",
   "description": "Cross-layer verification for an ontology plus semantic layer on PostgreSQL 17, for Codex and Claude Code.",
   "author": {
     "name": "전문준"
@@ -9,7 +9,7 @@
   "interface": {
     "displayName": "Semantic Crosscheck",
     "shortDescription": "Prove that a PostgreSQL closure, SHACL rules, OWL reasoning and a Cube model agree.",
-    "longDescription": "Release v0.18.0: cross-check PostgreSQL 17 closures, SQL/SHACL rules, OWL/HermiT and Cube against independently authored gold SQL. Strict raw Cube decoding rejects duplicate object keys and nonfinite constants before information is lost, and preserves fractional numbers as exact Decimal values. Gold SQL result metadata must contain valid unique labels and every mapped column even with zero rows; distinct extra columns remain allowed. Normal and replay Cube loads share a monotonic elapsed acceptance budget and a default 16 MiB source-body cap, including HTTP errors. These bounds do not guarantee hard cancellation of DNS, headers or HTTP framing, or limit total heap use. Invalid bodies and schema errors cannot establish equality, a witness or a mutation kill. Dependency pins, default stages and report authority are unchanged. Rerun operational stages after upgrading.",
+    "longDescription": "Release v0.18.1: cross-check PostgreSQL 17 closures, SQL/SHACL rules, OWL/HermiT and Cube against independently authored gold SQL. The patch selects macOS 15 Intel unit CI after hosted arm64 capacity failures; product behavior is unchanged from the v0.18.0 source. Strict raw Cube decoding rejects duplicate object keys and nonfinite constants before information is lost, and preserves fractional numbers as exact Decimal values. Gold SQL result metadata must contain valid unique labels and every mapped column even with zero rows; distinct extra columns remain allowed. Normal and replay Cube loads share a monotonic elapsed acceptance budget and a default 16 MiB source-body cap, including HTTP errors. These bounds do not guarantee hard cancellation of DNS, headers or HTTP framing, or limit total heap use. Invalid bodies and schema errors cannot establish equality, a witness or a mutation kill. Dependency pins, default stages and report authority are unchanged. Rerun operational stages after upgrading.",
     "developerName": "Technoetic",
     "category": "Coding",
     "capabilities": [

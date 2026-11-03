@@ -430,6 +430,28 @@ class WorkflowTest(unittest.TestCase):
     def setUp(self):
         self.text = read(WORKFLOW)
 
+    def test_eight_jobs_keep_intel_mac_python_coverage_and_strict_integration(self):
+        workflow_jobs = jobs(self.text)
+        self.assertEqual(set(workflow_jobs), {"unit", "integration", "hygiene"})
+        unit = workflow_jobs["unit"]
+        matrix = unit.split("      matrix:\n", 1)[1].split("    env:\n", 1)[0]
+        axes = dict(re.findall(r"^        ([a-z]+): \[([^\n]+)\]$", matrix, re.M))
+        self.assertEqual(set(axes), {"os", "python"})
+        operating_systems = [value.strip() for value in axes["os"].split(",")]
+        pythons = [value.strip().strip("'\"") for value in axes["python"].split(",")]
+        self.assertCountEqual(operating_systems, ["ubuntu-latest", "windows-latest", "macos-15-intel"])
+        self.assertCountEqual(pythons, ["3.11", "3.13"])
+        self.assertEqual(len(operating_systems) * len(pythons) + 2, 8)
+        self.assertIn("runs-on: ${{ matrix.os }}", unit)
+        self.assertIn("python-version: ${{ matrix.python }}", unit)
+        self.assertIn("run: python -m unittest discover -s tests -v", unit)
+        self.assertNotRegex(self.text, r"(?m)^\s*(?:if|continue-on-error|include|exclude):")
+        integration = workflow_jobs["integration"]
+        self.assertIn("SXC_TEST_FULLSTACK: '1'", integration)
+        self.assertIn("- name: Integration prerequisites are live", integration)
+        self.assertIn("result.wasSuccessful() and result.testsRun > 0 and not result.skipped", integration)
+        self.assertIn("python tools/leak_scan.py --worktree --history", workflow_jobs["hygiene"])
+
     def test_actions_are_pinned_by_commit_sha(self):
         uses = [USES.match(line) for line in self.text.split("\n")]
         uses = [m for m in uses if m]

@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.18.1] - 2026-11-04
+
+Release notes: [docs/releases/v0.18.1.md](docs/releases/v0.18.1.md).
+
+### Fixed
+
+- Select the standard `macos-15-intel` unit runner after hosted macOS arm64
+  capacity failures left all four Mac jobs on the v0.18.0 main/tag runs
+  cancelled without a runner or executed steps. Linux/Windows latest and Python
+  3.11/3.13 retain six unit jobs; strict real-engine integration and hygiene
+  retain the eight-job workflow. No skip, gating, step or action-pin change.
+- Add a regression contract for that matrix and unchanged strict integration.
+
+### Release scope
+
+This is the first formal release bundle of the boundary fixes documented below
+for v0.18.0. That tag remains immutable, but no formal v0.18.0 release was
+published after the capacity failure. The only new patch behavior is CI runner
+selection; package version metadata and release documentation advance to 0.18.1.
+Product behavior and Cube, Jena, PostgreSQL and dependency pins are unchanged.
+Mac unit coverage targets macOS 15 Intel (x64); arm64 is not claimed tested.
+Actual new-source CI and test totals must be recorded after execution.
+
 ## [0.18.0] - 2026-11-04
 
 Release notes: [docs/releases/v0.18.0.md](docs/releases/v0.18.0.md).
@@ -617,3 +640,4 @@ First release. Release notes: [docs/releases/v0.1.0.md](docs/releases/v0.1.0.md)
 [0.16.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.16.0
 [0.17.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.17.0
 [0.18.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.18.0
+[0.18.1]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.18.1

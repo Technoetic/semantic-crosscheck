@@ -6,8 +6,11 @@ exports explicitly selected Gold contracts or previews a local bundle against
 current trusted inputs. It performs no execution or import application; PASS
 means scoped metadata completion, with authenticity and correctness unproven.
 
-In [v0.18.0](docs/releases/v0.18.0.md), three boundary fixes prevent lossy
-answers from becoming comparison evidence:
+[v0.18.1](docs/releases/v0.18.1.md) is the first formal bundle of three
+boundary fixes that prevent lossy answers from becoming comparison evidence.
+The patch changes only CI runner selection from the v0.18.0 source: Mac unit
+jobs now target macOS 15 Intel (x64) after hosted arm64 capacity failures.
+Actual new-source results belong in the release verification JSON after CI runs.
 
 - Strict raw Cube JSON decoding rejects duplicate object keys and nonfinite
   constants and preserves fractional numbers as exact `Decimal` values, including
@@ -37,7 +40,7 @@ same; upgrading does not execute stages or refresh evidence.
 **설정 하나에서 네 계층을 만들고, 서로의 결과를 교차 검증합니다.**<br/>
 계층마다 그럴듯한 설명을 넘어, **검사 ID · 건수 · 종료 코드로 일치 여부를 확인합니다.**
 
-[![Release](https://img.shields.io/badge/Release-v0.18.0-0D9488?style=for-the-badge)](docs/releases/v0.18.0.md)
+[![Release](https://img.shields.io/badge/Release-v0.18.1-0D9488?style=for-the-badge)](docs/releases/v0.18.1.md)
 [![CI](https://img.shields.io/github/actions/workflow/status/Technoetic/semantic-crosscheck/tests.yml?branch=main&style=for-the-badge&label=CI&logo=github)](https://github.com/Technoetic/semantic-crosscheck/actions/workflows/tests.yml)
 [![MIT](https://img.shields.io/badge/License-MIT-8B5CF6?style=for-the-badge)](LICENSE)
 [![Claude Code](https://img.shields.io/badge/Claude_Code-Plugin-191919?style=for-the-badge&logo=anthropic&logoColor=white)](#claude-code)
@@ -215,7 +218,7 @@ $$
 Cube는 항상 Tesseract SQL 플래너(`CUBEJS_TESSERACT_SQL_PLANNER=true`)로 실행하고 `cube:meta`에 Cube 버전과 플래너를 기록합니다. 기록이 없거나 다르면 report가 이전 결과를 최신으로 인정하지 않으므로, 0.3.0에서 만든 cube·verify 결과는 다시 실행합니다. Cube 1.8.3의 파일 크기와 SHA-256은 [native-sha256.json](skills/semantic-crosscheck/adapters/cube/native-sha256.json)에 고정되어 있습니다. Linux는 x64에서 **glibc 2.34** 이상, arm64에서 **glibc 2.30** 이상이 필요하며 musl은 지원하지 않습니다.
 
 > [!NOTE]
-> **지원 목록과 실제 통합 시험 범위는 다릅니다.** CI는 Linux·Windows·macOS × Python 3.11/3.13에서 단위 테스트를 실행하고, Linux x64에서 PostgreSQL 17·Java 21·Node.js 22 통합과 데모를 실행합니다. Java 11 자체, macOS 및 Linux arm64의 Cube 전체 실행은 통합 시험하지 않았습니다.
+> **지원 목록과 실제 통합 시험 범위는 다릅니다.** CI 단위 테스트는 Linux·Windows·macOS 15 Intel(x64, `macos-15-intel`) × Python 3.11/3.13으로 구성하고, Linux x64에서 PostgreSQL 17·Java 21·Node.js 22 통합과 데모를 실행합니다. 새 Intel CI의 실제 성공 여부는 실행 후 검증 JSON에 기록합니다. macOS arm64 단위 테스트 성공은 주장하지 않으며, Java 11 자체, macOS 및 Linux arm64의 Cube 전체 실행은 통합 시험하지 않았습니다.
 
 ---
 
@@ -242,7 +245,7 @@ Cube는 항상 Tesseract SQL 플래너(`CUBEJS_TESSERACT_SQL_PLANNER=true`)로 �
 릴리스 태그를 고정해 등록합니다.
 
 ```text
-codex plugin marketplace add Technoetic/semantic-crosscheck --ref v0.18.0
+codex plugin marketplace add Technoetic/semantic-crosscheck --ref v0.18.1
 codex plugin add semantic-crosscheck@semantic-crosscheck-local
 ```
 
@@ -259,7 +262,7 @@ Windows PowerShell에서 실행 정책 때문에 `codex.ps1`이 거부되면 두
    python -m pip install -r "<plugin root>/requirements/reason.txt"
    ```
 
-   `<plugin root>` 예: `~/.claude/plugins/cache/semantic-crosscheck/semantic-crosscheck/0.18.0` 또는 `~/.codex/plugins/cache/semantic-crosscheck-local/semantic-crosscheck/0.18.0`. 패키지가 없으면 `/xc-doctor`가 실제 경로에 맞는 설치 명령을 안내합니다.
+   `<plugin root>` 예: `~/.claude/plugins/cache/semantic-crosscheck/semantic-crosscheck/0.18.1` 또는 `~/.codex/plugins/cache/semantic-crosscheck-local/semantic-crosscheck/0.18.1`. 패키지가 없으면 `/xc-doctor`가 실제 경로에 맞는 설치 명령을 안내합니다.
 2. psql을 사용하는 superuser가 `docs/setup-roles.sql`로 **loader·check 역할**을 만듭니다.
 3. Java를 `PATH`에 추가하거나 `SXC_JAVA`를 지정합니다.
 4. Node.js와 npm을 준비하고 `/xc-install` 또는 `sxc.py cube-install`로 **Cube 어댑터**를 한 번 설치합니다.
@@ -732,17 +735,17 @@ Cube의 기본 오류 로그에는 오류 클래스·코드·대략적인 범주
 <a id="development"></a>
 ## 🧪 검증 근거와 개발
 
-| v0.18.0의 확인 근거 | 범위 |
+| v0.18.1의 확인 근거 | 범위 |
 |---|---|
-| [릴리스 검증 JSON](https://github.com/Technoetic/semantic-crosscheck/releases/download/v0.18.0/verification.json) | 실행 후 실제 공개 소스 커밋, 원시 CI 로그의 테스트·제외·실패·오류, 독립 검증, archive SHA-256 기록 |
+| [릴리스 검증 JSON](https://github.com/Technoetic/semantic-crosscheck/releases/download/v0.18.1/verification.json) | 실행 후 실제 공개 소스 커밋, 원시 CI 로그의 테스트·제외·실패·오류, 독립 검증, archive SHA-256 기록 |
 | [GitHub Actions](https://github.com/Technoetic/semantic-crosscheck/actions/workflows/tests.yml) | 6개 OS/Python 단위 작업 + PostgreSQL·HermiT·Cube 통합 + 보안 검사 = 8개 작업 |
 | 엄격한 통합 runner | 미실행 검사·빈 suite·실패·오류가 있으면 CI 실패 |
 | 실제 runtime 선택 모드 | 완전 실행 환경의 성공·설정 변경·근거 누락 시 PASS 차단을 실행하는 통합 CI |
 | 새 릴리스 브랜치 전체 검증 | 릴리스 메타데이터를 포함한 새 전체 로컬 실행과 공개 CI의 실제 결과를 검증 JSON에 각각 기록하며, 실행 전 성공 집계를 선언하지 않음 |
 | 이번 경계 보강 검증 | 최종 고정 소스의 전체 로컬 실행·독립 검토·공개 CI를 각각 실행한 뒤 실제 결과를 기록한다. 이전 릴리스의 테스트 집계를 이번 버전의 근거로 사용하지 않는다. |
-| 릴리스 배포 파일 | [소스 ZIP](https://github.com/Technoetic/semantic-crosscheck/releases/download/v0.18.0/semantic-crosscheck-0.18.0.zip) · [SHA256SUMS](https://github.com/Technoetic/semantic-crosscheck/releases/download/v0.18.0/SHA256SUMS) |
+| 릴리스 배포 파일 | [소스 ZIP](https://github.com/Technoetic/semantic-crosscheck/releases/download/v0.18.1/semantic-crosscheck-0.18.1.zip) · [SHA256SUMS](https://github.com/Technoetic/semantic-crosscheck/releases/download/v0.18.1/SHA256SUMS) |
 
-최종 공개 커밋·CI 작업 URL·실제 집계는 실행 후 릴리스와 함께 제공하는 **v0.18.0 검증 JSON**에서 확인합니다. 원시 CI 로그에서 읽은 집계만 공개 커밋의 근거로 사용하며, 이전 구현 단계 검증·새 전체 로컬 검증·전체 엔진 통합 CI를 구분합니다.
+최종 공개 커밋·CI 작업 URL·실제 집계는 실행 후 릴리스와 함께 제공하는 **v0.18.1 검증 JSON**에서 확인합니다. 원시 CI 로그에서 읽은 집계만 공개 커밋의 근거로 사용하며, 이전 구현 단계 검증·새 전체 로컬 검증·전체 엔진 통합 CI를 구분합니다.
 
 ```bash
 python -m unittest discover -s tests -v
@@ -797,13 +800,13 @@ CI는 전체 이력을 가진 clone의 작업 트리·이력을 일반 패턴과
 
 **MIT** · [LICENSE](LICENSE). 런타임 의존성을 저장소에 포함하지 않으며 의존성 라이선스는 [THIRD_PARTY.md](THIRD_PARTY.md)에 정리했습니다.
 
-[설계 문서](docs/design.md) · [설정 레퍼런스](skills/semantic-crosscheck/references/config.md) · [문제와 함정](skills/semantic-crosscheck/references/pitfalls.md) · [변경 이력](CHANGELOG.md) · [v0.18.0 릴리스 노트](docs/releases/v0.18.0.md)
+[설계 문서](docs/design.md) · [설정 레퍼런스](skills/semantic-crosscheck/references/config.md) · [문제와 함정](skills/semantic-crosscheck/references/pitfalls.md) · [변경 이력](CHANGELOG.md) · [v0.18.1 릴리스 노트](docs/releases/v0.18.1.md)
 
 <div align="center">
 
 **한 계층의 설명을 믿기 전에, 다른 계층의 답과 대조합니다.**
 
-[빠른 시작으로 이동 ↑](#quick-start-with-the-demo) · [GitHub 릴리스](https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.18.0)
+[빠른 시작으로 이동 ↑](#quick-start-with-the-demo) · [GitHub 릴리스](https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.18.1)
 
 </div>
 
@@ -856,4 +859,4 @@ Cube queries and SQL still do not share an MVCC snapshot. See [replay coverage](
 
 설정 하나로 PostgreSQL의 계층·규칙, SHACL, OWL·HermiT, Cube 모델을 만들고 서로와 gold SQL을 비교합니다. `not_run`은 통과가 아니며, 전체 판정은 `report`와 `not_proven`을 함께 읽습니다. 원본 조회와 생성 스키마 기록을 분리하고, 데모 적재는 별도의 loader 역할을 사용합니다.
 
-요구 환경은 **Python 3.11 이상 · PostgreSQL 17 이상 · Java 11 이상 · Node.js 22 이상**입니다. Linux Cube에는 **glibc 2.34** 이상(x64), 2.30 이상(arm64)이 필요합니다. Codex 설치 태그는 **v0.18.0**, 라이선스는 MIT입니다.
+요구 환경은 **Python 3.11 이상 · PostgreSQL 17 이상 · Java 11 이상 · Node.js 22 이상**입니다. Linux Cube에는 **glibc 2.34** 이상(x64), 2.30 이상(arm64)이 필요합니다. Codex 설치 태그는 **v0.18.1**, 라이선스는 MIT입니다.

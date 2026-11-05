@@ -135,8 +135,9 @@ python skills/semantic-crosscheck/scripts/sxc.py tlp --spec examples/tlp/sum-nul
 `--shrink` is off by default. `--max-shrink-steps` is an integer in 0..10000
 (default 200) and bounds reduction trials. Passing checks still use version 1
 fixtures. Only a confirmed failing check produces a reduced version 2 fixture.
-The structured reducer attempts row deletion, reverse-FK closures and supported
-non-key simplifications. It accepts only independently rechecked stable failures
+The structured reducer attempts row deletion and supported value simplifications
+over the known synthetic schema; TLP reduction supplies no integrity profile.
+It accepts only independently rechecked stable failures
 with the original mismatch signature; errors, changed observations and different
 signatures do not establish a smaller witness.
 

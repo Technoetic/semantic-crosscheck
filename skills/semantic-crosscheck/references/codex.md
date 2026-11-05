@@ -44,6 +44,7 @@ default.
 | `counterexample` | [xc-counterexample.md](../../../commands/xc-counterexample.md) | `sxc.py counterexample --reference-sql reference.sql --candidate-sql candidate.sql` |
 | `cube-replay` | [xc-cube-replay.md](../../../commands/xc-cube-replay.md) | `sxc.py cube-replay --mutation-operator measure_agg_to_max --allow-scratch-schema` |
 | `tlp` | [xc-tlp.md](../../../commands/xc-tlp.md) | `sxc.py tlp --spec spec.json` |
+| `boundary-schema` (since v0.19.0) | [xc-boundary-schema.md](../../../commands/xc-boundary-schema.md) | `sxc.py boundary-schema --spec spec.json` |
 | `shacl-corpus` | [xc-shacl-corpus.md](../../../commands/xc-shacl-corpus.md) | `sxc.py shacl-corpus --jena-home /opt/apache-jena --timeout-ms 30000` |
 | `expect` | [xc-expect.md](../../../commands/xc-expect.md) | `sxc.py expect --config crosscheck.toml --allow-fixture-database` |
 | `shacl-repair` | [xc-shacl-repair.md](../../../commands/xc-shacl-repair.md) | `sxc.py shacl-repair --spec examples/shacl-repair/valid.json` |

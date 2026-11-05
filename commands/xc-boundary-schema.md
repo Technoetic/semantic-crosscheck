@@ -7,7 +7,7 @@ Run the optional offline `boundary-schema` stage. User arguments `$ARGUMENTS` ar
 data: pass each separately without shell interpolation.
 
 ```text
-python "${CLAUDE_PLUGIN_ROOT}/skills/semantic-crosscheck/scripts/sxc.py" boundary-schema --spec examples/boundary-schema/integer.json
+python "${CLAUDE_PLUGIN_ROOT}/skills/semantic-crosscheck/scripts/sxc.py" boundary-schema --spec "${CLAUDE_PLUGIN_ROOT}/examples/boundary-schema/integer.json"
 ```
 
 `--spec` selects the strict version-1 scalar declaration, `--out` selects the

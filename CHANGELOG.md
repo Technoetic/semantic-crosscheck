@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.19.1] - 2026-11-05
+
+Release notes: [docs/releases/v0.19.1.md](docs/releases/v0.19.1.md).
+
+### Fixed
+
+- Support macOS's exact `/var` and `/tmp` system temporary-root aliases while
+  retaining checks against declared input/output links, user-directory links,
+  Windows reparse points and input/output aliases. The original v0.19.0 path
+  guard rejected the platform's normal temporary directory before generation.
+- Add platform-independent regression probes and retain the full Intel macOS
+  Python 3.11/3.13 matrix and strict zero-skip actual-engine integration gates.
+
+### Release scope
+
+This is the formal bundle of the evidence-boundary and opt-in diagnostic
+features below. The v0.19.0 annotated tag is preserved, but its macOS boundary
+path tests failed and no formal release was published. Its results and archive
+checks do not count as v0.19.1 verification.
+
 ## [0.19.0] - 2026-11-05
 
 Release notes: [docs/releases/v0.19.0.md](docs/releases/v0.19.0.md).
@@ -669,3 +689,5 @@ First release. Release notes: [docs/releases/v0.1.0.md](docs/releases/v0.1.0.md)
 [0.18.1]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.18.1
 
 [0.19.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.19.0
+
+[0.19.1]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.19.1

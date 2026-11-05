@@ -15,6 +15,7 @@ import os
 from pathlib import Path
 import re
 import stat
+import sys
 import tempfile
 
 from . import constraints, witness
@@ -187,6 +188,24 @@ def _generator_sha():
     return hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
 
 
+def _darwin_root_alias(path, meta):
+    """Only the two standard Darwin root aliases may stand for plain directories."""
+    targets = {'/var': '/private/var', '/tmp': '/private/tmp'}
+    if sys.platform != 'darwin' or path.as_posix() not in targets or not stat.S_ISLNK(meta.st_mode):
+        return False
+    try:
+        expected = Path(targets[path.as_posix()])
+        target = path.readlink()
+        if not target.is_absolute():
+            target = path.parent / target
+        actual = expected.lstat()
+        return (target == expected and stat.S_ISDIR(actual.st_mode)
+                and not bool(getattr(actual, 'st_file_attributes', 0) & 0x400)
+                and path.resolve(strict=True) == expected)
+    except (OSError, ValueError, RuntimeError):
+        return False
+
+
 def _unlinked(path, *, directory):
     """Reject observed link/reparse containers before diagnostic output mutation."""
     path = Path(path).absolute()
@@ -197,7 +216,11 @@ def _unlinked(path, *, directory):
             continue
         linked = stat.S_ISLNK(meta.st_mode) or bool(getattr(meta, 'st_file_attributes', 0) & 0x400)
         is_directory = item != path or directory
-        if linked or (is_directory and not stat.S_ISDIR(meta.st_mode)):
+        if linked:
+            if not is_directory or not _darwin_root_alias(item, meta):
+                raise _error()
+            continue
+        if is_directory and not stat.S_ISDIR(meta.st_mode):
             raise _error()
         if not is_directory and not stat.S_ISREG(meta.st_mode):
             raise _error()

@@ -99,6 +99,11 @@ declarations produce sanitized errors; unsupported CLI arguments produce a
 sanitized usage error without mutating output. File observations are bounded
 checks, not a continuous filesystem lock or protection against hostile races.
 
+On macOS, the standard OS root aliases `/var` → `/private/var` and `/tmp` →
+`/private/tmp` are admitted only after verifying their link text, plain directory
+target and canonical target. This exception preserves normal temporary paths;
+user-created input, output and nested directory symlinks remain rejected.
+
 This experiment takes the query-directed test-data motivation of
 [XData](https://arxiv.org/abs/1411.6704) and implements only the bounded scalar
 boundary heuristic described above; it does not implement XData's complete

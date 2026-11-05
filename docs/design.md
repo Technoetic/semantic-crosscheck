@@ -1030,6 +1030,21 @@ or the checks it exercises without being reported). See `commands/xc-demo.md` fo
 
 ## Opt-in structured and finite-domain counterexample search
 
+Saved operational result envelopes use the explicit `schema_version: 1` contract
+in `result_contract.py`; valid unversioned legacy envelopes are supported. Strict
+JSON decoding, field types, unique nonblank check IDs and supported statuses are
+validated before aggregation. A malformed optional-stage file is a counted error
+even if freshness fields are absent. Live generated SHACL reports likewise need a
+usable declared PropertyShape and matching path before violation projection;
+structural validity is not evidence authentication.
+
+The standalone offline `boundary-schema --spec FILE` command derives a witness-v1
+declaration for one supported integer, numeric(p,s) or date comparison. It does
+not execute SQL, infer business constraints, invoke Z3 or become an operational
+report stage. See [boundary-schema.md](boundary-schema.md). Separate opt-in TLP/
+NoREC reduction uses the existing structured reducer with stable mismatch
+signatures and source-bound replay; see [tlp.md](tlp.md) for its narrower claims.
+
 The two-query mode adds `--shrink-strategy structured` and `--witness-schema FILE`.
 The existing row-only path and version 1 replay remain the default. Structured reduction
 attempts row deletion, reverse-FK closures and finite-rank non-key value simplifications

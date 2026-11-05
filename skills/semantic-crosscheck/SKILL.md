@@ -202,6 +202,18 @@ Every check id is listed in [docs/design.md](../../docs/design.md).
 
 The first two are standalone diagnostics, not prerequisites of report. None certifies business intent, whole-snapshot consistency across the existing pipeline, complete report equivalence or global-minimum explanations. Keep count-only results and alias guards; missing/unsupported work must not pass.
 
+- [xc-boundary-schema](../../commands/xc-boundary-schema.md): offline `boundary-schema --spec FILE`
+  creates a witness-v1 finite-domain declaration for one supported scalar comparison, including NULL and
+  exact representable neighbors. It neither executes caller SQL nor connects to a database or solver.
+- [xc-tlp](../../commands/xc-tlp.md): optional `tlp --shrink --max-shrink-steps 200` rechecks stable
+  synthetic TLP/NoREC mismatches with source-bound version 2 replay. Read the mismatch-signature and
+  bounded-minimality limits in [docs/tlp.md](../../docs/tlp.md); a smaller witness does not identify an
+  optimizer bug or prove SQL equivalence. Neither diagnostic is a prerequisite of operational report.
+
+Saved operational results now declare `schema_version: 1`. Valid legacy unversioned files remain
+readable; invalid check lists, duplicate IDs, unsupported statuses and malformed JSON become a
+sanitized `result_file:error`, including optional-stage files. Repair and rerun the producing stage.
+
 V4 replays all eligible bounded pair chunks and their NULL group; `verify.mutant_max_items` bounds logical items
 per mutant (default 10000). Read `verify/mutation-coverage.json` and the existing result limitations before
 claiming coverage. OWL `--explain-max-explanations 5` opts into bounded alternative generated-group causes;

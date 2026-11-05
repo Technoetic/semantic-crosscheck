@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "table": "items",
+  "column": "qty",
+  "type": "integer",
+  "rows": [0, 2],
+  "predicate_sql": "qty >= 10"
+}

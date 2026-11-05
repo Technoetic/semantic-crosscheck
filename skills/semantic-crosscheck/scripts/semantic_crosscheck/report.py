@@ -33,6 +33,7 @@ from pathlib import Path
 
 from . import config, cube_run, provenance, runtime_provenance
 from .result import STATUSES, Result, inputs_fingerprint, load_result
+from .result_contract import ResultContractError, invalid_result, validate_result
 
 PIPELINE = ("doctor", "demo", "build", "reason", "cube", "verify")
 DEPENDS = {"build": ("demo",), "reason": ("build",), "cube": ("build",), "verify": ("build", "cube")}
@@ -70,7 +71,10 @@ def _list(r: dict, key: str) -> list:
 
 
 def _checks(r: dict) -> list[dict]:
-    return [c for c in _list(r, "checks") if isinstance(c, dict)]
+    try:
+        return validate_result(r)["checks"]
+    except ResultContractError:
+        return invalid_result()["checks"]
 
 
 def _worst(a: str, b: str) -> str:
@@ -79,6 +83,10 @@ def _worst(a: str, b: str) -> str:
 
 def stage_status(r: dict) -> str:
     """Fail-closed status recomputed from the checks; the recorded status can only make it worse."""
+    try:
+        validate_result(r)
+    except ResultContractError:
+        return "error"
     states = {c.get("status") for c in _checks(r)}
     if not states:
         status = "not_run"
@@ -202,8 +210,8 @@ def read_results(out: Path) -> dict:
         if r is None:
             continue
         if not isinstance(r, dict):
-            r = {"checks": [{"id": "result_file", "status": "error", "config_ref": "", "detail": {"reason": "unreadable"}}],
-                 "next_safe_action": f"rerun `sxc.py {stage}`: its result.json could not be read"}
+            r = invalid_result()
+            r["next_safe_action"] = f"rerun `sxc.py {stage}`: its result.json could not be read"
         results[stage] = r
     return results
 
@@ -394,7 +402,12 @@ def run(cfg, args, out: Path) -> Result:
     cube_version = cfg.cube.version if cfg is not None else config.CUBE_VERSION
     stale = staleness(results, inputs_fingerprint(cfg), current, current_runtime, cube_run.runtime_facts(cube_version))
     statuses = {stage: stage_status(r) for stage, r in results.items()}
-    counted = {stage: counted_status(statuses[stage], stage in required, stale.get(stage)) for stage in results}
+    # A malformed file cannot be dismissed as an optional stale execution:
+    # its synthetic receipt has no usable fingerprints precisely because the
+    # entire input was rejected. Ordinary optional stale results keep their rule.
+    counted = {stage: ('error' if any(c['id'] == 'result_file' and c['status'] == 'error' for c in _checks(r))
+                       else counted_status(statuses[stage], stage in required, stale.get(stage)))
+               for stage, r in results.items()}
     _add_stage_checks(res, results, statuses, required, stale, counted)
     res.next_safe_action = _next_action(results, counted, required, stale)
 

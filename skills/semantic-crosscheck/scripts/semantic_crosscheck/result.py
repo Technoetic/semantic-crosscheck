@@ -14,8 +14,9 @@ import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
+from .result_contract import SCHEMA_VERSION, STATUSES, ResultContractError, decode_result
+
 EXIT_PASS, EXIT_FAIL, EXIT_CONFIG, EXIT_ENV = 0, 1, 2, 3
-STATUSES = ("pass", "fail", "error", "not_run")
 
 
 @dataclass
@@ -66,6 +67,7 @@ class Result:
 
     def to_dict(self) -> dict:
         d = asdict(self)
+        d["schema_version"] = SCHEMA_VERSION
         d["status"] = self.status
         return d
 
@@ -121,11 +123,15 @@ def discard(out_dir: str | Path, stage: str) -> None:
 
 
 def load_result(out_dir: str | Path, stage: str) -> dict | None:
-    """The result.json written by an earlier stage, or None."""
+    """Validated legacy/v1 result, or None; malformed evidence raises safe ValueError."""
     f = Path(out_dir) / stage / "result.json"
     if not f.is_file():
         return None
-    return json.loads(f.read_text(encoding="utf-8"))
+    try:
+        raw = f.read_text(encoding="utf-8")
+    except UnicodeError:
+        raise ResultContractError() from None
+    return decode_result(raw, expected_stage=stage)
 
 
 def check_status(out_dir: str | Path, stage: str, check_id: str) -> str | None:

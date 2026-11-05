@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.19.0] - 2026-11-05
+
+Release notes: [docs/releases/v0.19.0.md](docs/releases/v0.19.0.md).
+
+### Fixed
+
+- Validate saved result envelopes, version/type/status/check IDs and duplicate
+  IDs; malformed checks are not silently removed. Invalid optional-stage files
+  remain errors even if normal freshness checks also mark them stale.
+- Check live SHACL report roots, typed conformance, linked results, cardinality
+  and usable generated source/focus structure. Preserve warning/info and valid
+  other-group projection semantics, with sanitized errors.
+
+### Added
+
+- Standalone offline `boundary-schema --spec FILE` creates an existing witness-v1
+  finite schema from one supported exact integer/numeric/date scalar comparison.
+- Explicit `tlp --shrink --max-shrink-steps N` connects structured reduction to
+  TLP/NoREC failures. Closed source-bound v2 replay rechecks original, accepted
+  steps and final evidence, preserving only the declared discrepancy signature.
+
+Default stages, dependency/runtime pins and operational report authority remain
+unchanged. Final-source validation and publication evidence are recorded only
+after execution; actual-model effects, company DB verification and general SQL
+equivalence are not claimed.
+
 ## [0.18.1] - 2026-11-04
 
 Release notes: [docs/releases/v0.18.1.md](docs/releases/v0.18.1.md).
@@ -641,3 +667,5 @@ First release. Release notes: [docs/releases/v0.1.0.md](docs/releases/v0.1.0.md)
 [0.17.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.17.0
 [0.18.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.18.0
 [0.18.1]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.18.1
+
+[0.19.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.19.0

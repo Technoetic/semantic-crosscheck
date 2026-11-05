@@ -125,3 +125,40 @@ Replay runs one recorded case, not all examples from the earlier run. Generator
 implementation changes intentionally invalidate old artifacts. Artifacts are
 bounded at 1 MiB and are local evidence; they are not part of an operational
 report or a business-query correctness certificate.
+
+## Optional reduction and version 2 replay (since 0.19.0)
+
+```console
+python skills/semantic-crosscheck/scripts/sxc.py tlp --spec examples/tlp/sum-null.json --shrink --max-shrink-steps 200 --out /tmp/sxc-tlp
+```
+
+`--shrink` is off by default. `--max-shrink-steps` is an integer in 0..10000
+(default 200) and bounds reduction trials. Passing checks still use version 1
+fixtures. Only a confirmed failing check produces a reduced version 2 fixture.
+The structured reducer attempts row deletion, reverse-FK closures and supported
+non-key simplifications. It accepts only independently rechecked stable failures
+with the original mismatch signature; errors, changed observations and different
+signatures do not establish a smaller witness.
+
+For TLP, the signature preserves signed canonical row-difference support
+(ignoring multiplicities) and the aggregate equality, direction or NULL side.
+For NoREC, it preserves only count-gap direction. Neither signature proves that
+two failures share an optimizer defect or that the SQL is equivalent. A bounded,
+error-free live run may report deletion 1-minimality for this signature; it does
+not establish a globally smallest counterexample.
+
+Version 2 binds the original generated fixture, spec bytes, generator, evaluator,
+reducer, canonicalization and DB-helper implementation hashes, the reduced tables,
+budget and accepted operation trace. Replay requires the same explicit `--shrink`,
+oracle, seed and budget, validates the closed artifact and trace before connecting,
+then rechecks the original, every accepted step and the final witness using two
+complete stable observations. Replay verifies the accepted path; it does not
+rerun rejected trials or reclaim live minimality claims. Changing bound source
+implementations intentionally invalidates the artifact.
+
+```console
+python skills/semantic-crosscheck/scripts/sxc.py tlp --spec examples/tlp/sum-null.json --shrink --max-shrink-steps 200 --seed 7 --replay /tmp/sxc-tlp/tlp/fixture.json --out /tmp/sxc-tlp-replay
+```
+
+No reduction flag adds a default operational stage, report authority or SQL
+sandbox. Keep using reviewed SQL and a dedicated synthetic PostgreSQL connection.

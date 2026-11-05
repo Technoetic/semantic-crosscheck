@@ -388,6 +388,31 @@ def evaluate(conn, fixture, spec, timeout_ms, oracle='tlp'):
         return answer
 
 
+def evaluate_evidence(conn, fixture, spec, timeout_ms, oracle='tlp'):
+    """Opt-in private evidence: both complete oracle arms must be stable."""
+    from . import tlp_reduction
+    with db.read_only(conn, timeout_ms, isolation='repeatable read'):
+        first = _fetch(conn, fixture, spec, **({'oracle': oracle} if oracle == 'norec' else {}))
+        first_signature = tlp_reduction.signature(first, oracle)
+        second = _fetch(conn, fixture, spec, **({'oracle': oracle} if oracle == 'norec' else {}))
+        second_signature = tlp_reduction.signature(second, oracle)
+        if oracle == 'norec':
+            answer, other = compare_norec(first), compare_norec(second)
+            stable = compare(_diagnostic_payload(first['baseline'], second['baseline']))['equal']
+            stable = (stable and answer['optimized_count'] == other['optimized_count']
+                      and answer['reference_count'] == other['reference_count'])
+        else:
+            answer = compare(first)
+            stable = compare(dict(first, partitioned=second['baseline'],
+                                  partition_aggregate=second['baseline_aggregate']))['equal']
+            stable = stable and compare(dict(first, baseline=first['partitioned'],
+                partitioned=second['partitioned'], baseline_aggregate=first['partition_aggregate'],
+                partition_aggregate=second['partition_aggregate']))['equal']
+        if not stable or first_signature != second_signature:
+            raise ValueError('Unstable reduction evidence')
+        return answer, first_signature
+
+
 def _integer(value, low, high):
     if type(value) is not int or not low <= value <= high:
         raise StageError('tlp: bounded integer CLI arguments required', EXIT_CONFIG)
@@ -404,6 +429,12 @@ def run(cfg, args, out):
     seed = _integer(args.seed, -(2**63), 2**63 - 1)
     maximum = _integer(args.max_examples, 1, 1000)
     timeout = _integer(args.statement_timeout_ms, 1, 120000)
+    shrink = getattr(args, 'shrink', False)
+    if type(shrink) is not bool:
+        raise StageError('tlp: --shrink must be boolean', EXIT_CONFIG)
+    shrink_budget = _integer(getattr(args, 'max_shrink_steps', 200), 0, 10000)
+    from . import tlp_reduction
+    reduction_bindings = tlp_reduction.bindings() if shrink else None
     if not isinstance(args.dsn_env, str) or not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', args.dsn_env):
         raise StageError('tlp: invalid DSN environment variable name', EXIT_CONFIG)
     spec = load_spec(args.spec)
@@ -415,7 +446,15 @@ def run(cfg, args, out):
         try:
             raw_replay = _read(args.replay, REPLAY_LIMIT)
             replay_sha = hashlib.sha256(raw_replay).hexdigest()
-            replay = decode_replay(raw_replay.decode('utf-8'), spec, seed, oracle=oracle)
+            raw_text = raw_replay.decode('utf-8')
+            envelope = constraints.decode_json(raw_text)
+            reduced_replay = isinstance(envelope, dict) and envelope.get('schema_version') == 2
+            if reduced_replay:
+                if not shrink:
+                    raise StageError('tlp: reduced replay requires --shrink', EXIT_CONFIG)
+                replay = tlp_reduction.decode(raw_text, spec, seed, oracle, shrink_budget)
+            else:
+                replay = decode_replay(raw_text, spec, seed, oracle=oracle)
         except (OSError, UnicodeError, ValueError, TypeError):
             raise StageError('tlp: replay file missing, too large or invalid', EXIT_CONFIG) from None
     directory = Path(out) / 'tlp'
@@ -428,6 +467,8 @@ def run(cfg, args, out):
     result.inputs = {'spec_sha256': spec['spec_sha256'], 'generator_sha256': _generator_sha(), 'oracle': oracle}
     if replay_sha is not None:
         result.inputs['replay_sha256'] = replay_sha
+    if shrink:
+        result.inputs['reduction'] = {'bindings': reduction_bindings, 'budget': shrink_budget}
     result.not_proven.extend([
         'A bounded TLP pass proves internal partition consistency only; it proves neither business-query correctness nor operational V1-V5 coverage.',
         'Trusted relational SQL may explicitly reference real tables or custom functions; synthetic CTEs and a read-only transaction are not a SQL sandbox.',
@@ -440,6 +481,10 @@ def run(cfg, args, out):
         result.not_proven[2] = ('NoREC materializes the relation but independently evaluates the predicate in WHERE and '
                                 'CASE, with a separate diagnostic evaluation and a second statement for observable '
                                 'stability; this limits optimizer/index coverage and does not prove determinism.')
+    if shrink:
+        result.not_proven.append('Reduction preserves only signed row-discrepancy support and aggregate relation '
+            '(TLP), or count-gap direction (NoREC), not the same optimizer bug. Structured search is bounded; '
+            'replay rechecks accepted steps but does not repeat rejected trials or prove deletion minimality.')
     conn = None
     checked = rows = 0
     last = None
@@ -449,10 +494,27 @@ def run(cfg, args, out):
         except StageError:
             result.add(CHECK_IDS[oracle]['engine'], 'not_run', reason='postgresql_unavailable', oracle=oracle)
             return result
-        for index in ([replay['case_index']] if replay else range(maximum)):
+        evaluator = lambda fixture: evaluate_evidence(conn, fixture, spec, timeout, oracle=oracle)
+        replay_v2 = replay is not None and replay.get('schema_version') == 2
+        indices = [replay['original']['case_index'] if replay_v2 else replay['case_index']] if replay else range(maximum)
+        reduction_detail = None
+        for index in indices:
             case = replay if replay else make_replay(spec, seed, index, oracle=oracle)
             extra = {'oracle': oracle} if oracle == 'norec' else {}
-            answer = evaluate(conn, case['tables'], spec, timeout, **extra)
+            if replay_v2:
+                answer = tlp_reduction.replay(case, evaluator)
+                reduction_detail = tlp_reduction.public(case['search'], replayed=True)
+            elif shrink:
+                answer, discrepancy = evaluator(case['tables'])
+                if not answer['equal']:
+                    summary = tlp_reduction.reduce(case['tables'], evaluator, discrepancy, shrink_budget)
+                    answer, confirmed = evaluator(summary['tables'])
+                    if answer['equal'] or confirmed != discrepancy:
+                        raise ValueError('Final reduction witness changed')
+                    case = tlp_reduction.build(case, summary, discrepancy, oracle, shrink_budget, reduction_bindings)
+                    reduction_detail = tlp_reduction.public(summary)
+            else:
+                answer = evaluate(conn, case['tables'], spec, timeout, **extra)
             checked += 1
             rows += answer['baseline_rows']
             last = case
@@ -463,14 +525,20 @@ def run(cfg, args, out):
             raise ValueError('Spec changed during run')
         if _generator_sha() != result.inputs['generator_sha256']:
             raise ValueError('Generator changed during run')
+        if shrink and tlp_reduction.bindings() != reduction_bindings:
+            raise ValueError('Reduction implementation changed during run')
         if replay_sha is not None and hashlib.sha256(_read(args.replay, REPLAY_LIMIT)).hexdigest() != replay_sha:
             raise ValueError('Replay changed during run')
-        artifact.write_text(json.dumps(last, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+        artifact.write_text(tlp_reduction.encode(last) if last.get('schema_version') == 2 else
+                            json.dumps(last, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
         detail = ({'optimized_count': answer['optimized_count'], 'reference_count': answer['reference_count']}
                   if oracle == 'norec' else {'multiset_equal': answer['multiset_equal'],
                                             'aggregate_equal': answer['aggregate_equal']})
+        if reduction_detail is not None:
+            detail['reduction'] = reduction_detail
         result.add(CHECK_IDS[oracle]['consistency'], 'pass' if answer['equal'] else 'fail', bounded=True, oracle=oracle,
-                   examples=checked, relation_rows=rows, case_index=last['case_index'],
+                   examples=checked, relation_rows=rows,
+                   case_index=last['original']['case_index'] if last.get('schema_version') == 2 else last['case_index'],
                    fixture_sha256=last['tables_sha256'], spec_sha256=spec['spec_sha256'], **detail)
         result.next_safe_action = ('Review bounded synthetic coverage and trusted SQL before treating this as evidence '
                                    f'beyond {"predicate-count" if oracle == "norec" else "partition"} consistency.')

@@ -33,6 +33,14 @@ or bundled.
 Licence names below were read from the installed packages' metadata (Python) and from the licence fields
 recorded in `skills/semantic-crosscheck/adapters/cube/package-lock.json` (npm), unless noted otherwise.
 
+The offline scalar boundary-schema experiment is an original implementation
+informed by [Data Generation for Testing and Grading SQL Queries (XData)](https://arxiv.org/abs/1411.6704).
+No XData, SQLGlot, JSON Schema validator or ProvSQL code is copied or installed;
+the experiment uses a small fully consuming stdlib grammar, not a general SQL
+parser or query-aware constraint solver. Saved-result and live SHACL boundaries
+refer to the [SHACL report contract](https://www.w3.org/TR/shacl/#validation-report)
+and explicit local version/type/identity rules without a new validator dependency.
+
 ## Python packages
 
 | Package | Version | Licence | Used for |

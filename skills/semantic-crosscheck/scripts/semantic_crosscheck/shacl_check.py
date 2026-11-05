@@ -268,16 +268,91 @@ def validate_generated_shapes(shapes_ttl_text: str) -> tuple[bool, int]:
         raise ValidationError("meta_validation_error") from None
 
 
+def _validate_report(data_graph, shacl, returned):
+    """Validate the live exported-row profile, without interpreting report messages or row values.
+
+    Every supplied generated shape is known here, including shapes from other value groups. Projection decides
+    which group's results count. A warning/info result still carries a focus row: allow_warnings can make the API
+    boolean true without removing that result, and a strict RDF report can retain a false conformance flag.
+    """
+    import rdflib
+    from rdflib import BNode, Literal, URIRef
+    if not isinstance(returned, (tuple, list)) or len(returned) != 3:
+        raise ValueError()
+    conforms, report, _text = returned
+    if type(conforms) is not bool or not isinstance(report, rdflib.Graph):
+        raise ValueError()
+    sh, rdf_type = rdflib.Namespace(shapes.SH), rdflib.RDF.type
+    roots = set(report.subjects(rdf_type, sh.ValidationReport))
+    if len(roots) != 1:
+        raise ValueError()
+    root = next(iter(roots))
+    if not isinstance(root, (BNode, URIRef)):
+        raise ValueError()
+    flags = list(report.objects(root, sh.conforms))
+    if (len(flags) != 1 or not isinstance(flags[0], Literal) or flags[0].datatype != rdflib.XSD.boolean
+            or flags[0].ill_typed or str(flags[0]) not in ('true', 'false', '1', '0')):
+        raise ValueError()
+    rdf_conforms = str(flags[0]) in ('true', '1')
+    results = set(report.objects(root, sh.result))
+    if results != set(report.subjects(rdf_type, sh.ValidationResult)):
+        raise ValueError()
+    violation = False
+    for result in results:
+        if not isinstance(result, (BNode, URIRef)):
+            raise ValueError()
+        values = []
+        for field in (sh.focusNode, sh.sourceShape, sh.sourceConstraintComponent, sh.resultSeverity):
+            terms = list(report.objects(result, field))
+            if len(terms) != 1 or not isinstance(terms[0], URIRef):
+                raise ValueError()
+            values.append(terms[0])
+        focus, source, _component, severity = values
+        # Generated outer NodeShapes carry targets, while only their PropertyShapes map to row checks. Accepting
+        # an outer source would let projection silently discard a linked violation as another group's result.
+        if ((source, rdf_type, sh.PropertyShape) not in shacl
+                or (focus, None, None) not in data_graph
+                or severity not in (sh.Violation, sh.Warning, sh.Info)):
+            raise ValueError()
+        paths = list(report.objects(result, sh.resultPath))
+        source_paths = list(shacl.objects(source, sh.path))
+        if (len(source_paths) != 1 or paths != source_paths
+                or any(not isinstance(path, URIRef) for path in paths)):
+            raise ValueError()
+        violation |= severity == sh.Violation
+    if (not results and (not conforms or not rdf_conforms)
+            or violation and (conforms or rdf_conforms)
+            or results and not violation and not conforms):
+        raise ValueError()
+    return report
+
+
 def validate(data_graph, shacl):
     """pySHACL's results graph: no inference, warnings allowed (severity does not change which rows violate). shacl:
     the shapes graph, or its Turtle text."""
     import pyshacl
-    import rdflib
-    graph = shapes_graph(shacl) if isinstance(shacl, str) else shacl
-    _conforms, report, _text = pyshacl.validate(data_graph, shacl_graph=graph, inference="none", allow_warnings=True)
-    if not isinstance(report, rdflib.Graph):
-        raise ValidationError(type(report).__name__)
-    return report
+    try:
+        graph = shapes_graph(shacl) if isinstance(shacl, str) else shacl
+        returned = pyshacl.validate(data_graph, shacl_graph=graph, inference="none", allow_warnings=True)
+        return _validate_report(data_graph, graph, returned)
+    except Exception:
+        raise ValidationError("malformed_report") from None
+
+
+def _focus_key(cfg, shape, focus):
+    """One canonical exported row IRI with the configured key arity; malformed values never escape in errors."""
+    from rdflib import URIRef
+    try:
+        if not isinstance(focus, URIRef):
+            raise ValueError()
+        key = naming.rdf_key(cfg, shape.target, str(focus))
+        if (type(key) is not list or len(key) != len(cfg.entities[shape.target].key)
+                or any(value is not None and type(value) not in (str, bool) for value in key)
+                or naming.rdf_node(cfg, shape.target, key) != str(focus)):
+            raise ValueError()
+        return tuple(key)
+    except Exception:
+        raise ValidationError("malformed_report") from None
 
 
 def focus_keys(cfg, planned, results) -> dict[str, set]:
@@ -292,8 +367,8 @@ def focus_keys(cfg, planned, results) -> dict[str, set]:
     for r in results.subjects(URIRef(RDF_TYPE), URIRef(shapes.SH + "ValidationResult")):
         s = by_source.get(str(results.value(r, URIRef(shapes.SH + "sourceShape"))))
         if s is not None:
-            focus = str(results.value(r, URIRef(shapes.SH + "focusNode")))
-            keys[s.id].add(tuple(naming.rdf_key(cfg, s.target, focus)))
+            focus = results.value(r, URIRef(shapes.SH + "focusNode"))
+            keys[s.id].add(_focus_key(cfg, s, focus))
     return keys
 
 
@@ -395,8 +470,8 @@ def pair_focus_keys(cfg, pairs, results) -> dict[str, set]:
     for r in results.subjects(URIRef(RDF_TYPE), URIRef(shapes.SH + "ValidationResult")):
         s = by_source.get(str(results.value(r, URIRef(shapes.SH + "sourceShape"))))
         if s is not None:
-            focus = str(results.value(r, URIRef(shapes.SH + "focusNode")))
-            keys[s.id].add(tuple(naming.rdf_key(cfg, s.target, focus)))
+            focus = results.value(r, URIRef(shapes.SH + "focusNode"))
+            keys[s.id].add(_focus_key(cfg, s, focus))
     return keys
 
 

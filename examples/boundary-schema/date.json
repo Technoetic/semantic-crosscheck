@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "table": "items",
+  "column": "day",
+  "type": "date",
+  "rows": [0, 2],
+  "predicate_sql": "day <= DATE '2024-02-29'"
+}

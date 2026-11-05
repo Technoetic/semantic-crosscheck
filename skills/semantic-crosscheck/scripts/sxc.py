@@ -4,7 +4,7 @@
     python sxc.py <stage> [--config crosscheck.toml] [--out DIR] [options]
 
 Stages: doctor, demo, build, reason, cube, verify, report, cube-install, counterexample,
-cube-replay, tlp, shacl-corpus, expect, shacl-repair, grain.
+cube-replay, tlp, shacl-corpus, expect, shacl-repair, grain, boundary-schema.
 Each stage writes <out>/<stage>/result.json (counts and check ids only, never row values) and exits with
 0 pass, 1 a check failed or could not run, 2 configuration or usage error, 3 environment missing.
 
@@ -54,9 +54,10 @@ STAGES = {
     "grain": "grain",
     "okf": "okf",
     "knowledge-evolution": "knowledge_evolution",
+    "boundary-schema": "boundary_schema",
 }
 NEEDS_CONFIG = {"demo", "build", "reason", "cube", "verify", "report", "expect", "grain"}
-DIAGNOSTIC_STAGES = {"shacl-repair", "grain", "okf", "knowledge-evolution"}
+DIAGNOSTIC_STAGES = {"shacl-repair", "grain", "okf", "knowledge-evolution", "boundary-schema"}
 DEFAULT_CONFIG = "crosscheck.toml"
 
 
@@ -171,6 +172,12 @@ def parser(*, audit_errors=False) -> argparse.ArgumentParser:
     s.add_argument("--max-examples", type=int, default=64)
     s.add_argument("--statement-timeout-ms", type=int, default=10000)
     s.add_argument("--replay", default=None, metavar="FILE", help="replay a generated synthetic fixture bound to the exact spec bytes")
+    s.add_argument("--shrink", action="store_true", help="opt into bounded reduction of a confirmed TLP/NoREC discrepancy")
+    s.add_argument("--max-shrink-steps", type=int, default=200, help="maximum opt-in reduction attempts (default: 200)")
+
+    s = sub.add_parser("boundary-schema", parents=[common], allow_abbrev=False,
+                       help="derive exact offline scalar boundary hints as a finite witness schema")
+    s.add_argument("--spec", required=True, metavar="FILE", help="strict version 1 scalar column/comparison declaration")
 
     s = sub.add_parser("shacl-corpus", parents=[common], help="compare pySHACL and Apache Jena against independently expected nonrecursive synthetic reports")
     s.add_argument("--jena-home", default="", help="Apache Jena distribution directory (default: SXC_JENA_HOME)")
@@ -220,7 +227,7 @@ def config_path(stage: str, given: str | None) -> Path | None:
             raise StageError("counterexample uses synthetic fixtures, not --config; pass the trusted SQL instead "
                              "(--reference-sql and --candidate-sql, or --metamorphic-sql)", EXIT_CONFIG)
         return None
-    if stage in {"cube-replay", "tlp", "shacl-corpus", "shacl-repair", "knowledge-evolution"}:
+    if stage in {"cube-replay", "tlp", "shacl-corpus", "shacl-repair", "knowledge-evolution", "boundary-schema"}:
         if given is not None:
             raise StageError(f"{stage} uses standalone synthetic inputs, not --config", EXIT_CONFIG)
         return None
@@ -257,7 +264,7 @@ def _brief(detail: dict) -> str:
 
 
 def _summary(res: Result, path, quiet: bool) -> str:
-    standalone = (res.stage in {"cube_replay", "tlp", "shacl_corpus", "shacl_repair", "grain", "okf", "knowledge_evolution"}
+    standalone = (res.stage in {"cube_replay", "tlp", "shacl_corpus", "shacl_repair", "grain", "okf", "knowledge_evolution", "boundary_schema"}
                   or 'constraint_audit' in res.inputs or 'spec_sources' in res.inputs
                   or getattr(res, '_suppress_paths', False))
     if standalone:
@@ -373,11 +380,19 @@ def _audit_usage_failure(args):
 
 def _diagnostic_cli_inputs(argv):
     """Keep parser failures count-only; do not render untrusted option values."""
-    if not argv or argv[0] not in DIAGNOSTIC_STAGES:
+    if not argv:
         return None
-    args = argparse.Namespace(stage=argv[0], spec=None, config=None, out=None, quiet=False)
+    offset = 0
+    if argv[0] not in DIAGNOSTIC_STAGES:
+        # Also sanitize a boundary command preceded by invalid global options.
+        # The first recognized stage keeps other commands' dispatch unchanged.
+        found = next(((index, value) for index, value in enumerate(argv) if value in STAGES), None)
+        if found is None or found[1] != 'boundary-schema':
+            return None
+        offset = found[0]
+    args = argparse.Namespace(stage=argv[offset], spec=None, config=None, out=None, quiet=False, _boundary_inputs=[])
     fields = {"--spec": "spec", "--config": "config", "--out": "out"}
-    tokens = argv[1:]
+    tokens = argv[offset + 1:]
     if "--" in tokens:
         tokens = tokens[:tokens.index("--")]
     for index, token in enumerate(tokens):
@@ -387,8 +402,12 @@ def _diagnostic_cli_inputs(argv):
         if option in fields:
             if sep:
                 setattr(args, fields[option], value)
+                if args.stage == 'boundary-schema' and option in ('--spec', '--config'):
+                    args._boundary_inputs.append(value)
             elif index + 1 < len(tokens) and not tokens[index + 1].startswith("--"):
                 setattr(args, fields[option], tokens[index + 1])
+                if args.stage == 'boundary-schema' and option in ('--spec', '--config'):
+                    args._boundary_inputs.append(tokens[index + 1])
     return args
 
 
@@ -435,8 +454,13 @@ def _diagnostic_prepare(args, out):
     return cfg, before
 
 
-def _diagnostic_write(res, out):
+def _diagnostic_write(res, out, args=None):
     try:
+        if res.stage == 'boundary_schema' and out is not None:
+            from semantic_crosscheck import boundary_schema
+            boundary_schema.prepare_run(args, out)
+            ensure_out(out)
+            boundary_schema.prepare_run(args, out)
         if out is not None:
             # Never follow a stale temporary hardlink/symlink when writing.
             (Path(out) / res.stage / "result.json.part").unlink(missing_ok=True)
@@ -447,6 +471,13 @@ def _diagnostic_write(res, out):
 
 
 def _diagnostic_usage_failure(args):
+    if args.stage == 'boundary-schema':
+        # Unsupported argv may conceal an input path. No output mutation is
+        # justified until a complete parse has established the declared inputs.
+        res = Result('boundary_schema')
+        res.add('stage', 'error', reason='invalid_diagnostic_arguments')
+        print(_summary(res, None, args.quiet), file=sys.stderr)
+        return EXIT_CONFIG
     out = None
     try:
         candidate = _diagnostic_output(args)
@@ -527,6 +558,8 @@ def main(argv=None) -> int:
         return (_diagnostic_usage_failure(diagnostic_inputs) if diagnostic_inputs is not None
                 else _audit_usage_failure(audit_inputs))
     stage = args.stage
+    if stage == 'boundary-schema':
+        args._boundary_inputs = diagnostic_inputs._boundary_inputs
     diagnostic_mode = stage in DIAGNOSTIC_STAGES
     audit_mode = stage == "counterexample" and args.constraint_audit is not None
     if stage == "counterexample" and args.scenario is None and args.mutation_operator is None and args.witness_schema is None and args.constraint_audit is None:
@@ -636,7 +669,7 @@ def main(argv=None) -> int:
             res.add("stage", "error", "", message=str(e))
         res.next_safe_action = "fix the configuration or environment named in the message, then rerun this stage"
         path = (_expect_write(res, out, expect_cfg, expect_cfg_sha) if stage == 'expect' else
-                _diagnostic_write(res, out) if diagnostic_mode else _write(res, out))
+                _diagnostic_write(res, out, args) if diagnostic_mode else _write(res, out))
         print(_summary(res, path, args.quiet), file=sys.stderr)
         return e.exit_code
     except KeyboardInterrupt:
@@ -650,7 +683,7 @@ def main(argv=None) -> int:
             res._suppress_paths = True
         res.next_safe_action = "the run was interrupted before it finished: rerun this stage"
         path = (_expect_write(res, out, expect_cfg, expect_cfg_sha) if stage == 'expect' else
-                _diagnostic_write(res, out) if diagnostic_mode else _write(res, out))
+                _diagnostic_write(res, out, args) if diagnostic_mode else _write(res, out))
         print(_summary(res, path, args.quiet), file=sys.stderr)
         return EXIT_FAIL
     except Exception as e:  # noqa: BLE001 - unexpected failure: keep only the type and SQLSTATE in the result file
@@ -669,11 +702,11 @@ def main(argv=None) -> int:
             res.add("stage", "error", "", exception=type(e).__name__, sqlstate=_db_error_code(e))
             _crash_note(e)
         path = (_expect_write(res, out, expect_cfg, expect_cfg_sha) if stage == 'expect' else
-                _diagnostic_write(res, out) if diagnostic_mode else _write(res, out))
+                _diagnostic_write(res, out, args) if diagnostic_mode else _write(res, out))
         print(_summary(res, path, args.quiet), file=sys.stderr)
         return EXIT_FAIL
     path = (_expect_write(res, out, expect_cfg, expect_cfg_sha) if stage == 'expect' else
-            _diagnostic_write(res, out) if diagnostic_mode else res.write(out))
+            _diagnostic_write(res, out, args) if diagnostic_mode else res.write(out))
     print(_summary(res, path, args.quiet))
     return res.exit_code()
 

@@ -4,7 +4,7 @@
     python sxc.py <stage> [--config crosscheck.toml] [--out DIR] [options]
 
 Stages: doctor, demo, build, reason, cube, verify, report, cube-install, counterexample,
-cube-replay, tlp, shacl-corpus, expect, shacl-repair, grain, boundary-schema.
+cube-replay, tlp, shacl-corpus, expect, shacl-repair, grain, boundary-schema, semantic-preflight.
 Each stage writes <out>/<stage>/result.json (counts and check ids only, never row values) and exits with
 0 pass, 1 a check failed or could not run, 2 configuration or usage error, 3 environment missing.
 
@@ -55,9 +55,10 @@ STAGES = {
     "okf": "okf",
     "knowledge-evolution": "knowledge_evolution",
     "boundary-schema": "boundary_schema",
+    "semantic-preflight": "semantic_preflight",
 }
-NEEDS_CONFIG = {"demo", "build", "reason", "cube", "verify", "report", "expect", "grain"}
-DIAGNOSTIC_STAGES = {"shacl-repair", "grain", "okf", "knowledge-evolution", "boundary-schema"}
+NEEDS_CONFIG = {"demo", "build", "reason", "cube", "verify", "report", "expect", "grain", "semantic-preflight"}
+DIAGNOSTIC_STAGES = {"shacl-repair", "grain", "okf", "knowledge-evolution", "boundary-schema", "semantic-preflight"}
 DEFAULT_CONFIG = "crosscheck.toml"
 
 
@@ -178,6 +179,11 @@ def parser(*, audit_errors=False) -> argparse.ArgumentParser:
     s = sub.add_parser("boundary-schema", parents=[common], allow_abbrev=False,
                        help="derive exact offline scalar boundary hints as a finite witness schema")
     s.add_argument("--spec", required=True, metavar="FILE", help="strict version 1 scalar column/comparison declaration")
+
+    s = sub.add_parser("semantic-preflight", parents=[common], allow_abbrev=False,
+                       help="check authored business definitions and a structured plan offline")
+    s.add_argument("--contract", required=True, metavar="FILE", help="strict version 1 business contract")
+    s.add_argument("--plan", required=True, metavar="FILE", help="strict version 1 structured plan")
 
     s = sub.add_parser("shacl-corpus", parents=[common], help="compare pySHACL and Apache Jena against independently expected nonrecursive synthetic reports")
     s.add_argument("--jena-home", default="", help="Apache Jena distribution directory (default: SXC_JENA_HOME)")
@@ -546,6 +552,10 @@ def _expect_write(res, out, cfg, configuration_sha):
 
 def main(argv=None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
+    if argv and (argv[0] == 'semantic-preflight' or
+                 (argv[0].startswith('-') and 'semantic-preflight' in argv)):
+        from semantic_crosscheck import semantic_preflight
+        return semantic_preflight.cli(argv, parser, _summary)
     if argv and argv[0] == 'okf':
         from semantic_crosscheck import okf
         return okf.cli(argv, parser, _summary)

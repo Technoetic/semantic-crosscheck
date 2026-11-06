@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.20.0] - 2026-11-06
+
+Release notes: [docs/releases/v0.20.0.md](docs/releases/v0.20.0.md).
+
+### Added
+
+- Optional offline `semantic-preflight` and `/xc-preflight`: compare explicit
+  business-definition contracts, existing measure/Gold/Cube declarations and
+  structured plans before execution. Missing/ambiguous/candidate selections
+  require clarification; complete conflicts fail.
+- Bounded verified-byte config/contract/plan capture, strict JSON budgets,
+  guarded atomic publication, hash/index-only evidence and a synthetic example.
+- Captured-byte `config.loads` shares the unchanged configuration validation.
+
+Review, unit/population/denominator/time and period declarations are authored
+assertions, not proof of SQL or answer truth. No DB, model, network or SQL-body
+read is performed by this diagnostic. Defaults/dependencies/report authority are
+unchanged; contract-to-operational-report binding remains deferred. New engine
+code still requires rerunning operational stages after upgrade.
+
+[0.20.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.20.0
+
 ## [0.19.1] - 2026-11-05
 
 Release notes: [docs/releases/v0.19.1.md](docs/releases/v0.19.1.md).

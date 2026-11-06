@@ -253,6 +253,12 @@ since 0.11.0, `<iri>shape/<id>/pair` for the reason-time property-pair shape of 
 
 ## 6. Check catalogue
 
+| Stage | Check ID | Meaning | Non-pass behavior |
+|---|---|---|---|
+| semantic-preflight | `input_validation` | Explicit captured inputs could not be parsed/validated safely | sanitized `error`; no business text or paths |
+| semantic-preflight | `contract_<index>` | Authored metric binding/grain/aggregation agrees with existing Config declarations | `fail` on declared binding disagreement; not SQL meaning proof |
+| semantic-preflight | `selection_<index>` | Structured metric/context/period declarations match the reviewed caller contract | missing/ambiguous/candidate is `not_run`; complete conflict is `fail` |
+
 Since v0.15.0, [offline evolution](knowledge-evolution.md) uses one packaged bounded
 fixture and a separate literal oracle. Five checkpoints retain 26 contracts even
 on observation errors. Actual config, fingerprint, source capture/finish and

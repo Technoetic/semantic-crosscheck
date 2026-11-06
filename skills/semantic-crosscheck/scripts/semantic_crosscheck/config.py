@@ -385,12 +385,33 @@ def load(path: str | Path) -> Config:
         raise StageError(f"crosscheck.toml: {e}", EXIT_CONFIG) from e
 
 
+def loads(raw: bytes, path: str | Path) -> Config:
+    """Validate captured UTF-8 configuration bytes without rereading the TOML.
+
+    The path selects the configuration's identity and relative-file base; the
+    TOML file need not exist. Gold SQL existence checks remain metadata-only.
+    Byte limits and observation of changing inputs belong to the caller.
+    """
+    if not isinstance(raw, bytes):
+        raise StageError("crosscheck.toml: captured input must be bytes", EXIT_CONFIG)
+    try:
+        return _parse(raw.decode("utf-8-sig"), Path(path))
+    except KeyError as e:
+        raise StageError(f"crosscheck.toml: missing required key {e.args[0]!r}", EXIT_CONFIG) from e
+    except (ident.IdentError, TypeError, ValueError, AttributeError) as e:
+        raise StageError(f"crosscheck.toml: {e}", EXIT_CONFIG) from e
+
+
 def _load(path: str | Path) -> Config:
     p = Path(path)
     if not p.is_file():
         raise StageError(f"config not found: {p.name}", EXIT_CONFIG)
+    return _parse(p.read_text(encoding="utf-8-sig"), p)   # editors and PowerShell 5.1 write a BOM
+
+
+def _parse(text: str, p: Path) -> Config:
     try:
-        raw = tomllib.loads(p.read_text(encoding="utf-8-sig"))   # editors and PowerShell 5.1 write a BOM
+        raw = tomllib.loads(text)
     except tomllib.TOMLDecodeError as e:
         raise StageError(f"crosscheck.toml: {e}", EXIT_CONFIG) from e
     if raw.get("version") != 1:

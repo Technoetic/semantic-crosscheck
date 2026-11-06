@@ -27,7 +27,7 @@ COMMANDS = ROOT / "commands"
 WORKFLOW = ROOT / ".github" / "workflows" / "tests.yml"
 SKILL_DIR = ROOT / "skills" / "semantic-crosscheck"
 CONFIG_MD = SKILL_DIR / "references" / "config.md"
-COMMAND_DOC = {"boundary-schema": "xc-boundary-schema.md", "doctor": "xc-doctor.md", "demo": "xc-demo.md", "build": "xc-build.md", "reason": "xc-reason.md",
+COMMAND_DOC = {"semantic-preflight": "xc-preflight.md", "boundary-schema": "xc-boundary-schema.md", "doctor": "xc-doctor.md", "demo": "xc-demo.md", "build": "xc-build.md", "reason": "xc-reason.md",
                "cube": "xc-cube.md", "verify": "xc-verify.md", "report": "xc-report.md", "cube-install": "xc-install.md",
                "counterexample": "xc-counterexample.md", "cube-replay": "xc-cube-replay.md",
                "tlp": "xc-tlp.md", "shacl-corpus": "xc-shacl-corpus.md", "expect": "xc-expect.md", "shacl-repair": "xc-shacl-repair.md", "grain": "xc-grain.md", "okf": "xc-okf.md", "knowledge-evolution": "xc-knowledge-evolution.md"}

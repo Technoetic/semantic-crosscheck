@@ -450,6 +450,7 @@ python skills/semantic-crosscheck/scripts/sxc.py <stage> [--config PATH] [--out 
 | `counterexample` | 합성 데이터에서 SQL의 차이·BOM 변환 관계를 검사하고 축소·재현 | `--reference-sql FILE`, `--candidate-sql FILE`, `--metamorphic-sql FILE`, `--mutation-operator NAME`, `--gold-sql FILE`, `--scenario nulls`, `--seed N`, `--max-examples N`, `--max-shrink-steps N`, `--shrink-strategy structured`, `--witness-schema FILE`, `--solver-timeout-ms N`, `--dsn-env NAME`, `--statement-timeout-ms N`, `--constraints FILE`, `--constraint-audit FILE`, `--replay FILE` | `counterexample/result.json`, `counterexample/fixture.json` |
 | `cube-replay` | 고정 합성 데이터를 실제 Cube 원형·변형 모델과 독립 gold SQL로 비교 | `--mutation-operator NAME`, `--allow-scratch-schema`, `--seed N`, `--dsn-env NAME`, `--statement-timeout-ms N`, `--replay FILE` | `cube_replay/result.json`, `cube_replay/fixture.json` |
 | `boundary-schema` | 선언한 단일 스칼라 SQL 비교의 정확한 경계값·NULL에서 기존 witness-v1 스키마를 생성하는 오프라인 실험 | `--spec FILE` | `boundary_schema/result.json`, `boundary_schema/witness-schema.json` |
+| `semantic-preflight` | Offline authored business-definition and structured-plan consistency | `--contract FILE`, `--plan FILE`; explicit `--config FILE` required | `semantic_preflight/result.json` |
 | `tlp` | 참·거짓·NULL 분할 검사. 0.10.0부터 선택형 NoREC 조건 건수 비교 | `--spec FILE`, `--oracle tlp\|norec`, `--dsn-env NAME`, `--seed N`, `--max-examples N`, `--statement-timeout-ms N`, `--replay FILE`, `--shrink`, `--max-shrink-steps N` | `tlp/result.json`, `tlp/fixture.json` |
 | `shacl-corpus` | 독립 기대 결과와 pySHACL·Apache Jena의 합성 보고서 비교. 0.9.0부터는 W3C SHACL 시험 모음 core의 프로필 안 사례도 W3C 기대 보고서와 비교 | `--jena-home DIR`, `--timeout-ms N`, `--w3c-suite [DIR]`, `--allow-unpinned-suite` | `shacl_corpus/result.json` |
 | `expect` | 전용 fixture DB에서 gold SQL·Cube를 실행해 `[[gold.expect]]`의 문자 그대로 기대 행과 비교 | `--allow-fixture-database`, `--dsn-env NAME` | `expect/result.json`, `expect/build/`, `expect/cube/`, `expect/server.log` |
@@ -804,6 +805,25 @@ CI는 전체 이력을 가진 clone의 작업 트리·이력을 일반 패턴과
 [빠른 시작으로 이동 ↑](#quick-start-with-the-demo) · [GitHub 릴리스](https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.19.1)
 
 </div>
+
+## Offline business-definition preflight
+
+[`semantic-preflight`](docs/semantic-preflight.md) optionally compares authored
+metric definitions and a structured plan with configured measure/Gold/Cube
+metadata. It requires explicit `--config`, `--contract` and `--plan`; it reads no
+Gold/revision SQL body and makes no DB, network or model call.
+
+```text
+python skills/semantic-crosscheck/scripts/sxc.py semantic-preflight --config examples/semantic-preflight/crosscheck.toml --contract examples/semantic-preflight/contract.json --plan examples/semantic-preflight/plan.json --out .sxc-semantic-preflight
+```
+
+**`reviewed` is an unauthenticated caller assertion. Matching unit, population,
+denominator and time fields do not prove SQL meaning; a plan period does not
+bind SQL parameters or prove date filtering.** Missing or ambiguous selections
+remain `not_run`; complete conflicts fail. This adds no default stage or report
+authority; C3 operational report binding is deferred. The new Python engine code
+changes the existing fingerprint, so rerun operational stages after upgrading.
+See the [schema, synthetic example and reused NVIDIA references](docs/semantic-preflight.md).
 
 ## Optional diagnostic contracts (since v0.13.0)
 

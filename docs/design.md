@@ -1072,3 +1072,38 @@ See [the full input and replay contract](../skills/semantic-crosscheck/reference
 The [diagnostic design](diagnostic-contracts.md) defines three bounded opt-in paths. [SHACL repair](shacl-repair.md) binds independent reports and explicit target/immutable obligations to the same supported shapes before and after. [Grain contracts](grain.md) bind intended operation/key provenance independently of configuration and check real visible key/join assumptions. [OWL explanations](owl-explanations.md) preserve inconsistency and localize sufficient generated-axiom groups using the same reasoner; incomplete searches never certify minimality, and only finished full-set checks report a unique explanation over those groups.
 
 Standalone grain and shacl_repair results are not added to PIPELINE or promoted into default report success. Existing source revision probes and default semantics remain unchanged. Alias guards run before cleanup/failure writes; unverified aliases suppress writes. New stages return counts/ids/digests only. These features do not discharge current general-grain, shared-snapshot, full-SHACL or independent-reasoner limitations.
+
+## Offline business-definition and structured-plan preflight
+
+The optional [semantic-preflight diagnostic](semantic-preflight.md) evaluates
+host-authored version-1 metric contracts and structured selections against
+existing measure, Gold and generated Cube-member declarations. The pure
+`business_contracts.evaluate(cfg, contract_document, plan_document)` constructs a
+`semantic_preflight` Result with bounded positional checks, counts and fixed
+reasons. Explicit metric IDs disambiguate normalized label/alias collisions;
+complete conflicting bindings/context/period kinds fail. Missing information,
+unresolved selections and selected candidates remain `not_run` with
+`needs_clarification`. Empty scopes and malformed documents cannot pass.
+
+A dedicated early CLI route requires explicit `--config`, `--contract` and
+`--plan`, captures at most 256 KiB per file, and parses configuration from the
+captured bytes with `config.loads`. It bypasses operational engine/Gold
+fingerprint reads: Gold/revision SQL bodies, DB, network and model execution are
+outside this route. Strict JSON shape/duplicate-key/type/depth/node limits and
+input/output identity/content/alias guards precede cleanup and atomic result
+publication. Evidence retains captured-input/generator digests and counts, not
+supplied labels, definitions, terms, selected values, metric IDs, paths or SQL.
+Observed local guards do not lock ancestors against hostile concurrent changes.
+
+`reviewed` is an unauthenticated caller assertion. Unit, population,
+denominator, time basis and timezone agreement does not prove SQL semantics;
+period declarations neither bind SQL parameters nor establish date filtering.
+No business truth, reviewer identity or generated Cube behavior is certified.
+The NVIDIA sources are existing conceptual references reused for this specific
+application; no upstream code/runtime or performance claim is incorporated.
+
+C3 operational report binding is deferred. The diagnostic is not in PIPELINE
+and cannot promote default report authority. Existing defaults and dependency
+pins are unchanged. Adding Python engine files changes the current engine
+fingerprint, so operational stages must be rerun after upgrading even though the
+default stage order is preserved.

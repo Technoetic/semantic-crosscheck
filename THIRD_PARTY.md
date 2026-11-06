@@ -41,6 +41,22 @@ parser or query-aware constraint solver. Saved-result and live SHACL boundaries
 refer to the [SHACL report contract](https://www.w3.org/TR/shacl/#validation-report)
 and explicit local version/type/identity rules without a new validator dependency.
 
+The offline business-definition/structured-plan preflight is an original
+standard-library implementation conceptually informed by NVIDIA's
+[October 21, 2026 Agent Toolkit article](https://blogs.nvidia.com/blog/enterprise-platforms-agent-toolkit/)
+and [Auto Ontology at c4495670947eb7b4616f0dd9900e5ced2a48ca1e](https://github.com/NVIDIA/auto-ontology/tree/c4495670947eb7b4616f0dd9900e5ced2a48ca1e),
+including its
+[query-validation guidance](https://github.com/NVIDIA/auto-ontology/blob/c4495670947eb7b4616f0dd9900e5ced2a48ca1e/skills/nvidia-ontology-query/references/query-validation.md)
+and [interactive completeness implementation](https://github.com/NVIDIA/auto-ontology/blob/c4495670947eb7b4616f0dd9900e5ced2a48ca1e/auto_ontology/retrieval/interactive/completeness.py).
+These are existing Reference Atlas sources reused for a new semantic-crosscheck
+application: explicit metric/Gold/Cube bindings and structured-plan consistency.
+Their prior agentic-vault use pinned Auto Ontology at
+`2a24f5d34ef6b6e168a7f22d308504d3ab36a198`; the newer packaging/version pin does
+not establish a new semantic capability. No NVIDIA code is copied or bundled,
+no NVIDIA runtime, GPU or model dependency is added, and no upstream performance
+result is reproduced. Authored review and context declarations are not
+certification or SQL correctness proofs. See [scope](docs/semantic-preflight.md).
+
 ## Python packages
 
 | Package | Version | Licence | Used for |

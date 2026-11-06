@@ -50,6 +50,7 @@ default.
 | `shacl-repair` | [xc-shacl-repair.md](../../../commands/xc-shacl-repair.md) | `sxc.py shacl-repair --spec examples/shacl-repair/valid.json` |
 | `grain` | [xc-grain.md](../../../commands/xc-grain.md) | `sxc.py grain --config crosscheck.toml --spec contract.json` |
 | `okf` (since v0.15.0) | [xc-okf.md](../../../commands/xc-okf.md) | `sxc.py okf --config crosscheck.toml --export contract-bundle --select q01_explosion` |
+| `semantic-preflight` | [xc-preflight.md](../../../commands/xc-preflight.md) | `sxc.py semantic-preflight --config crosscheck.toml --contract contract.json --plan plan.json` |
 | `knowledge-evolution` (since v0.15.0) | [xc-knowledge-evolution.md](../../../commands/xc-knowledge-evolution.md) | `sxc.py knowledge-evolution --out .sxc-evolution --quiet` |
 
 `cube-replay`, `tlp` and `shacl-corpus` are optional standalone synthetic checks. They reject `--config`, ignore any
@@ -65,6 +66,15 @@ actual validators against independent expected reports.
 user for a database the user names as a dedicated fixture: the stage refuses a fixture DSN only when it equals, or
 names the same host, port and database as, an operational DSN variable set in this environment, and cannot detect
 another name for the same server. Its result is also kept out of `report` and of operational V1–V5 coverage.
+
+`semantic-preflight` separately requires explicit `--config`, `--contract` and
+`--plan`, and runs offline with no DB, network, model or SQL execution. It reads
+configuration and JSON declarations without reading Gold/revision SQL bodies.
+Never promote caller-asserted `reviewed` status to authenticated approval, or
+matching unit/population/denominator/time declarations and a plan period to SQL
+proof. Unresolved selections remain `not_run`; complete conflicts fail. It adds
+no operational report authority; C3 binding is deferred. The new Python engine
+fingerprint requires operational reruns after upgrade. See [schema and example](../../../docs/semantic-preflight.md).
 
 ## Arguments and execution
 

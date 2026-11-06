@@ -1,0 +1,34 @@
+# Synthetic part/stock declarations for offline semantic-preflight only.
+# This command checks metadata; it neither reads the Gold SQL body nor connects to this DSN.
+version = 1
+
+[source]
+dsn_env = "SXC_PG_DSN"
+schemas = ["sxc_demo"]
+
+[entities.part]
+table = "sxc_demo.part"
+key = ["part_id"]
+
+[entities.stock]
+table = "sxc_demo.stock"
+key = ["part_id", "location_id"]
+
+[measures.on_hand]
+entity = "stock"
+column = "qty"
+agg = "sum"
+by = "part_id"
+node = "part"
+filter_normalized = { location_id = ["MAIN", "SUB"] }
+
+[[gold]]
+id = "q01_stock"
+sql = "gold/on_hand.sql"
+key = "part_id"
+[gold.cube_query]
+dimensions = ["m_on_hand.key"]
+measures = ["m_on_hand.value"]
+[gold.map]
+part_id = "m_on_hand.key"
+on_hand = "m_on_hand.value"

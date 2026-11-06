@@ -5,6 +5,19 @@ description: "Use when verifying an ontology plus semantic layer built on Postgr
 
 # semantic-crosscheck
 
+[xc-preflight](../../commands/xc-preflight.md) runs optional offline
+`semantic-preflight --config FILE --contract FILE --plan FILE`. It compares
+host-authored definitions and structured selections with configured
+measure/Gold/Cube metadata, without DB, network, model or SQL execution and
+without reading Gold/revision SQL bodies. Use explicit input paths; pass each
+argument separately. A missing/ambiguous selection or selected candidate remains
+`not_run`; complete declaration conflicts fail. Never describe `reviewed` as
+authenticated approval, matching unit/population/denominator/time fields as SQL
+proof, or a period as SQL parameter/date-filter binding. C3 operational report
+binding is deferred and default stages remain unchanged. New Python engine files
+change the existing fingerprint: rerun operational stages after upgrading.
+See [schema, limits and synthetic examples](../../docs/semantic-preflight.md).
+
 Since v0.15.0: [xc-knowledge-evolution](../../commands/xc-knowledge-evolution.md)
 replays a fixed bundled five-checkpoint source-contract scenario offline. It
 rejects `--config`, ignores cwd configuration and accepts no external fixture.

@@ -303,7 +303,21 @@ def _publish(result, inputs, out):
         with os.fdopen(fd, 'w', encoding='utf-8', newline='\n') as stream:
             stream.write('*\n')
     _protect(inputs, out)
-    result.write(out)
+    published = guarded._Captured.read(result.write(out))
+    own_bytes = json.dumps(result.to_dict(), ensure_ascii=False, indent=1).encode('utf-8')
+    if published.raw != own_bytes:
+        # A different writer's bytes are never ours to clean up.
+        raise guarded._Invalid()
+    try:
+        _protect(inputs, out)
+        published.unchanged()
+    except Exception:
+        try:
+            published.unchanged()
+            published.path.unlink()
+        except Exception:
+            pass
+        raise
 
 
 def cli(argv, _parser_factory, summary):

@@ -122,6 +122,34 @@ class SqlStructureCliTest(unittest.TestCase):
         self.assertFalse((self.out / 'sql_structure' / 'result.json').exists())
 
     @unittest.skipUnless(importlib.util.find_spec('pglast'), 'optional PostgreSQL AST parser not installed')
+    def test_input_change_during_result_write_removes_own_passing_receipt(self):
+        original_write = sql_structure.Result.write
+        for source in (self.sql, self.expect):
+            with self.subTest(input=source.name):
+                self.sql.write_text(SQL, encoding='utf-8')
+                self.expect.write_text(json.dumps(expectation()), encoding='utf-8')
+                def changed(result, out):
+                    target = original_write(result, out)
+                    source.write_text('private-canary changed', encoding='utf-8')
+                    return target
+                with patch.object(sql_structure.Result, 'write', changed):
+                    self.assertEqual(self.invoke()[0], 2)
+                self.assertFalse((self.out / 'sql_structure' / 'result.json').exists())
+
+    @unittest.skipUnless(importlib.util.find_spec('pglast'), 'optional PostgreSQL AST parser not installed')
+    def test_late_change_does_not_delete_a_replaced_receipt(self):
+        original_write = sql_structure.Result.write
+        replacement = b'private-canary another writer\n'
+        def changed(result, out):
+            target = original_write(result, out)
+            self.sql.write_text('SELECT qty FROM stock LIMIT 1', encoding='utf-8')
+            target.write_bytes(replacement)
+            return target
+        with patch.object(sql_structure.Result, 'write', changed):
+            self.assertEqual(self.invoke()[0], 2)
+        self.assertEqual((self.out / 'sql_structure' / 'result.json').read_bytes(), replacement)
+
+    @unittest.skipUnless(importlib.util.find_spec('pglast'), 'optional PostgreSQL AST parser not installed')
     def test_stale_pass_replaced_by_mismatch_and_unsupported_results(self):
         self.assertEqual(self.invoke()[0], 0)
         self.sql.write_text(SQL.replace('sum(qty)', 'count(qty)'), encoding='utf-8')

@@ -1,0 +1,91 @@
+{
+  "schema_version": 1,
+  "synthetic": true,
+  "expected_source": "Independently authored literal row multiplicities, not captured engine output",
+  "cases": [
+    {
+      "id": "duplicate_projection",
+      "operation": "bag",
+      "left": [["P-A"], ["P-A"], ["P-B"]],
+      "expected": [{"row": ["P-A"], "count": 2}, {"row": ["P-B"], "count": 1}],
+      "sql": "WITH stock(part_id) AS (VALUES ('P-A'::text), ('P-A'), ('P-B')) SELECT part_id FROM stock"
+    },
+    {
+      "id": "distinct_projection",
+      "operation": "distinct",
+      "left": [["P-A"], ["P-A"], ["P-B"]],
+      "expected": [{"row": ["P-A"], "count": 1}, {"row": ["P-B"], "count": 1}],
+      "sql": "WITH stock(part_id) AS (VALUES ('P-A'::text), ('P-A'), ('P-B')) SELECT DISTINCT part_id FROM stock"
+    },
+    {
+      "id": "except_presence",
+      "operation": "except",
+      "left": [["P-A"], ["P-A"], ["P-B"], ["P-B"], ["P-C"], ["P-C"]],
+      "right": [["P-A"], ["P-B"]],
+      "expected": [{"row": ["P-C"], "count": 1}],
+      "sql": "WITH r1(part_id) AS (VALUES ('P-A'::text), ('P-A'), ('P-B'), ('P-B'), ('P-C'), ('P-C')), r2(part_id) AS (VALUES ('P-A'::text), ('P-B')) SELECT part_id FROM r1 EXCEPT SELECT part_id FROM r2"
+    },
+    {
+      "id": "except_all_multiplicity",
+      "operation": "except_all",
+      "left": [["P-A"], ["P-A"], ["P-B"], ["P-B"], ["P-C"], ["P-C"]],
+      "right": [["P-A"], ["P-B"]],
+      "expected": [{"row": ["P-A"], "count": 1}, {"row": ["P-B"], "count": 1}, {"row": ["P-C"], "count": 2}],
+      "sql": "WITH r1(part_id) AS (VALUES ('P-A'::text), ('P-A'), ('P-B'), ('P-B'), ('P-C'), ('P-C')), r2(part_id) AS (VALUES ('P-A'::text), ('P-B')) SELECT part_id FROM r1 EXCEPT ALL SELECT part_id FROM r2"
+    },
+    {
+      "id": "except_all_saturates",
+      "operation": "except_all",
+      "left": [["P-A"], ["P-A"]],
+      "right": [["P-A"], ["P-A"], ["P-A"], ["P-B"]],
+      "expected": [],
+      "sql": "WITH r1(part_id) AS (VALUES ('P-A'::text), ('P-A')), r2(part_id) AS (VALUES ('P-A'::text), ('P-A'), ('P-A'), ('P-B')) SELECT part_id FROM r1 EXCEPT ALL SELECT part_id FROM r2"
+    },
+    {
+      "id": "null_distinct",
+      "operation": "distinct",
+      "left": [[null], [null], ["P-A"]],
+      "expected": [{"row": [null], "count": 1}, {"row": ["P-A"], "count": 1}],
+      "sql": "WITH stock(part_id) AS (VALUES (NULL::text), (NULL), ('P-A')) SELECT DISTINCT part_id FROM stock"
+    },
+    {
+      "id": "null_except_presence",
+      "operation": "except",
+      "left": [[null], [null], ["P-A"], ["P-A"], ["P-B"]],
+      "right": [[null], ["P-A"]],
+      "expected": [{"row": ["P-B"], "count": 1}],
+      "sql": "WITH r1(part_id) AS (VALUES (NULL::text), (NULL), ('P-A'), ('P-A'), ('P-B')), r2(part_id) AS (VALUES (NULL::text), ('P-A')) SELECT part_id FROM r1 EXCEPT SELECT part_id FROM r2"
+    },
+    {
+      "id": "null_except_all",
+      "operation": "except_all",
+      "left": [[null], [null], ["P-A"], ["P-A"], ["P-B"]],
+      "right": [[null], ["P-A"]],
+      "expected": [{"row": [null], "count": 1}, {"row": ["P-A"], "count": 1}, {"row": ["P-B"], "count": 1}],
+      "sql": "WITH r1(part_id) AS (VALUES (NULL::text), (NULL), ('P-A'), ('P-A'), ('P-B')), r2(part_id) AS (VALUES (NULL::text), ('P-A')) SELECT part_id FROM r1 EXCEPT ALL SELECT part_id FROM r2"
+    },
+    {
+      "id": "equality_null_is_unknown",
+      "operation": "equal",
+      "left": [[null], [null], ["P-A"]],
+      "literal": null,
+      "expected": [],
+      "sql": "WITH stock(part_id) AS (VALUES (NULL::text), (NULL), ('P-A')) SELECT part_id FROM stock WHERE part_id = NULL::text"
+    },
+    {
+      "id": "is_null_keeps_duplicates",
+      "operation": "is_null",
+      "left": [[null], [null], ["P-A"]],
+      "expected": [{"row": [null], "count": 2}],
+      "sql": "WITH stock(part_id) AS (VALUES (NULL::text), (NULL), ('P-A')) SELECT part_id FROM stock WHERE part_id IS NULL"
+    },
+    {
+      "id": "text_equality_keeps_duplicates",
+      "operation": "equal",
+      "left": [[null], ["P-A"], ["P-A"], ["P-B"]],
+      "literal": "P-A",
+      "expected": [{"row": ["P-A"], "count": 2}],
+      "sql": "WITH stock(part_id) AS (VALUES (NULL::text), ('P-A'), ('P-A'), ('P-B')) SELECT part_id FROM stock WHERE part_id = 'P-A'::text"
+    }
+  ]
+}

@@ -56,9 +56,29 @@ class ConfiguredPreflightConfig(unittest.TestCase):
             self.fail(f'configured preflight must be supported: {exc}')
         self.assertEqual(cfg.semantic_preflight.contract, 'contract.json')
         self.assertEqual(cfg.semantic_preflight.plan, 'plan.json')
+        canonical_root = self.root.resolve()
         self.assertEqual(cfg.semantic_preflight.paths(cfg),
-                         (self.root / 'contract.json', self.root / 'plan.json'))
+                         (canonical_root / 'contract.json', canonical_root / 'plan.json'))
         self.assertIsNone(getattr(self.parse(''), 'semantic_preflight', None))
+
+    def test_relative_sidecars_use_the_canonical_configuration_directory(self):
+        canonical_root = self.root.resolve() / 'canonical-base'
+        canonical_root.mkdir()
+        (canonical_root / 'stock.sql').write_text('select 1', encoding='utf-8')
+        declared = self.root / 'simulated-short-parent' / 'crosscheck.toml'
+        canonical_config = canonical_root / 'crosscheck.toml'
+        original_resolve = Path.resolve
+        def resolve(path, *args, **kwargs):
+            if path == declared:
+                return canonical_config
+            return original_resolve(path, *args, **kwargs)
+        # Simulate a temp-root spelling such as RUNNER~1 or /var without
+        # creating a symlink or changing the guarded filesystem reader.
+        with patch.object(Path, 'resolve', resolve):
+            cfg = config.loads((CONFIG + OPTION).encode(), declared)
+        self.assertEqual(cfg.path, canonical_config)
+        self.assertEqual(cfg.semantic_preflight.paths(cfg),
+                         (canonical_root / 'contract.json', canonical_root / 'plan.json'))
 
     def test_malformed_or_unpaired_options_are_configuration_errors(self):
         cases = [
@@ -323,15 +343,23 @@ class ConfiguredPreflightReport(unittest.TestCase):
         with patch.object(report, '_stage_summary', side_effect=changing):
             self.assertEqual(self.run_report().status, 'error')
 
-    def test_unreadable_or_linked_inputs_and_saved_receipts_fail_closed(self):
-        self.capture_pass()
+    def unreadable_report(self, selected):
+        unavailable = Path(selected).resolve()
+        denied = []
         old_open = os.open
         def blocked(path, *args, **kwargs):
-            if Path(path) == self.plan_path:
+            if Path(path).resolve() == unavailable:
+                denied.append(path)
                 raise PermissionError('private-canary')
             return old_open(path, *args, **kwargs)
         with patch('os.open', side_effect=blocked):
             result = self.run_report()
+        self.assertTrue(denied, 'the permission fault must reach the actual selected-file read')
+        return result
+
+    def test_unreadable_or_linked_inputs_and_saved_receipts_fail_closed(self):
+        self.capture_pass()
+        result = self.unreadable_report(self.plan_path)
         self.assertEqual(result.status, 'error')
         self.assertNotIn('private-canary', (self.out / 'report.json').read_text(encoding='utf-8'))
         self.capture_pass()
@@ -340,6 +368,19 @@ class ConfiguredPreflightReport(unittest.TestCase):
         self.receipt().unlink()
         os.link(original, self.receipt())
         self.assertEqual(self.run_report().status, 'error')
+
+    def test_unreadable_alias_spelling_blocks_the_canonical_selected_file(self):
+        self.capture_pass()
+        canonical_plan = self.plan_path.resolve()
+        declared = self.root / 'simulated-short-parent' / 'plan.json'
+        original_resolve = Path.resolve
+        def resolve(path, *args, **kwargs):
+            if path == declared:
+                return canonical_plan
+            return original_resolve(path, *args, **kwargs)
+        with patch.object(Path, 'resolve', resolve):
+            result = self.unreadable_report(declared)
+        self.assertEqual(result.status, 'error')
 
     def test_evidence_inspection_never_reads_sql_or_uses_database_or_network(self):
         self.capture_pass()

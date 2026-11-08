@@ -1,5 +1,13 @@
 # Optional business contract evidence in operational reports
 
+The explicit evidence boundary is informed by the previously observed
+[Data Contract CLI](https://github.com/datacontract/datacontract-cli/tree/09e779dfeaec63ee60edc102e7a3d6970e34e16b)
+and [Open Data Contract Standard](https://github.com/bitol-io/open-data-contract-standard/tree/448f7b93329ece7827897d7dd51e827a3e279460).
+The earlier revisit condition was actual authored contracts; v0.20.0 supplied
+those. This v0.21.0 application binds existing local declarations and statuses
+to report freshness. It is not a full ODCS adapter, external test runner or new
+data-contract runtime, and no source from those projects is copied.
+
 Add this table to `crosscheck.toml` to require current business-definition and
 structured-plan evidence in `report`:
 

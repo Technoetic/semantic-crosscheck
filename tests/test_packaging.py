@@ -40,7 +40,7 @@ MANIFESTS = (".claude-plugin/plugin.json", ".claude-plugin/marketplace.json", ".
              ".agents/plugins/marketplace.json")
 
 STAGE_MENTION = re.compile(r'sxc\.py"?\s+([a-z][a-z_-]*)')
-SLASH_COMMAND = re.compile(r"(?<![\w/.-])/(xc-[a-z]+)\b")
+SLASH_COMMAND = re.compile(r"(?<![\w/.-])/(xc-[a-z]+(?:-[a-z]+)*)\b")
 LINK = re.compile(r"\]\(([^)\s]+)\)")
 USES = re.compile(r"^\s*(?:-\s+)?uses:\s*(\S+)(.*)$")
 PINNED_ACTION = re.compile(r"[\w.-]+/[\w.-]+(?:/[\w./-]+)?@[0-9a-f]{40}")

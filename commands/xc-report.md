@@ -75,3 +75,11 @@ stages it depends on and passed.
   (`why=inputs_changed`): every result records a fingerprint of those files, taken before the stage ran.
 - Engine/probe changes also invalidate dependent evidence. Without a configured data-revision probe,
   source-data freshness remains explicitly unproven; file timestamps alone cannot establish it.
+
+## Explicit business-contract evidence (v0.21.0)
+
+A paired `[semantic_preflight]` contract/plan selection adds a required current
+`semantic_preflight` evidence check. Missing, changed, different-selection or
+non-passing evidence cannot satisfy the gate. Reports without that section ignore
+standalone diagnostics. See [configuration and rerun steps](../docs/contract-report.md).
+AST and synthetic fixture diagnostics never substitute for operational evidence.

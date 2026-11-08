@@ -4,8 +4,9 @@
 agrees with configured measure/Gold/Cube declarations and whether a host-authored
 structured plan agrees with that contract. It is an optional offline diagnostic.
 It generates or executes no SQL, makes no DB, network or model call, and adds no
-runtime dependency or required operational stage. Existing commands and defaults
-remain unchanged.
+runtime dependency or default required operational stage. Existing defaults
+remain unchanged. Since v0.21.0 explicitly configured paired sidecars can require
+current preflight evidence in [report](contract-report.md).
 
 **`review: reviewed` is an unauthenticated caller assertion, not reviewer approval.
 Unit, population, denominator, time basis and timezone are authored assertions;
@@ -166,9 +167,12 @@ prove units/populations/denominators, verify generated Cube behavior, demonstrat
 query correctness or establish freshness of real source data. It adds no LLM,
 GPU, external toolkit or service dependency.
 
-C3 operational report binding is deferred: this diagnostic is outside the
-required `build`/`reason`/`cube`/`verify` pipeline and cannot promote an operational
-`report` to success. Its explicit `not_proven` disclosures remain material.
+Without a paired `[semantic_preflight]` configuration this diagnostic remains
+outside operational report authority. With that explicit opt-in, report requires
+current matching successful evidence in addition to the ordinary required
+`build`/`reason`/`cube`/`verify` stages. It cannot replace them or override a
+non-pass. See [binding and freshness](contract-report.md). Its explicit
+`not_proven` disclosures remain material.
 Adding the new Python engine code changes the existing engine fingerprint, so
 rerun operational stages after upgrading; the unchanged default stage order
 does not preserve old execution evidence as current.

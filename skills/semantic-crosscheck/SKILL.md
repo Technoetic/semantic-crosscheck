@@ -5,6 +5,14 @@ description: "Use when verifying an ontology plus semantic layer built on Postgr
 
 # semantic-crosscheck
 
+Since v0.21.0: [xc-sql-structure](../../commands/xc-sql-structure.md) runs an
+explicit offline PostgreSQL17 AST diagnostic with separately installed pinned
+pglast. Use reviewed local SQL and independently authored structural expectations.
+Unsupported constructs or unavailable parser are non-passes; AST agreement is
+not SQL equivalence, data correctness or business meaning. It is not report
+evidence. [Independent bag fixtures](../../docs/provenance-fixtures.md) exercise
+only their declared synthetic scope, without Lean or a ProvSQL runtime.
+
 [xc-preflight](../../commands/xc-preflight.md) runs optional offline
 `semantic-preflight --config FILE --contract FILE --plan FILE`. It compares
 host-authored definitions and structured selections with configured
@@ -13,8 +21,10 @@ without reading Gold/revision SQL bodies. Use explicit input paths; pass each
 argument separately. A missing/ambiguous selection or selected candidate remains
 `not_run`; complete declaration conflicts fail. Never describe `reviewed` as
 authenticated approval, matching unit/population/denominator/time fields as SQL
-proof, or a period as SQL parameter/date-filter binding. C3 operational report
-binding is deferred and default stages remain unchanged. New Python engine files
+proof, or a period as SQL parameter/date-filter binding. Since v0.21.0 an
+explicit paired `[semantic_preflight]` configuration opts report into current
+contract/plan/preflight evidence; see [report binding](../../docs/contract-report.md).
+Without that section default report authority is unchanged. New Python engine files
 change the existing fingerprint: rerun operational stages after upgrading.
 See [schema, limits and synthetic examples](../../docs/semantic-preflight.md).
 

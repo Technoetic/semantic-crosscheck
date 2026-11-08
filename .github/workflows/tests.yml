@@ -28,7 +28,7 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
       - name: Install core requirements
-        run: python -m pip install --disable-pip-version-check -r requirements/core.txt -r requirements/witness.txt
+        run: python -m pip install --disable-pip-version-check -r requirements/core.txt -r requirements/witness.txt -r requirements/sql-structure.txt
       - name: Command line starts
         run: python skills/semantic-crosscheck/scripts/sxc.py --version
       # Core and optional witness requirements are installed here: database tests skip without SXC_TEST_ADMIN_DSN, and
@@ -85,7 +85,7 @@ jobs:
           echo "SXC_JAVA=$JAVA_HOME/bin/java" >> "$GITHUB_ENV"
           echo "SXC_CUBE_HOME=$RUNNER_TEMP/sxc-cube" >> "$GITHUB_ENV"
       - name: Install reason requirements
-        run: python -m pip install --disable-pip-version-check -r requirements/reason.txt -r requirements/witness.txt
+        run: python -m pip install --disable-pip-version-check -r requirements/reason.txt -r requirements/witness.txt -r requirements/sql-structure.txt
       - name: Install the verified Apache Jena distribution
         run: |
           python - <<'EOF'

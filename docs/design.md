@@ -1108,8 +1108,22 @@ No business truth, reviewer identity or generated Cube behavior is certified.
 The NVIDIA sources are existing conceptual references reused for this specific
 application; no upstream code/runtime or performance claim is incorporated.
 
-C3 operational report binding is deferred. The diagnostic is not in PIPELINE
-and cannot promote default report authority. Existing defaults and dependency
+The diagnostic is not in the default PIPELINE and cannot replace its operational
+checks. Since v0.21.0 paired explicit sidecars opt report into current preflight
+evidence; see the following section. Existing defaults and core dependency
 pins are unchanged. Adding Python engine files changes the current engine
 fingerprint, so operational stages must be rerun after upgrading even though the
 default stage order is preserved.
+
+## v0.21.0 explicit evidence and separate diagnostics
+
+[Contract report evidence](contract-report.md) extends authority only for paired
+`[semantic_preflight]` selections. Exact selected-input and evaluator fingerprints,
+recomputed checks and observed late-change validation prevent missing, stale or
+different-sidecar evidence from satisfying that gate. Legacy configurations keep
+their report behavior. [SQL structure](sql-structure.md) is a separate bounded
+PostgreSQL17 parser diagnostic with explicit authored expectations and optional
+pglast; it has no operational report authority. [Bag/provenance fixtures](provenance-fixtures.md)
+use original finite reference operations and literal expectations with separate
+PostgreSQL companion tests, not a production provenance engine or universal proof.
+No common cross-engine snapshot is introduced.

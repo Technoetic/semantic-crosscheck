@@ -51,6 +51,7 @@ default.
 | `grain` | [xc-grain.md](../../../commands/xc-grain.md) | `sxc.py grain --config crosscheck.toml --spec contract.json` |
 | `okf` (since v0.15.0) | [xc-okf.md](../../../commands/xc-okf.md) | `sxc.py okf --config crosscheck.toml --export contract-bundle --select q01_explosion` |
 | `semantic-preflight` | [xc-preflight.md](../../../commands/xc-preflight.md) | `sxc.py semantic-preflight --config crosscheck.toml --contract contract.json --plan plan.json` |
+| `sql-structure` | [xc-sql-structure.md](../../../commands/xc-sql-structure.md) | `sxc.py sql-structure --sql query.sql --expect expect.json` |
 | `knowledge-evolution` (since v0.15.0) | [xc-knowledge-evolution.md](../../../commands/xc-knowledge-evolution.md) | `sxc.py knowledge-evolution --out .sxc-evolution --quiet` |
 
 `cube-replay`, `tlp` and `shacl-corpus` are optional standalone synthetic checks. They reject `--config`, ignore any
@@ -73,7 +74,8 @@ configuration and JSON declarations without reading Gold/revision SQL bodies.
 Never promote caller-asserted `reviewed` status to authenticated approval, or
 matching unit/population/denominator/time declarations and a plan period to SQL
 proof. Unresolved selections remain `not_run`; complete conflicts fail. It adds
-no operational report authority; C3 binding is deferred. The new Python engine
+no operational report authority by default. Explicit paired `[semantic_preflight]`
+sidecars opt report into current preflight evidence; see [report binding](../../../docs/contract-report.md). The new Python engine
 fingerprint requires operational reruns after upgrade. See [schema and example](../../../docs/semantic-preflight.md).
 
 ## Arguments and execution

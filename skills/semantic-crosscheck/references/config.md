@@ -305,3 +305,15 @@ positions, never values.
 | `SXC_CUBE_DEBUG` | `cube`, `verify`, `expect` | `1` writes the full Cube error text to `server.log` for local debugging; the log can then hold row values. |
 | `SXC_DEBUG` | every stage | `1` prints the full traceback of an unexpected exception for local debugging. |
 | `SXC_EXPECT_DSN` | `expect` | DSN of the dedicated fixture database for `[[gold.expect]]` (name configurable with `--dsn-env`); refused when it equals, or names the same host, port and database as, an operational DSN variable (`source.dsn_env`, `source.owner_dsn_env` or `cube.dsn_env`) set in this environment; another name for the same server is not detected, so the fixture must be a dedicated database. |
+
+## `[semantic_preflight]`
+
+Optional since v0.21.0. Both paths are required together, resolved relative to
+the config directory; absolute paths, traversal, schemes and unknown options
+are rejected. Missing selected files cannot satisfy report. This opts report
+into current matching preflight evidence; see [contract report](../../../docs/contract-report.md).
+
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `contract` | string | required | Config-relative business contract JSON file |
+| `plan` | string | required | Config-relative structured plan JSON file |

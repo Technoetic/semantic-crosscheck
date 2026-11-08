@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.21.0] - 2026-11-08
+
+Release notes: [docs/releases/v0.21.0.md](docs/releases/v0.21.0.md).
+
+### Added
+
+- Explicit paired contract/plan selection for current preflight evidence in
+  operational report freshness. Non-opted-in reports retain their behavior;
+  changed, missing, mismatched or unsuccessful evidence cannot satisfy the gate.
+- Optional offline `sql-structure` and `/xc-sql-structure`, backed by pinned
+  PostgreSQL17 pglast rather than regex. Strict bounded structural expectations,
+  redacted results and an explicitly unsupported-query path; no DB execution.
+- Independently authored synthetic bag/DISTINCT/EXCEPT/EXCEPT ALL expected
+  fixtures, PostgreSQL companion tests and a pinned formal-provenance
+  counterexample illustrating the difference between annotations and returned rows.
+
+Data Contract CLI/ODCS inform the report evidence boundary, not a full-format
+adapter. pglast is optional and separately installed; no parser code is vendored.
+No Lean/ProvSQL runtime or company database change is included. Definition or
+structure agreement does not establish business truth, SQL equivalence,
+authenticated approval or a shared cross-engine MVCC snapshot.
+
+[0.21.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.21.0
+
 ## [0.20.0] - 2026-11-06
 
 Release notes: [docs/releases/v0.20.0.md](docs/releases/v0.20.0.md).

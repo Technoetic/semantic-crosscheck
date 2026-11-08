@@ -6,7 +6,7 @@ exports explicitly selected Gold contracts or previews a local bundle against
 current trusted inputs. It performs no execution or import application; PASS
 means scoped metadata completion, with authenticity and correctness unproven.
 
-[v0.20.0](docs/releases/v0.20.0.md) adds optional offline business-definition contracts and structured-plan preflight. Explicit missing/ambiguous/candidate selections require clarification; complete declaration conflicts fail. No SQL, DB, model or network is used by this diagnostic, and existing operational report authority is unchanged.
+[v0.21.0](docs/releases/v0.21.0.md) adds [opt-in contract/plan report evidence](docs/contract-report.md), an optional [PostgreSQL SQL structure diagnostic](docs/sql-structure.md), and independent [bag/provenance-scope fixtures](docs/provenance-fixtures.md). Configurations without the new paired preflight selection retain existing report authority. Missing, changed or non-passing evidence cannot satisfy the opted-in report gate. SQL parsing and synthetic fixtures are separate supported-subset checks, not business-truth or query-equivalence proofs.
 
 - [`boundary-schema`](docs/boundary-schema.md) derives a small exact scalar
   domain from a declared integer, numeric(p,s) or date comparison. It runs
@@ -16,8 +16,7 @@ means scoped metadata completion, with authenticity and correctness unproven.
   discrepancies. A source-bound v2 replay rechecks the original, accepted steps
   and final fixture; default runs and valid v1 replays keep their contracts.
 - Previous exact Cube JSON/Decimal, Gold SQL metadata and bounded HTTP response
-  contracts remain in force. No new runtime dependency, engine pin, default
-  pipeline stage or report authority is introduced.
+  contracts remain in force. Core runtime dependencies and engine pins remain unchanged; optional SQL structure checks require a separately installed parser. Default pipeline stages and non-opted-in report authority are retained.
 
 Actual final-source local and main/tag CI results are recorded in the published
 verification JSON after execution. No earlier release total is substituted.
@@ -31,7 +30,7 @@ verification JSON after execution. No earlier release total is substituted.
 **설정 하나에서 네 계층을 만들고, 서로의 결과를 교차 검증합니다.**<br/>
 계층마다 그럴듯한 설명을 넘어, **검사 ID · 건수 · 종료 코드로 일치 여부를 확인합니다.**
 
-[![Release](https://img.shields.io/badge/Release-v0.20.0-0D9488?style=for-the-badge)](docs/releases/v0.20.0.md)
+[![Release](https://img.shields.io/badge/Release-v0.21.0-0D9488?style=for-the-badge)](docs/releases/v0.21.0.md)
 [![CI](https://img.shields.io/github/actions/workflow/status/Technoetic/semantic-crosscheck/tests.yml?branch=main&style=for-the-badge&label=CI&logo=github)](https://github.com/Technoetic/semantic-crosscheck/actions/workflows/tests.yml)
 [![MIT](https://img.shields.io/badge/License-MIT-8B5CF6?style=for-the-badge)](LICENSE)
 [![Claude Code](https://img.shields.io/badge/Claude_Code-Plugin-191919?style=for-the-badge&logo=anthropic&logoColor=white)](#claude-code)
@@ -236,7 +235,7 @@ Cube는 항상 Tesseract SQL 플래너(`CUBEJS_TESSERACT_SQL_PLANNER=true`)로 �
 릴리스 태그를 고정해 등록합니다.
 
 ```text
-codex plugin marketplace add Technoetic/semantic-crosscheck --ref v0.20.0
+codex plugin marketplace add Technoetic/semantic-crosscheck --ref v0.21.0
 codex plugin add semantic-crosscheck@semantic-crosscheck-local
 ```
 
@@ -253,7 +252,7 @@ Windows PowerShell에서 실행 정책 때문에 `codex.ps1`이 거부되면 두
    python -m pip install -r "<plugin root>/requirements/reason.txt"
    ```
 
-   `<plugin root>` 예: `~/.claude/plugins/cache/semantic-crosscheck/semantic-crosscheck/0.20.0` 또는 `~/.codex/plugins/cache/semantic-crosscheck-local/semantic-crosscheck/0.20.0`. 패키지가 없으면 `/xc-doctor`가 실제 경로에 맞는 설치 명령을 안내합니다.
+   `<plugin root>` 예: `~/.claude/plugins/cache/semantic-crosscheck/semantic-crosscheck/0.21.0` 또는 `~/.codex/plugins/cache/semantic-crosscheck-local/semantic-crosscheck/0.21.0`. 패키지가 없으면 `/xc-doctor`가 실제 경로에 맞는 설치 명령을 안내합니다.
 2. psql을 사용하는 superuser가 `docs/setup-roles.sql`로 **loader·check 역할**을 만듭니다.
 3. Java를 `PATH`에 추가하거나 `SXC_JAVA`를 지정합니다.
 4. Node.js와 npm을 준비하고 `/xc-install` 또는 `sxc.py cube-install`로 **Cube 어댑터**를 한 번 설치합니다.
@@ -448,6 +447,7 @@ python skills/semantic-crosscheck/scripts/sxc.py <stage> [--config PATH] [--out 
 | `cube-replay` | 고정 합성 데이터를 실제 Cube 원형·변형 모델과 독립 gold SQL로 비교 | `--mutation-operator NAME`, `--allow-scratch-schema`, `--seed N`, `--dsn-env NAME`, `--statement-timeout-ms N`, `--replay FILE` | `cube_replay/result.json`, `cube_replay/fixture.json` |
 | `boundary-schema` | 선언한 단일 스칼라 SQL 비교의 정확한 경계값·NULL에서 기존 witness-v1 스키마를 생성하는 오프라인 실험 | `--spec FILE` | `boundary_schema/result.json`, `boundary_schema/witness-schema.json` |
 | `semantic-preflight` | Offline authored business-definition and structured-plan consistency | `--contract FILE`, `--plan FILE`; explicit `--config FILE` required | `semantic_preflight/result.json` |
+| `sql-structure` | Optional offline PostgreSQL17 AST comparison with authored structural expectations | `--sql FILE`, `--expect FILE`; optional `--out DIR`, `--quiet`; no `--config` | `sql_structure/result.json` |
 | `tlp` | 참·거짓·NULL 분할 검사. 0.10.0부터 선택형 NoREC 조건 건수 비교 | `--spec FILE`, `--oracle tlp\|norec`, `--dsn-env NAME`, `--seed N`, `--max-examples N`, `--statement-timeout-ms N`, `--replay FILE`, `--shrink`, `--max-shrink-steps N` | `tlp/result.json`, `tlp/fixture.json` |
 | `shacl-corpus` | 독립 기대 결과와 pySHACL·Apache Jena의 합성 보고서 비교. 0.9.0부터는 W3C SHACL 시험 모음 core의 프로필 안 사례도 W3C 기대 보고서와 비교 | `--jena-home DIR`, `--timeout-ms N`, `--w3c-suite [DIR]`, `--allow-unpinned-suite` | `shacl_corpus/result.json` |
 | `expect` | 전용 fixture DB에서 gold SQL·Cube를 실행해 `[[gold.expect]]`의 문자 그대로 기대 행과 비교 | `--allow-fixture-database`, `--dsn-env NAME` | `expect/result.json`, `expect/build/`, `expect/cube/`, `expect/server.log` |
@@ -728,17 +728,17 @@ Cube의 기본 오류 로그에는 오류 클래스·코드·대략적인 범주
 <a id="development"></a>
 ## 🧪 검증 근거와 개발
 
-| v0.20.0의 확인 근거 | 범위 |
+| v0.21.0의 확인 근거 | 범위 |
 |---|---|
-| [릴리스 검증 JSON](https://github.com/Technoetic/semantic-crosscheck/releases/download/v0.20.0/verification.json) | 실행 후 실제 공개 소스 커밋, 원시 CI 로그의 테스트·제외·실패·오류, 독립 검증, archive SHA-256 기록 |
+| [릴리스 검증 JSON](https://github.com/Technoetic/semantic-crosscheck/releases/download/v0.21.0/verification.json) | 실행 후 실제 공개 소스 커밋, 원시 CI 로그의 테스트·제외·실패·오류, 독립 검증, archive SHA-256 기록 |
 | [GitHub Actions](https://github.com/Technoetic/semantic-crosscheck/actions/workflows/tests.yml) | 6개 OS/Python 단위 작업 + PostgreSQL·HermiT·Cube 통합 + 보안 검사 = 8개 작업 |
 | 엄격한 통합 runner | 미실행 검사·빈 suite·실패·오류가 있으면 CI 실패 |
 | 실제 runtime 선택 모드 | 완전 실행 환경의 성공·설정 변경·근거 누락 시 PASS 차단을 실행하는 통합 CI |
 | 새 릴리스 브랜치 전체 검증 | 릴리스 메타데이터를 포함한 새 전체 로컬 실행과 공개 CI의 실제 결과를 검증 JSON에 각각 기록하며, 실행 전 성공 집계를 선언하지 않음 |
 | 이번 경계 보강 검증 | 최종 고정 소스의 전체 로컬 실행·독립 검토·공개 CI를 각각 실행한 뒤 실제 결과를 기록한다. 이전 릴리스의 테스트 집계를 이번 버전의 근거로 사용하지 않는다. |
-| 릴리스 배포 파일 | [소스 ZIP](https://github.com/Technoetic/semantic-crosscheck/releases/download/v0.20.0/semantic-crosscheck-0.20.0.zip) · [SHA256SUMS](https://github.com/Technoetic/semantic-crosscheck/releases/download/v0.20.0/SHA256SUMS) |
+| 릴리스 배포 파일 | [소스 ZIP](https://github.com/Technoetic/semantic-crosscheck/releases/download/v0.21.0/semantic-crosscheck-0.21.0.zip) · [SHA256SUMS](https://github.com/Technoetic/semantic-crosscheck/releases/download/v0.21.0/SHA256SUMS) |
 
-최종 공개 커밋·CI 작업 URL·실제 집계는 실행 후 릴리스와 함께 제공하는 **v0.20.0 검증 JSON**에서 확인합니다. 원시 CI 로그에서 읽은 집계만 공개 커밋의 근거로 사용하며, 이전 구현 단계 검증·새 전체 로컬 검증·전체 엔진 통합 CI를 구분합니다.
+최종 공개 커밋·CI 작업 URL·실제 집계는 실행 후 릴리스와 함께 제공하는 **v0.21.0 검증 JSON**에서 확인합니다. 원시 CI 로그에서 읽은 집계만 공개 커밋의 근거로 사용하며, 이전 구현 단계 검증·새 전체 로컬 검증·전체 엔진 통합 CI를 구분합니다.
 
 ```bash
 python -m unittest discover -s tests -v
@@ -793,13 +793,13 @@ CI는 전체 이력을 가진 clone의 작업 트리·이력을 일반 패턴과
 
 **MIT** · [LICENSE](LICENSE). 런타임 의존성을 저장소에 포함하지 않으며 의존성 라이선스는 [THIRD_PARTY.md](THIRD_PARTY.md)에 정리했습니다.
 
-[설계 문서](docs/design.md) · [설정 레퍼런스](skills/semantic-crosscheck/references/config.md) · [문제와 함정](skills/semantic-crosscheck/references/pitfalls.md) · [변경 이력](CHANGELOG.md) · [v0.20.0 릴리스 노트](docs/releases/v0.20.0.md)
+[설계 문서](docs/design.md) · [설정 레퍼런스](skills/semantic-crosscheck/references/config.md) · [문제와 함정](skills/semantic-crosscheck/references/pitfalls.md) · [변경 이력](CHANGELOG.md) · [v0.21.0 릴리스 노트](docs/releases/v0.21.0.md)
 
 <div align="center">
 
 **한 계층의 설명을 믿기 전에, 다른 계층의 답과 대조합니다.**
 
-[빠른 시작으로 이동 ↑](#quick-start-with-the-demo) · [GitHub 릴리스](https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.20.0)
+[빠른 시작으로 이동 ↑](#quick-start-with-the-demo) · [GitHub 릴리스](https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.21.0)
 
 </div>
 
@@ -818,7 +818,7 @@ python skills/semantic-crosscheck/scripts/sxc.py semantic-preflight --config exa
 denominator and time fields do not prove SQL meaning; a plan period does not
 bind SQL parameters or prove date filtering.** Missing or ambiguous selections
 remain `not_run`; complete conflicts fail. This adds no default stage or report
-authority; C3 operational report binding is deferred. The new Python engine code
+authority unless paired `[semantic_preflight]` sidecars are explicitly configured; see [report evidence](docs/contract-report.md). The new Python engine code
 changes the existing fingerprint, so rerun operational stages after upgrading.
 See the [schema, synthetic example and reused NVIDIA references](docs/semantic-preflight.md).
 
@@ -871,4 +871,4 @@ Cube queries and SQL still do not share an MVCC snapshot. See [replay coverage](
 
 설정 하나로 PostgreSQL의 계층·규칙, SHACL, OWL·HermiT, Cube 모델을 만들고 서로와 gold SQL을 비교합니다. `not_run`은 통과가 아니며, 전체 판정은 `report`와 `not_proven`을 함께 읽습니다. 원본 조회와 생성 스키마 기록을 분리하고, 데모 적재는 별도의 loader 역할을 사용합니다.
 
-요구 환경은 **Python 3.11 이상 · PostgreSQL 17 이상 · Java 11 이상 · Node.js 22 이상**입니다. Linux Cube에는 **glibc 2.34** 이상(x64), 2.30 이상(arm64)이 필요합니다. Codex 설치 태그는 **v0.20.0**, 라이선스는 MIT입니다.
+요구 환경은 **Python 3.11 이상 · PostgreSQL 17 이상 · Java 11 이상 · Node.js 22 이상**입니다. Linux Cube에는 **glibc 2.34** 이상(x64), 2.30 이상(arm64)이 필요합니다. Codex 설치 태그는 **v0.21.0**, 라이선스는 MIT입니다.

@@ -35,6 +35,7 @@ inputs suppress publication; inspect the exit code before trusting an older file
 
 Exit 0 requires all obligations to pass; exit 1 includes failed or incomplete
 checks; exit 2 is malformed input or arguments. The default pipeline and report
-gates stay unchanged; C3 operational report binding is deferred. New Python
+gates stay unchanged by default; explicit paired `[semantic_preflight]` sidecars
+opt report into current matching preflight evidence (see [report binding](../docs/contract-report.md)). New Python
 engine code changes the existing fingerprint, so rerun operational stages after
 upgrading. See [schema, limits and examples](../docs/semantic-preflight.md).

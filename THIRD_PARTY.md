@@ -57,6 +57,37 @@ no NVIDIA runtime, GPU or model dependency is added, and no upstream performance
 result is reproduced. Authored review and context declarations are not
 certification or SQL correctness proofs. See [scope](docs/semantic-preflight.md).
 
+## v0.21.0 references and optional parser
+
+The opt-in contract-to-report evidence boundary is an original implementation
+informed by [Data Contract CLI](https://github.com/datacontract/datacontract-cli)
+at `09e779dfeaec63ee60edc102e7a3d6970e34e16b` (MIT) and
+[Open Data Contract Standard](https://github.com/bitol-io/open-data-contract-standard)
+at `448f7b93329ece7827897d7dd51e827a3e279460` (Apache-2.0).
+These previously observed sources are reused now that authored contracts exist;
+no external contract engine/code is installed or bundled and no full ODCS
+import/export compatibility is claimed.
+
+The separately selected SQL structure diagnostic uses
+[libpg_query](https://github.com/pganalyze/libpg_query) through the optional
+[pglast](https://github.com/lelit/pglast) Python binding, pinned to 7.22
+(PostgreSQL17 parser) in `requirements/sql-structure.txt`. pglast is
+GPL-3.0-or-later; libpg_query's own code is BSD-3-Clause with PostgreSQL-licensed
+server sources and separately licensed bundled components. These are not all
+MIT/BSD code. No parser source is vendored; the user separately installs the
+optional package. The core/reason requirements and operational stages do not
+acquire this dependency. See [parser scope](docs/sql-structure.md).
+
+Original independent synthetic bag/provenance fixtures are informed by
+[ProvSQL: A General System for Keeping Track of the Provenance and Probability of Data](https://arxiv.org/abs/2504.12058v3)
+and [provenance-lean](https://github.com/PierreSenellart/provenance-lean)
+at `92af5cf2a057dfb46aab0a364d4ade5fde9c5699` (MIT).
+They exercise literal small expectations and the documented Dedup/Diff
+counterexample's assumptions; no upstream proof, benchmark or universal SQL
+correctness result is claimed as reproduced. No Lean/Mathlib or ProvSQL extension
+is copied, installed or bundled. Existing ProvSQL background references remain
+background. See [fixture scope](docs/provenance-fixtures.md).
+
 ## Python packages
 
 | Package | Version | Licence | Used for |

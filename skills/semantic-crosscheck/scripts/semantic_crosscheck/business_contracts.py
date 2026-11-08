@@ -183,7 +183,7 @@ def evaluate(cfg, contract_document, plan_document) -> Result:
         'Business definitions, population, unit, denominator and time assertions are not independently verified.',
         'Reviewed is an unauthenticated caller assertion.',
         'SQL content, filtering, parameter binding and database results are not verified.',
-        'This optional diagnostic is not operational report evidence.',
+        'Without configured opt-in, this diagnostic is not operational report evidence.',
     ]
     result.next_safe_action = 'Clarify incomplete plans and review conflicting declarations before execution.'
     by_id, by_term = {}, {}

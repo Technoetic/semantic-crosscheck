@@ -1,0 +1,1 @@
+`sql_violation` predicates and gold SQL files are trusted code from the configuration: the harness runs them as written (values only as bound parameters) and does not generate or validate them, so review them like code.

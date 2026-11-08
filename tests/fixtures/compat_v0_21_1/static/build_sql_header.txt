@@ -1,0 +1,4 @@
+-- semantic-crosscheck build: every statement this run executed, in order (generated from crosscheck.toml).
+-- For review only: change crosscheck.toml and rerun `sxc.py build` instead of editing generated objects.
+-- Statements with :name placeholders ran with bound parameters. A shape's sql_violation predicate is trusted
+-- SQL copied from the configuration.

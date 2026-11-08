@@ -1,0 +1,43 @@
+# semantic-crosscheck: SHACL shapes generated from crosscheck.toml (edit the configuration, not this file).
+# Same semantics as the views v_shape_<id>: NULL is no triple (no violation); a referenced key that is not a
+# row of the class entity is a value node without rdf:type (sh:class violation).
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+<https://example.org/sxc-demo#shape/child_exists>
+    a sh:NodeShape ;
+    sh:targetClass <https://example.org/sxc-demo#bom_line> ;
+    sh:property <https://example.org/sxc-demo#shape/child_exists/p> ;
+    sh:severity sh:Violation .
+
+<https://example.org/sxc-demo#shape/child_exists/p>
+    a sh:PropertyShape ;
+    sh:path <https://example.org/sxc-demo#bom_line.child_id> ;
+    sh:class <https://example.org/sxc-demo#part> ;
+    sh:severity sh:Violation .
+
+<https://example.org/sxc-demo#shape/qty_positive>
+    a sh:NodeShape ;
+    sh:targetClass <https://example.org/sxc-demo#bom_line> ;
+    sh:property <https://example.org/sxc-demo#shape/qty_positive/p> ;
+    sh:severity sh:Violation .
+
+<https://example.org/sxc-demo#shape/qty_positive/p>
+    a sh:PropertyShape ;
+    sh:path <https://example.org/sxc-demo#bom_line.qty_per> ;
+    sh:minExclusive "0"^^xsd:decimal ;
+    sh:severity sh:Violation .
+
+<https://example.org/sxc-demo#shape/stock_nonnegative>
+    a sh:NodeShape ;
+    sh:targetClass <https://example.org/sxc-demo#stock> ;
+    sh:property <https://example.org/sxc-demo#shape/stock_nonnegative/p> ;
+    sh:severity sh:Warning .
+
+<https://example.org/sxc-demo#shape/stock_nonnegative/p>
+    a sh:PropertyShape ;
+    sh:path <https://example.org/sxc-demo#stock.qty> ;
+    sh:minInclusive "0"^^xsd:decimal ;
+    sh:severity sh:Warning .
+
+# open_le_total: no SHACL form (sql_violation); checked by its SQL view only

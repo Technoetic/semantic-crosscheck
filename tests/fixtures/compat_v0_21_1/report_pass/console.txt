@@ -1,0 +1,8 @@
+exit 1
+[sxc report] NOT_RUN  checks: 1 pass, 0 fail, 0 error, 3 not_run  -> <out>/report/result.json
+  NOT_RUN stage:reason  reason=missing required=True
+  NOT_RUN stage:cube  reason=missing required=True
+  NOT_RUN stage:verify  reason=missing required=True
+  NOT PROVEN  data revision is unbound: no owner-maintained revision was checked; separate database sessions and cached gold answers are not proven to observe one data version
+  NOT PROVEN  stage doctor was not run, so the check role's privileges (read-only on the source tables) and the optional components were not verified
+  next: run the stages that have not run yet (reason, cube, verify), in this order, then rerun report

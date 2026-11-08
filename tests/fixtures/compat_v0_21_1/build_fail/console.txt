@@ -1,0 +1,7 @@
+exit 1
+[sxc build] FAIL  checks: 4 pass, 2 fail, 0 error, 0 not_run  -> <out>/build/result.json
+  FAIL    shape:child_exists  [shapes[0] child_exists]  violations=2 severity=violation kind=class view=sxc_out.v_shape_child_exists
+  FAIL    shape:open_le_total  [shapes[3] open_le_total]  violations=3 severity=violation kind=sql view=sxc_out.v_shape_open_le_total trusted_sql=True
+  NOT PROVEN  runtime evidence is unbound: actual PostgreSQL, Node, Java, HermiT and selected Cube installation were not bound; local engine/package metadata alone does not establish the executing runtime
+  NOT PROVEN  data revision is unbound: no owner-maintained revision was checked; separate database sessions and cached gold answers are not proven to observe one data version
+  next: shapes failed: inspect the violating keys in sxc_out.v_shape_child_exists, sxc_out.v_shape_open_le_total, then fix the data or the [[shapes]] entries; then rerun build

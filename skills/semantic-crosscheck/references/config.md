@@ -14,7 +14,7 @@ Validation runs before any stage does work. An invalid entry stops the run with 
 message that names the entry where it can, for example `crosscheck.toml [measures.on_hand]: ...`.
 Unknown option keys are rejected at the top level (only the tables below exist) and in `[source]`,
 `[entities.*]`, `[hierarchies.*]`, `[[shapes]]`, `[measures.*]`, `[ontology]`, `[[ontology.defined]]`,
-`[cube]`, `[verify]`, `[[gold]]`, `[gold.params.*]` and `[[gold.expect]]`. User-defined keys in mappings such as
+`[cube]`, `[verify]`, `[[gold]]`, `[gold.params.*]`, `[[gold.expect]]` and `[data_rules]`. User-defined keys in mappings such as
 `ontology.classes`, measure filters, `gold.map` and parameter bindings remain supported; they are not option
 names. The file is read as UTF-8, with or without a byte order mark.
 
@@ -42,7 +42,8 @@ names. The file is read as UTF-8, with or without a byte order mark.
 | `version` | integer | required | Format version. Only `1` is supported. |
 
 The other top-level keys are the tables `source`, `entities`, `hierarchies`, `shapes`, `measures`,
-`ontology`, `cube`, `verify` and `gold`; any other key is exit 2.
+`ontology`, `cube`, `verify` and `gold`, and the optional `semantic_preflight` and `data_rules`; any other key
+is exit 2.
 
 ## `[source]`
 
@@ -317,3 +318,20 @@ into current matching preflight evidence; see [contract report](../../../docs/co
 |---|---|---|---|
 | `contract` | string | required | Config-relative business contract JSON file |
 | `plan` | string | required | Config-relative structured plan JSON file |
+
+## `[data_rules]`
+
+Optional. Names the typed rule file of the `data-rules` stage. The path follows the `[semantic_preflight]` rules:
+relative to the config directory, without absolute paths, traversal, empty segments, `:` or control characters, and
+the rule file must not lie inside the output directory. Without this table nothing changes: no other stage reads a
+rule file. The rule file itself (TOML, `version = 1`, at most 256 KiB) holds named `[sets]`, `[refs.<name>]` and
+1..128 `[[rule]]` tables with optional `[[rule.example]]` rows; it is validated as strictly as this file, and its
+messages name positions (`data-rules.toml rule[2] <id> where[1]`, counted from 0) and never constants.
+
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `file` | string | required | Config-relative rule file |
+| `views` | boolean | `True` | build creates the lookup views `v_rule_<id>` and `v_rules_subjects` in the output schema, and data-rules checks that they return the agreed rows |
+| `require_examples` | boolean | `True` | A rule without `[[rule.example]]` cannot have its authored examples checked, which is reported as not run |
+| `max_export_rows` | integer | `200000` | 1..2000000: rows the Python evaluation may export, all entities together |
+| `max_rule_rows` | integer | `200000` | 1..2000000: output rows one compiled rule may return |

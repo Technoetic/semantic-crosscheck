@@ -1,0 +1,4 @@
+config_sha256
+gold_sha256
+engine_sha256
+revision_query_sha256

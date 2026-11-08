@@ -1,0 +1,36 @@
+# Synthetic example for the data-rules stage (demo vocabulary only; invented values).
+version = 1
+
+[source]
+dsn_env = "SXC_PG_DSN"
+owner_dsn_env = "SXC_PG_OWNER_DSN"
+schemas = ["sxc_rules"]
+output_schema = "sxc_out"
+statement_timeout_ms = 120000
+
+[entities.part]
+table = "sxc_rules.part"            # part_id text PK, name text, unit text, part_class text, procure text,
+key = ["part_id"]                   # issue text, retired boolean, stored_level integer
+
+[entities.bom_line]
+table = "sxc_rules.bom_line"        # line_id integer PK, parent_id text, child_id text, qty_per numeric(18,6)
+key = ["line_id"]
+
+[entities.code_value]
+table = "sxc_rules.code_value"      # code_group text, code text, PRIMARY KEY (code_group, code)
+key = ["code_group", "code"]
+
+[hierarchies.has_component]
+edge = "bom_line"
+node = "part"
+parent = "parent_id"
+child = "child_id"
+quantity = "qty_per"
+max_depth = 16
+
+[data_rules]
+file = "data-rules.toml"     # required: relative to this file, no traversal
+views = true                 # default true: build creates v_rule_<id> and v_rules_subjects; data-rules checks them
+require_examples = true      # default true: a rule without an authored example leaves rule_example:<id> not_run
+max_export_rows = 200000     # default 200000 (1..2000000): rows the Python evaluation may export, all entities together
+max_rule_rows = 200000       # default 200000 (1..2000000): output rows one compiled rule may return

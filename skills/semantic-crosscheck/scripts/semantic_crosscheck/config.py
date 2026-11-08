@@ -24,7 +24,9 @@ STRATA = ("top", "mid", "leaf", "leaf_parent", "deep", "shared", "empty")
 CUBE_VERSION = "1.8.3"           # the adapter's package-lock and native hashes are pinned to this release
 PAIR_KEY_CAP = 2000              # keys per V3 pair query (shape_q: the sample and chunk size); the least budget
 TABLES = ("version", "source", "entities", "hierarchies", "shapes", "measures", "ontology", "cube", "verify", "gold",
-          "semantic_preflight")
+          "semantic_preflight", "data_rules")
+DATA_RULES_KEYS = ("file", "views", "require_examples", "max_export_rows", "max_rule_rows")
+DATA_RULES_MAX_ROWS = 2000000    # upper bound of max_export_rows and max_rule_rows
 EXPECT_SOURCES = ("authored", "captured")
 EXPECT_KEYS = ("source", "spec", "params", "rows", "partial", "fixture_sha256", "spec_source")
 NULL_CELL = {"null": True}       # TOML has no NULL: an expected cell written { null = true } is SQL NULL
@@ -238,18 +240,48 @@ class SemanticPreflight:
         return tuple(cfg.base_dir() / value for value in (self.contract, self.plan))
 
 
+def _relative_file(ref: str, value) -> None:
+    """A sidecar file named relative to the config: refuse platform-specific absolute paths on every host, URI
+    schemes, traversal, empty segments and control characters."""
+    parts = value.replace("\\", "/").split("/") if isinstance(value, str) else []
+    if (not parts or not value.strip() or any(part in ("", ".", "..") for part in parts)
+            or any(ord(char) < 32 for char in value) or ":" in value
+            or PureWindowsPath(value).anchor or Path(value).is_absolute()):
+        _err(ref, "must be a nonempty relative file path without traversal")
+
+
 def _semantic_preflight(raw) -> SemanticPreflight:
     _known_keys(raw, ("contract", "plan"), "semantic_preflight")
     for key in ("contract", "plan"):
-        value = raw.get(key)
-        # Refuse platform-specific absolute paths on every host, URI schemes,
-        # traversal and empty segments. Sidecars stay relative to the config.
-        parts = value.replace("\\", "/").split("/") if isinstance(value, str) else []
-        if (not parts or not value.strip() or any(part in ("", ".", "..") for part in parts)
-                or any(ord(char) < 32 for char in value) or ":" in value
-                or PureWindowsPath(value).anchor or Path(value).is_absolute()):
-            _err(f"semantic_preflight.{key}", "must be a nonempty relative file path without traversal")
+        _relative_file(f"semantic_preflight.{key}", raw.get(key))
     return SemanticPreflight(raw["contract"], raw["plan"])
+
+
+@dataclass
+class DataRules:
+    """[data_rules]: the typed rule file of the data-rules stage (data_rules.py) and its budgets."""
+    file: str                      # relative to the config, like the [semantic_preflight] sidecars
+    views: bool = True             # build creates v_rule_<id> and v_rules_subjects; data-rules certifies them
+    require_examples: bool = True  # a rule without [[rule.example]] leaves its example check not_run
+    max_export_rows: int = 200000  # rows the Python evaluation may export, all entities together
+    max_rule_rows: int = 200000    # output rows one compiled rule may return
+
+    def path(self, cfg: "Config") -> Path:
+        return cfg.base_dir() / self.file
+
+
+def _data_rules(raw) -> DataRules:
+    _known_keys(raw, DATA_RULES_KEYS, "data_rules")
+    if "file" not in raw:
+        _err("data_rules.file", "is required: the rule file, relative to this configuration")
+    _relative_file("data_rules.file", raw["file"])
+    rules = DataRules(**raw)
+    for key in ("views", "require_examples"):
+        if type(getattr(rules, key)) is not bool:
+            _err(f"data_rules.{key}", "must be a boolean (true or false)")
+    for key in ("max_export_rows", "max_rule_rows"):
+        _int(f"data_rules.{key}", getattr(rules, key), 1, DATA_RULES_MAX_ROWS)
+    return rules
 
 
 @dataclass
@@ -266,6 +298,7 @@ class Config:
     gold: list
     verify: Verify
     semantic_preflight: SemanticPreflight | None = None
+    data_rules: DataRules | None = None
 
     def entity(self, name: str, ref: str) -> Entity:
         if name not in self.entities:
@@ -399,6 +432,19 @@ def _expect_rows(cref: str, gg: Gold, rows, partial: bool) -> list:
     return out
 
 
+def load_data_rules(cfg: Config, out: str | Path | None = None):
+    """The validated rule file of [data_rules] (a data_rules.RuleFile). A missing [data_rules] table or an invalid
+    rule file is a configuration error (exit 2) whose message names positions, never constants. With out (the
+    stage's output directory), a rule file inside it is refused."""
+    from . import data_rules
+    if cfg.data_rules is None:
+        _err("data_rules", "is not configured: add [data_rules] with file = \"data-rules.toml\"")
+    try:
+        return data_rules.load(cfg, out)
+    except data_rules.RuleSpecError as e:
+        raise StageError(str(e), EXIT_CONFIG) from None
+
+
 def load(path: str | Path) -> Config:
     """Parse and validate crosscheck.toml. Every malformed entry is a configuration error (exit 2), including
     those found by ident.check, a missing required key or a value of the wrong shape."""
@@ -505,6 +551,8 @@ def _parse(text: str, p: Path) -> Config:
     cfg = Config(p.resolve(), 1, src, entities, {}, [], {}, Ontology(), cube, [], verify)
     if "semantic_preflight" in raw:
         cfg.semantic_preflight = _semantic_preflight(raw["semantic_preflight"])
+    if "data_rules" in raw:
+        cfg.data_rules = _data_rules(raw["data_rules"])
 
     for name, h in raw.get("hierarchies", {}).items():
         ref = f"hierarchies.{name}"

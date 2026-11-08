@@ -1,0 +1,5 @@
+exit 0
+[sxc build] PASS  checks: 6 pass, 0 fail, 0 error, 0 not_run  -> <out>/build/result.json
+  NOT PROVEN  runtime evidence is unbound: actual PostgreSQL, Node, Java, HermiT and selected Cube installation were not bound; local engine/package metadata alone does not establish the executing runtime
+  NOT PROVEN  data revision is unbound: no owner-maintained revision was checked; separate database sessions and cached gold answers are not proven to observe one data version
+  next: run `sxc.py reason` to cross-check the shapes and the hierarchy with SHACL and OWL, then `sxc.py cube`

@@ -1,0 +1,392 @@
+# data-rules.toml - clean-room synthetic example: one rule per kind and atom family, invented values and thresholds.
+# Entities and the hierarchy come from crosscheck.toml ([data_rules] file = "data-rules.toml").
+version = 1
+hierarchy = "has_component"          # optional when crosscheck.toml has exactly one hierarchy
+
+[sets]                               # named constants; every list is non-empty, of one TOML type, and used by a rule
+kit = ["KIT"]
+count_units = ["pc", "box"]
+temporary_prefix = ["TMP-"]
+truncated_thirds = ["0.3333", "0.6666"]   # numeric meaning on a numeric column: plain decimal numerals as strings
+
+[refs.procure_codes]                 # composite-key reference: code_value rows with code_group fixed
+entity = "code_value"
+column = "code"
+where = { code_group = "PROCURE" }
+
+# ---------------------------------------------------------------- row kind, edge entity, own numeric column
+[[rule]]
+id = "qty_over_limit"
+kind = "row"
+entity = "bom_line"
+severity = "violation"
+where = [{ column = "qty_per", op = "gt", value = "500" }]
+report = { columns = ["parent_id", "child_id", "qty_per"] }
+subject = "parent_id"
+
+  [[rule.example]]
+  spec = "example rules 1: a quantity above 500 is a typing error"
+  rows.bom_line = [
+    { line_id = 1, parent_id = "A", child_id = "B", qty_per = "500" },
+    { line_id = 2, parent_id = "A", child_id = "C", qty_per = "500.000001" },
+    { line_id = 3, parent_id = "A", child_id = "C", qty_per = "500.000001" },
+    { line_id = 4, parent_id = "D", child_id = "B", qty_per = { null = true } },
+  ]
+  expect = [{ parent_id = "A", child_id = "C", qty_per = "500.000001", n = 2 }]
+
+# ---------------------------------------------------------------- endpoint existence, distinct report
+[[rule]]
+id = "parent_unknown"
+kind = "row"
+entity = "bom_line"
+severity = "violation"
+where = [{ end = "parent", exists = false }]
+report = { distinct = "parent_id" }
+subject = "parent_id"
+
+  [[rule.example]]
+  spec = "example rules 2: every BOM parent is a part"
+  rows.part = [{ part_id = "A" }]
+  rows.bom_line = [
+    { line_id = 1, parent_id = "A", child_id = "B" },
+    { line_id = 2, parent_id = "X", child_id = "B" },
+    { line_id = 3, parent_id = "X", child_id = "C" },
+    { line_id = 4, parent_id = { null = true }, child_id = "B" },
+  ]
+  expect = [{ parent_id = "X" }]
+
+# ---------------------------------------------------------------- node entity: set atom plus structure atoms
+[[rule]]
+id = "kit_without_bom"
+kind = "row"
+entity = "part"
+severity = "violation"
+where = [{ column = "issue", op = "in", set = "kit" }, { has_children = false }, { has_parents = true }]
+subject = "part_id"
+
+  [[rule.example]]
+  spec = "example rules 3: a kit is expanded at issue, so a kit used by another BOM needs its own BOM"
+  rows.part = [
+    { part_id = "K1", issue = "KIT" }, { part_id = "K2", issue = "KIT" },
+    { part_id = "K3", issue = "KIT" }, { part_id = "P", issue = "STD" },
+  ]
+  rows.bom_line = [
+    { line_id = 1, parent_id = "P", child_id = "K1" },
+    { line_id = 2, parent_id = "P", child_id = "K2" },
+    { line_id = 3, parent_id = "K2", child_id = "Q" },
+    { line_id = 4, parent_id = { null = true }, child_id = "K3" },
+  ]
+  expect = [{ part_id = "K1" }]
+
+# ---------------------------------------------------------------- attribute atoms on both endpoints
+[[rule]]
+id = "retired_child_in_active_parent"
+kind = "row"
+entity = "bom_line"
+severity = "violation"
+where = [
+  { end = "parent", column = "retired", op = "eq", value = false },
+  { end = "child", column = "retired", op = "eq", value = true },
+]
+report = { columns = ["parent_id", "child_id"] }
+subject = "parent_id"
+
+  [[rule.example]]
+  spec = "example rules 4: an active assembly does not use a retired part"
+  rows.part = [
+    { part_id = "A", retired = false }, { part_id = "R", retired = true },
+    { part_id = "N", retired = { null = true } },
+  ]
+  rows.bom_line = [
+    { line_id = 1, parent_id = "A", child_id = "R" },
+    { line_id = 2, parent_id = "A", child_id = "N" },
+    { line_id = 3, parent_id = "A", child_id = "MISSING" },
+    { line_id = 4, parent_id = "N", child_id = "R" },
+  ]
+  expect = [{ parent_id = "A", child_id = "R", n = 1 }]
+
+# ---------------------------------------------------------------- universally quantified children
+[[rule]]
+id = "all_children_retired"
+kind = "row"
+entity = "part"
+severity = "violation"
+where = [
+  { column = "retired", op = "eq", value = false },
+  { children = "all", where = [{ column = "retired", op = "eq", value = true }] },
+]
+subject = "part_id"
+
+  [[rule.example]]
+  spec = "example rules 5: an active assembly whose every component is retired cannot be built"
+  rows.part = [
+    { part_id = "A", retired = false }, { part_id = "B", retired = false },
+    { part_id = "C", retired = false }, { part_id = "R1", retired = true },
+    { part_id = "R2", retired = true }, { part_id = "LEAF", retired = false },
+  ]
+  rows.bom_line = [
+    { line_id = 1, parent_id = "A", child_id = "R1" },
+    { line_id = 2, parent_id = "A", child_id = "R2" },
+    { line_id = 3, parent_id = "B", child_id = "R1" },
+    { line_id = 4, parent_id = "B", child_id = "MISSING" },
+    { line_id = 5, parent_id = "C", child_id = "R1" },
+    { line_id = 6, parent_id = "C", child_id = "LEAF" },
+  ]
+  expect = [{ part_id = "A" }]
+
+# ---------------------------------------------------------------- existentially quantified parents
+[[rule]]
+id = "retired_assembly_in_use"
+kind = "row"
+entity = "part"
+severity = "violation"
+where = [
+  { column = "retired", op = "eq", value = true },
+  { has_children = true },
+  { parents = "any", where = [{ column = "retired", op = "eq", value = false }] },
+]
+subject = "part_id"
+
+  [[rule.example]]
+  spec = "example rules 6: a retired assembly is not used by an active assembly"
+  rows.part = [
+    { part_id = "R", retired = true }, { part_id = "S", retired = true },
+    { part_id = "A", retired = false }, { part_id = "Z", retired = true },
+  ]
+  rows.bom_line = [
+    { line_id = 1, parent_id = "A", child_id = "R" },
+    { line_id = 2, parent_id = "R", child_id = "C" },
+    { line_id = 3, parent_id = "Z", child_id = "S" },
+    { line_id = 4, parent_id = "S", child_id = "C" },
+    { line_id = 5, parent_id = "MISSING", child_id = "S" },
+  ]
+  expect = [{ part_id = "R" }]
+
+# ---------------------------------------------------------------- in_hierarchy plus a disjunction with a composite reference
+[[rule]]
+id = "unknown_procure_code"
+kind = "row"
+entity = "part"
+severity = "warning"
+where = [
+  { in_hierarchy = true },
+  { any = [
+      [{ column = "procure", op = "not_in_ref", ref = "procure_codes" }],
+      [{ column = "procure", op = "is_null" }],
+  ] },
+]
+subject = "part_id"
+
+  [[rule.example]]
+  spec = "example rules 7: a part used in a BOM needs a known procurement code; blank is not a code"
+  rows.part = [
+    { part_id = "A", procure = "BUY" }, { part_id = "B", procure = "" },
+    { part_id = "C", procure = { null = true } }, { part_id = "D", procure = "XX" },
+    { part_id = "E", procure = "XX" },
+  ]
+  rows.bom_line = [
+    { line_id = 1, parent_id = "A", child_id = "B" },
+    { line_id = 2, parent_id = "A", child_id = "C" },
+    { line_id = 3, parent_id = "A", child_id = "D" },
+  ]
+  rows.code_value = [{ code_group = "PROCURE", code = "BUY" }, { code_group = "OTHER", code = "XX" }]
+  expect = [{ part_id = "B" }, { part_id = "C" }, { part_id = "D" }]
+
+# ---------------------------------------------------------------- starts_with on exact, untrimmed text
+[[rule]]
+id = "temporary_name"
+kind = "row"
+entity = "part"
+severity = "warning"
+where = [{ column = "name", op = "starts_with", set = "temporary_prefix" }]
+subject = "part_id"
+
+  [[rule.example]]
+  spec = "example rules 8: temporary names start with TMP- exactly"
+  rows.part = [
+    { part_id = "A", name = "TMP-1" }, { part_id = "B", name = " TMP-2" },
+    { part_id = "C", name = "tmp-3" }, { part_id = "D", name = { null = true } },
+  ]
+  expect = [{ part_id = "A" }]
+
+# ---------------------------------------------------------------- numeric IN list compared by value
+[[rule]]
+id = "truncated_third"
+kind = "row"
+entity = "bom_line"
+severity = "warning"
+where = [
+  { end = "child", column = "unit", op = "in", set = "count_units" },
+  { column = "qty_per", op = "in", set = "truncated_thirds" },
+]
+report = { columns = ["parent_id", "child_id", "qty_per"] }
+subject = "parent_id"
+
+  [[rule.example]]
+  spec = "example rules 9: a count quantity that is a truncated third"
+  rows.part = [{ part_id = "P", unit = "pc" }, { part_id = "K", unit = "kg" }]
+  rows.bom_line = [
+    { line_id = 1, parent_id = "A", child_id = "P", qty_per = "0.333300" },
+    { line_id = 2, parent_id = "A", child_id = "P", qty_per = "0.3334" },
+    { line_id = 3, parent_id = "A", child_id = "K", qty_per = "0.3333" },
+  ]
+  expect = [{ parent_id = "A", child_id = "P", qty_per = "0.3333", n = 1 }]
+
+# ---------------------------------------------------------------- duplicate: repeated rows of one group key
+[[rule]]
+id = "repeated_line"
+kind = "duplicate"
+entity = "bom_line"
+severity = "warning"
+key = ["parent_id", "child_id"]
+count = "rows"
+min = 2
+report = "group"
+subject = "parent_id"
+
+  [[rule.example]]
+  spec = "example rules 10: one parent lists one component on one line"
+  rows.bom_line = [
+    { line_id = 1, parent_id = "A", child_id = "B" },
+    { line_id = 2, parent_id = "A", child_id = "B" },
+    { line_id = 3, parent_id = "A", child_id = "C" },
+    { line_id = 4, parent_id = { null = true }, child_id = "C" },
+    { line_id = 5, parent_id = { null = true }, child_id = "C" },
+  ]
+  expect = [{ parent_id = "A", child_id = "B", n = 2 }]
+
+# ---------------------------------------------------------------- duplicate: group key with an endpoint attribute
+[[rule]]
+id = "same_name_components"
+kind = "duplicate"
+entity = "bom_line"
+severity = "warning"
+key = ["parent_id", { end = "child", column = "name" }]
+count = { distinct = "child_id" }
+min = 2
+report = { distinct = "parent_id" }
+subject = "parent_id"
+
+  [[rule.example]]
+  spec = "example rules 11: one parent does not use two different parts with the same name"
+  rows.part = [{ part_id = "B", name = "Bolt" }, { part_id = "C", name = "Bolt" }, { part_id = "N", name = { null = true } }]
+  rows.bom_line = [
+    { line_id = 1, parent_id = "A", child_id = "B" },
+    { line_id = 2, parent_id = "A", child_id = "C" },
+    { line_id = 3, parent_id = "D", child_id = "B" },
+    { line_id = 4, parent_id = "D", child_id = "B" },
+    { line_id = 5, parent_id = "E", child_id = "B" },
+    { line_id = 6, parent_id = "E", child_id = "MISSING" },
+    { line_id = 7, parent_id = "F", child_id = "N" },
+    { line_id = 8, parent_id = "F", child_id = "N" },
+  ]
+  expect = [{ parent_id = "A" }]
+
+# ---------------------------------------------------------------- mode_outlier
+[[rule]]
+id = "odd_quantity"
+kind = "mode_outlier"
+entity = "bom_line"
+severity = "warning"
+group_by = "child_id"
+value = "qty_per"
+min_distinct = { column = "parent_id", n = 3 }
+min_mode_share = "0.75"              # must be above 1/2, so the mode is unique
+ratio = "20"
+report = { columns = ["parent_id", "child_id", "qty_per"] }
+subject = "parent_id"
+
+  [[rule.example]]
+  spec = "example rules 12: a quantity 20 times away from the usual quantity of a widely used part"
+  rows.bom_line = [
+    { line_id = 1, parent_id = "A", child_id = "S", qty_per = "2" },
+    { line_id = 2, parent_id = "B", child_id = "S", qty_per = "2.000" },
+    { line_id = 3, parent_id = "C", child_id = "S", qty_per = "2" },
+    { line_id = 4, parent_id = "D", child_id = "S", qty_per = "40" },
+    { line_id = 5, parent_id = "A", child_id = "T", qty_per = "1" },
+    { line_id = 6, parent_id = "B", child_id = "T", qty_per = "50" },
+  ]
+  expect = [{ parent_id = "D", child_id = "S", qty_per = "40", mode = "2", n = 1 }]
+
+# ---------------------------------------------------------------- same_signature
+[[rule]]
+id = "twin_assemblies"
+kind = "same_signature"
+severity = "warning"
+attrs = ["name", "unit", "part_class"]
+min_members = 2
+subject = "member"
+
+  [[rule.example]]
+  spec = "example rules 13: two assemblies with the same components, quantities and attributes are probably one part"
+  rows.part = [
+    { part_id = "A1", name = "Frame", unit = "pc", part_class = "ASSY" },
+    { part_id = "A2", name = "Frame", unit = "pc", part_class = "ASSY" },
+    { part_id = "A3", name = "Frame", unit = "pc", part_class = "ASSY" },
+  ]
+  rows.bom_line = [
+    { line_id = 1, parent_id = "A1", child_id = "S", qty_per = "1" },
+    { line_id = 2, parent_id = "A1", child_id = "S", qty_per = "1" },
+    { line_id = 3, parent_id = "A2", child_id = "S", qty_per = "2.0" },
+    { line_id = 4, parent_id = "A3", child_id = "S", qty_per = "1" },
+  ]
+  expect = [{ group_id = "A1", member = "A1" }, { group_id = "A1", member = "A2" }]
+
+# ---------------------------------------------------------------- stored_metric (no subject: kept out of the subject list)
+[[rule]]
+id = "stored_level_drift"
+kind = "stored_metric"
+severity = "warning"
+metric = "height"
+stored = "stored_level"
+
+  [[rule.example]]
+  spec = "example rules 14: the stored level is the longest chain below the part, 0 without components"
+  rows.part = [
+    { part_id = "T", stored_level = 2 }, { part_id = "M", stored_level = 0 },
+    { part_id = "L", stored_level = 1 }, { part_id = "O", stored_level = 3 },
+    { part_id = "U", stored_level = { null = true } },
+  ]
+  rows.bom_line = [
+    { line_id = 1, parent_id = "T", child_id = "M" },
+    { line_id = 2, parent_id = "M", child_id = "L" },
+  ]
+  expect = [
+    { part_id = "L", kind = "leaf_stored_nonzero", stored = 1, height = 0 },
+    { part_id = "M", kind = "has_children_stored_zero", stored = 0, height = 1 },
+    { part_id = "O", kind = "outside_stored_nonzero", stored = 3, height = 0 },
+  ]
+
+# ---------------------------------------------------------------- text_quantity (restricted pattern subset)
+[[rule]]
+id = "grams_in_count_unit"
+kind = "text_quantity"
+entity = "bom_line"
+severity = "warning"
+end = "child"
+text = "name"
+where_end = [{ column = "unit", op = "in", set = "count_units" }]
+pattern = '\[\s*([0-9.]+)\s*g\s*(?:/\s*([0-9]+)\s*)?\]'
+quantity = "qty_per"
+rel_tol = "0.001"
+report = { columns = ["parent_id", "child_id", "qty_per"] }
+subject = "parent_id"
+
+  [[rule.example]]
+  spec = "example rules 15: a count-unit line whose quantity equals the grams written in the part name"
+  rows.part = [
+    { part_id = "W1", name = "Washer [12.5 g]", unit = "pc" },
+    { part_id = "W2", name = "Shim [30 g / 4]", unit = "pc" },
+    { part_id = "W3", name = "Plate [1.2.3 g]", unit = "pc" },
+    { part_id = "W4", name = "Bar [5 g]", unit = "kg" },
+  ]
+  rows.bom_line = [
+    { line_id = 1, parent_id = "A", child_id = "W1", qty_per = "12.5" },
+    { line_id = 2, parent_id = "A", child_id = "W2", qty_per = "7.5" },
+    { line_id = 3, parent_id = "A", child_id = "W3", qty_per = "1.2" },
+    { line_id = 4, parent_id = "A", child_id = "W4", qty_per = "5" },
+  ]
+  expect = [
+    { parent_id = "A", child_id = "W1", qty_per = "12.5", numerator = "12.5", divisor = "1", n = 1 },
+    { parent_id = "A", child_id = "W2", qty_per = "7.5", numerator = "30", divisor = "4", n = 1 },
+  ]

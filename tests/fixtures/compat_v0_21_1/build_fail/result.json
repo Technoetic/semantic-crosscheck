@@ -1,0 +1,107 @@
+{
+ "stage": "build",
+ "checks": [
+  {
+   "id": "shape:child_exists",
+   "status": "fail",
+   "detail": {
+    "violations": 2,
+    "severity": "violation",
+    "kind": "class",
+    "view": "sxc_out.v_shape_child_exists"
+   },
+   "config_ref": "shapes[0] child_exists"
+  },
+  {
+   "id": "shape:qty_positive",
+   "status": "pass",
+   "detail": {
+    "violations": 0,
+    "severity": "violation",
+    "kind": "bound",
+    "view": "sxc_out.v_shape_qty_positive"
+   },
+   "config_ref": "shapes[1] qty_positive"
+  },
+  {
+   "id": "shape:stock_nonnegative",
+   "status": "pass",
+   "detail": {
+    "violations": 1,
+    "severity": "warning",
+    "kind": "bound",
+    "view": "sxc_out.v_shape_stock_nonnegative"
+   },
+   "config_ref": "shapes[2] stock_nonnegative"
+  },
+  {
+   "id": "shape:open_le_total",
+   "status": "fail",
+   "detail": {
+    "violations": 3,
+    "severity": "violation",
+    "kind": "sql",
+    "view": "sxc_out.v_shape_open_le_total",
+    "trusted_sql": true
+   },
+   "config_ref": "shapes[3] open_le_total"
+  },
+  {
+   "id": "closure:has_component",
+   "status": "pass",
+   "detail": {
+    "edges": 7,
+    "null_endpoint_lines": 0,
+    "null_quantity_edges": 0,
+    "cycle_nodes": 0,
+    "depth_limit_exceeded": false,
+    "pairs": 11,
+    "paths_total": 12,
+    "multi_path_pairs": 1,
+    "max_depth": 2,
+    "depth_histogram": {
+     "1": 7,
+     "2": 4
+    },
+    "closure_applied": true
+   },
+   "config_ref": "hierarchies.has_component"
+  },
+  {
+   "id": "closure_apply:has_component",
+   "status": "pass",
+   "detail": {
+    "merge": {
+     "insert": 11,
+     "update": 0,
+     "delete": 0
+    },
+    "table_vs_recompute_diff": 0
+   },
+   "config_ref": "hierarchies.has_component"
+  }
+ ],
+ "not_proven": [
+  "runtime evidence is unbound: actual PostgreSQL, Node, Java, HermiT and selected Cube installation were not bound; local engine/package metadata alone does not establish the executing runtime",
+  "data revision is unbound: no owner-maintained revision was checked; separate database sessions and cached gold answers are not proven to observe one data version"
+ ],
+ "next_safe_action": "shapes failed: inspect the violating keys in sxc_out.v_shape_child_exists, sxc_out.v_shape_open_le_total, then fix the data or the [[shapes]] entries; then rerun build",
+ "started_at": "<time>",
+ "finished_at": "<time>",
+ "inputs": {
+  "config_sha256": "db6400b6f048b8775f777bdc3d102c179e305f17d835f1fb6c8d67db379abd95",
+  "gold_sha256": "eab5e045cc968b41c4f36b6dd8a506e2dde6064f35ab994f407a6882a31173c6",
+  "engine_sha256": "<engine>",
+  "revision_query_sha256": ""
+ },
+ "provenance": {
+  "schema_version": 1,
+  "binding": "unbound"
+ },
+ "runtime_evidence": {
+  "schema_version": 1,
+  "binding": "unbound"
+ },
+ "schema_version": 1,
+ "status": "fail"
+}

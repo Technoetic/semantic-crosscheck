@@ -1,0 +1,24 @@
+pass build shape:child_exists pass [shapes[0] child_exists]
+pass build shape:qty_positive pass [shapes[1] qty_positive]
+pass build shape:stock_nonnegative pass [shapes[2] stock_nonnegative]
+pass build shape:open_le_total pass [shapes[3] open_le_total]
+pass build closure:has_component pass [hierarchies.has_component]
+pass build closure_apply:has_component pass [hierarchies.has_component]
+pass build status pass
+pass report stage:build pass []
+pass report stage:reason not_run []
+pass report stage:cube not_run []
+pass report stage:verify not_run []
+pass report status not_run
+fail build shape:child_exists fail [shapes[0] child_exists]
+fail build shape:qty_positive pass [shapes[1] qty_positive]
+fail build shape:stock_nonnegative pass [shapes[2] stock_nonnegative]
+fail build shape:open_le_total fail [shapes[3] open_le_total]
+fail build closure:has_component pass [hierarchies.has_component]
+fail build closure_apply:has_component pass [hierarchies.has_component]
+fail build status fail
+fail report stage:build fail [shapes[0] child_exists]
+fail report stage:reason not_run []
+fail report stage:cube not_run []
+fail report stage:verify not_run []
+fail report status fail

@@ -1,0 +1,69 @@
+{
+ "stage": "report",
+ "checks": [
+  {
+   "id": "stage:build",
+   "status": "pass",
+   "detail": {
+    "pass": 6,
+    "fail": 0,
+    "error": 0,
+    "not_run": 0,
+    "not_proven": 2,
+    "required": true
+   },
+   "config_ref": ""
+  },
+  {
+   "id": "stage:reason",
+   "status": "not_run",
+   "detail": {
+    "reason": "missing",
+    "required": true
+   },
+   "config_ref": ""
+  },
+  {
+   "id": "stage:cube",
+   "status": "not_run",
+   "detail": {
+    "reason": "missing",
+    "required": true
+   },
+   "config_ref": ""
+  },
+  {
+   "id": "stage:verify",
+   "status": "not_run",
+   "detail": {
+    "reason": "missing",
+    "required": true
+   },
+   "config_ref": ""
+  }
+ ],
+ "not_proven": [
+  "data revision is unbound: no owner-maintained revision was checked; separate database sessions and cached gold answers are not proven to observe one data version",
+  "stage doctor was not run, so the check role's privileges (read-only on the source tables) and the optional components were not verified"
+ ],
+ "next_safe_action": "run the stages that have not run yet (reason, cube, verify), in this order, then rerun report",
+ "started_at": "<time>",
+ "finished_at": "<time>",
+ "inputs": {
+  "config_sha256": "db6400b6f048b8775f777bdc3d102c179e305f17d835f1fb6c8d67db379abd95",
+  "gold_sha256": "eab5e045cc968b41c4f36b6dd8a506e2dde6064f35ab994f407a6882a31173c6",
+  "engine_sha256": "<engine>",
+  "revision_query_sha256": ""
+ },
+ "provenance": {
+  "schema_version": 1,
+  "binding": "unbound"
+ },
+ "runtime_evidence": {
+  "schema_version": 1,
+  "binding": "unbound",
+  "scope_note": "runtime evidence is unbound: actual PostgreSQL, Node, Java, HermiT and selected Cube installation were not bound; local engine/package metadata alone does not establish the executing runtime"
+ },
+ "schema_version": 1,
+ "status": "not_run"
+}

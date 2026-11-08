@@ -1,0 +1,87 @@
+{
+ "status": "not_run",
+ "generated_at": "<time>",
+ "config": "crosscheck.toml",
+ "required": [
+  "build",
+  "reason",
+  "cube",
+  "verify"
+ ],
+ "stages": {
+  "build": {
+   "status": "pass",
+   "counted_as": "pass",
+   "required": true,
+   "stale": null,
+   "counts": {
+    "pass": 6,
+    "fail": 0,
+    "error": 0,
+    "not_run": 0
+   },
+   "failing": [],
+   "not_proven": [
+    "runtime evidence is unbound: actual PostgreSQL, Node, Java, HermiT and selected Cube installation were not bound; local engine/package metadata alone does not establish the executing runtime",
+    "data revision is unbound: no owner-maintained revision was checked; separate database sessions and cached gold answers are not proven to observe one data version"
+   ],
+   "next_safe_action": "run `sxc.py reason` to cross-check the shapes and the hierarchy with SHACL and OWL, then `sxc.py cube`",
+   "started_at": "<time>",
+   "finished_at": "<time>"
+  }
+ },
+ "not_run": [
+  "doctor",
+  "demo",
+  "reason",
+  "cube",
+  "verify"
+ ],
+ "missing_required": [
+  "reason",
+  "cube",
+  "verify"
+ ],
+ "stale": [],
+ "not_proven": [
+  "data revision is unbound: no owner-maintained revision was checked; separate database sessions and cached gold answers are not proven to observe one data version",
+  "stage doctor was not run, so the check role's privileges (read-only on the source tables) and the optional components were not verified"
+ ],
+ "trusted_sql": {
+  "shapes": [
+   "open_le_total"
+  ],
+  "gold": [
+   {
+    "id": "q01_explosion",
+    "sql": "gold/q01_explosion.sql"
+   },
+   {
+    "id": "q02_where_used",
+    "sql": "gold/q02_where_used.sql"
+   },
+   {
+    "id": "q03_stock",
+    "sql": "gold/q03_stock.sql"
+   },
+   {
+    "id": "q04_depth_histogram",
+    "sql": "gold/q04_depth_histogram.sql"
+   },
+   {
+    "id": "q05_firm_window",
+    "sql": "gold/q05_firm_window.sql"
+   }
+  ]
+ },
+ "provenance": {
+  "schema_version": 1,
+  "binding": "unbound"
+ },
+ "runtime_evidence": {
+  "schema_version": 1,
+  "binding": "unbound",
+  "scope_note": "runtime evidence is unbound: actual PostgreSQL, Node, Java, HermiT and selected Cube installation were not bound; local engine/package metadata alone does not establish the executing runtime"
+ },
+ "next_safe_action": "run the stages that have not run yet (reason, cube, verify), in this order, then rerun report"
+}

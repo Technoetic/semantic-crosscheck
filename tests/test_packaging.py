@@ -64,6 +64,7 @@ CONFIG_SECTIONS = {
     "[verify]": config.Verify,
     "[[gold]]": config.Gold,
     "[[gold.expect]]": config.Expect,
+    "[data_rules]": config.DataRules,
 }
 
 

@@ -383,3 +383,136 @@ class ConfiguredPreflightReport(unittest.TestCase):
         with patch.object(Result, 'write', changing):
             self.assertEqual(self.diagnostic(), 2)
         self.assertFalse(self.receipt().exists())
+
+    def test_stale_receipt_keeps_its_worse_check_severity(self):
+        for status in ('fail', 'error'):
+            with self.subTest(status=status):
+                self.capture_pass()
+                def change(doc):
+                    doc['checks'][0]['status'] = status
+                    doc['status'] = 'pass'
+                    doc['inputs']['plan_sha256'] = '0' * 64
+                self.rewrite(change)
+                result = self.run_report()
+                check = self.check(result)
+                self.assertEqual(result.status, status)
+                self.assertEqual(check.detail['last_status'], status)
+                self.assertGreater(check.detail[status], 0)
+
+    def protected_alias_case(self, source_name, relative, cli, hardlink=False):
+        with tempfile.TemporaryDirectory(prefix='sxc-report-protection-') as temporary:
+            root = Path(temporary)
+            out = root / 'out'
+            target = out / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            paths = {name: root / filename for name, filename in
+                     (('config', 'crosscheck.toml'), ('contract', 'contract.json'), ('plan', 'plan.json'))}
+            if not hardlink:
+                paths[source_name] = target
+            cfg_base = paths['config'].parent
+            # Config paths are deliberately relative even when the config itself
+            # occupies a reserved output. All data in this fixture is synthetic.
+            for name in ('contract', 'plan'):
+                if source_name == 'config' and not hardlink:
+                    paths[name] = cfg_base / (name + '.json')
+            option = '\n[semantic_preflight]\n' + ''.join(
+                f'{name} = "{paths[name].relative_to(cfg_base).as_posix()}"\n' for name in ('contract', 'plan'))
+            (cfg_base / 'stock.sql').write_text('select 1', encoding='utf-8')
+            paths['config'].write_text(CONFIG + option, encoding='utf-8')
+            paths['contract'].write_text(json.dumps(contract()), encoding='utf-8')
+            paths['plan'].write_text(json.dumps(plan()), encoding='utf-8')
+            if hardlink:
+                os.link(paths[source_name], target)
+            original = {p.relative_to(root).as_posix(): p.read_bytes() for p in root.rglob('*') if p.is_file()}
+            if cli:
+                with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                    code = sxc.main(['report', '--config', str(paths['config']), '--out', str(out)])
+            else:
+                try:
+                    result = report.run(config.load(paths['config']), argparse.Namespace(), out)
+                    code = result.exit_code()
+                except StageError as exc:
+                    code = exc.exit_code
+            observed = {p.relative_to(root).as_posix(): p.read_bytes() for p in root.rglob('*') if p.is_file()}
+            self.assertEqual(observed, original, 'protected inputs and existing outputs must remain byte-identical')
+            self.assertEqual(code, 2)
+
+    def test_selected_inputs_cannot_occupy_any_report_output_or_legacy_temp(self):
+        for source in ('config', 'contract', 'plan'):
+            for target in ('report.json', 'report.md', 'report/result.json', 'report/result.json.part', '.gitignore'):
+                for cli in (False, True):
+                    with self.subTest(source=source, target=target, cli=cli):
+                        self.protected_alias_case(source, target, cli)
+
+    def test_hardlink_aliases_of_all_report_outputs_are_preserved(self):
+        for source in ('config', 'contract', 'plan'):
+            for target in ('report.json', 'report.md', 'report/result.json', 'report/result.json.part', '.gitignore'):
+                for cli in (False, True):
+                    with self.subTest(source=source, target=target, cli=cli):
+                        self.protected_alias_case(source, target, cli, hardlink=True)
+
+    def test_malformed_legacy_config_still_removes_prior_passing_summaries(self):
+        self.cfg_path.write_text(CONFIG, encoding='utf-8')
+        self.operational()
+        def invoke():
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                return sxc.main(['report', '--config', str(self.cfg_path), '--out', str(self.out)])
+        self.assertEqual(invoke(), 0)
+        self.cfg_path.write_text('version = [broken', encoding='utf-8')
+        self.assertEqual(invoke(), 2)
+        self.assertFalse((self.out / 'report.json').exists())
+        self.assertFalse((self.out / 'report.md').exists())
+
+    def test_late_selection_drift_does_not_delete_newly_selected_input(self):
+        self.capture_pass()
+        render = report.render_md
+        target = self.out / 'report.json'
+        original = self.plan_path.read_bytes()
+        def changing(summary):
+            target.write_bytes(original)
+            self.cfg_path.write_text((CONFIG + OPTION).replace('plan = "plan.json"',
+                                                              'plan = "out/report.json"'), encoding='utf-8')
+            return render(summary)
+        with patch.object(report, 'render_md', changing), contextlib.redirect_stdout(io.StringIO()), \
+                contextlib.redirect_stderr(io.StringIO()):
+            code = sxc.main(['report', '--config', str(self.cfg_path), '--out', str(self.out)])
+        self.assertTrue(target.exists(), 'error cleanup must preserve newly selected input')
+        self.assertEqual(target.read_bytes(), original)
+        self.assertEqual(code, 2)
+
+    def test_stale_receipt_cannot_downgrade_current_recomputed_failure(self):
+        self.capture_pass()
+        document = plan()
+        document['selections'][0]['context']['population'] = 'different'
+        self.plan_path.write_text(json.dumps(document), encoding='utf-8')
+        result = self.run_report()
+        self.assertEqual(result.status, 'fail')
+        self.assertGreater(self.check(result).detail['fail'], 0)
+
+    def test_cli_final_result_publication_cannot_accept_changed_sidecars(self):
+        self.capture_pass()
+        write = Result.write
+        def changing(result, out):
+            target = write(result, out)
+            if result.stage == 'report':
+                self.plan_path.write_bytes(self.plan_path.read_bytes() + b'\n')
+            return target
+        with patch.object(Result, 'write', changing), contextlib.redirect_stdout(io.StringIO()), \
+                contextlib.redirect_stderr(io.StringIO()):
+            code = sxc.main(['report', '--config', str(self.cfg_path), '--out', str(self.out)])
+        self.assertNotEqual(code, 0)
+        for target in (self.out / 'report.json', self.out / 'report.md', self.out / 'report' / 'result.json'):
+            self.assertFalse(target.exists(), 'do not retain a pass after final publication drift')
+
+    def test_diagnostic_drift_preserves_another_writers_result_replacement(self):
+        write = Result.write
+        replacement = b'another writer replacement\n'
+        def changing(result, out):
+            target = write(result, out)
+            self.plan_path.write_bytes(self.plan_path.read_bytes() + b'\n')
+            target.write_bytes(replacement)
+            return target
+        with patch.object(Result, 'write', changing):
+            self.assertEqual(self.diagnostic(), 2)
+        self.assertTrue(self.receipt().exists())
+        self.assertEqual(self.receipt().read_bytes(), replacement)

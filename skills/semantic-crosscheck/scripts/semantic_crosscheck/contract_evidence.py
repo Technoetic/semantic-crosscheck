@@ -10,9 +10,10 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import tomllib
 
 from . import business_contracts, config, semantic_preflight as guarded
-from .result import Result
+from .result import EXIT_CONFIG, Result, StageError
 from .result_contract import validate_result
 
 STAGE = guarded.STAGE
@@ -43,6 +44,78 @@ def fingerprints(inputs):
         json.dumps(paths, ensure_ascii=True, separators=(',', ':')).encode('ascii')).hexdigest()
     result['generator_sha256'] = generator_fingerprint()
     return result
+
+
+def protect_paths(paths, out):
+    """Reject input aliases of every CLI cleanup/write target before mutation."""
+    try:
+        output = Path(out).absolute()
+        stage = output / 'report'
+        directories = (output, stage)
+        targets = (output / '.gitignore', output / 'report.json', output / 'report.md',
+                   stage / 'result.json', stage / 'result.json.part')
+        for directory in directories:
+            guarded._inspect(directory, directory=True, missing=True)
+        for target in targets:
+            guarded._inspect(target, missing=True)
+        for path in paths:
+            source = Path(path).absolute()
+            guarded._inspect(source, missing=True)
+            if any(guarded._aliases(source, target) for target in (*directories, *targets)):
+                raise guarded._Invalid()
+            if source.resolve() in output.resolve().parents:
+                raise guarded._Invalid()
+    except Exception:
+        raise StageError('report: invalid_or_protected_inputs', EXIT_CONFIG) from None
+
+
+def preflight(cfg, out):
+    """Protect declared inputs without requiring readable sidecar contents."""
+    if cfg is None:
+        return
+    protect_paths((cfg.path,), out)
+    # Reparse before every deletion/publication, including a Config that used to
+    # have no selection: current selected inputs may differ from the old scope.
+    try:
+        current = config.load(cfg.path)
+    except Exception:
+        raise StageError('report: invalid_or_protected_inputs', EXIT_CONFIG) from None
+    if current.semantic_preflight != cfg.semantic_preflight:
+        raise StageError('report: configuration_changed', EXIT_CONFIG)
+    if current.semantic_preflight is not None:
+        protect_paths((cfg.path, *cfg.semantic_preflight.paths(cfg)), out)
+
+
+def preflight_configuration(raw, path, out):
+    """Protect valid selections even when unrelated config validation fails.
+
+    An ordinary malformed legacy config keeps its existing cleanup behavior.
+    An uninterpretable configuration mentioning the opt-in cannot authorize
+    cleanup, because its selected input scope cannot be established.
+    """
+    try:
+        document = tomllib.loads(raw.decode('utf-8-sig'))
+    except (UnicodeError, tomllib.TOMLDecodeError):
+        if b'semantic_preflight' in raw:
+            raise StageError('report: invalid_or_protected_inputs', EXIT_CONFIG) from None
+        return
+    if 'semantic_preflight' in document:
+        selection = config._semantic_preflight(document['semantic_preflight'])
+        protect_paths((path, *(Path(path).parent / item for item in (selection.contract, selection.plan))), out)
+
+
+def capture_outputs(paths):
+    return [guarded._Captured.read(path) for path in paths]
+
+
+def remove_unchanged(captures):
+    """Remove only the unchanged files this publication actually produced."""
+    for source in captures:
+        try:
+            source.unchanged()
+            source.path.unlink()
+        except Exception:
+            pass
 
 
 def _error(reason):
@@ -106,13 +179,21 @@ def inspect(cfg, out):
         # Regenerate user-visible explanations from the current declarations;
         # arbitrary saved strings are not report instructions or trusted text.
         safe = expected.to_dict()
-        safe['status'] = recorded.get('status', expected.status)
+        severity = {'pass': 0, 'not_run': 1, 'fail': 2, 'error': 3}
+        saved_statuses = [check['status'] for check in recorded['checks']]
+        saved_statuses.append(recorded.get('status', 'not_run' if not recorded['checks'] else 'pass'))
+        safe['status'] = max([*saved_statuses, expected.status], key=severity.__getitem__)
         for key in ('started_at', 'finished_at'):
             safe[key] = recorded.get(key, '')
         safe['inputs'] = current
         evidence.result = safe
         if any(recorded.get('inputs', {}).get(key) != value for key, value in current.items()):
             evidence.stale = {'after': 'configured business inputs', 'why': 'contract_evidence_changed'}
+            # Preserve saved severity/counts without repeating arbitrary saved
+            # identifiers, explanations or values from evidence for other bytes.
+            safe['checks'] += [{'id': f'saved_check:{index}', 'status': check['status'],
+                               'config_ref': 'semantic_preflight', 'detail': {'reason': 'stale_saved_check'}}
+                              for index, check in enumerate(recorded['checks'])]
         else:
             started = datetime.strptime(safe['started_at'], _TIME)
             finished = datetime.strptime(safe['finished_at'], _TIME)

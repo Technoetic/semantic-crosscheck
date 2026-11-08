@@ -21,6 +21,11 @@ never ran, or ran before the data it checked was reloaded, would answer that que
     every next_safe_action, and names the trusted code: `sql_violation` predicates and gold SQL run as written.
 The overall status can therefore only be pass when every required stage ran, is current and passed.
 
+An optional [semantic_preflight] table also requires explicitly selected local
+contract/plan evidence. That diagnostic stays outside the default pipeline; its
+selected-file/content/generator binding and recomputed declarations are checked
+separately. Protected report output aliases fail before cleanup or publication.
+
 Without a revision query, everything comes from stage results and local fingerprints and the database is not
 contacted. With source.data_revision_sql_file configured, fresh read-only source/Cube probes bind the saved
 evidence to the current owner-maintained data revision. A missing, changed or unreadable binding cannot pass.
@@ -392,6 +397,8 @@ def render_md(summary: dict) -> str:
 
 def run(cfg, args, out: Path) -> Result:
     out = Path(out)
+    if cfg is not None and cfg.semantic_preflight is not None:
+        contract_evidence.preflight(cfg, out)
     res = Result("report")
     results = read_results(out)
     required = required_stages(cfg)
@@ -470,6 +477,8 @@ def run(cfg, args, out: Path) -> Result:
         markdown = render_md(summary)
     out.mkdir(parents=True, exist_ok=True)
     def publish():
+        if evidence is not None:
+            contract_evidence.preflight(cfg, out)
         (out / "report.json").write_text(json.dumps(summary, ensure_ascii=False, indent=1) + "\n", encoding="utf-8", newline="\n")
         (out / "report.md").write_text(markdown, encoding="utf-8", newline="\n")
     publish()
@@ -477,4 +486,9 @@ def run(cfg, args, out: Path) -> Result:
         summary = assemble()
         markdown = render_md(summary)
         publish()
+    if evidence is not None:
+        # Retain the same capture through CLI Result publication. Dynamic
+        # attributes are not serialized by Result's dataclass envelope.
+        res._contract_evidence = evidence
+        res._contract_report_outputs = contract_evidence.capture_outputs((out / 'report.json', out / 'report.md'))
     return res

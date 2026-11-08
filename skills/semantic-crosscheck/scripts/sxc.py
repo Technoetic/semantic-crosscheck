@@ -27,6 +27,7 @@ if sys.version_info < (3, 11):   # checked before importing the package, which n
 import argparse  # noqa: E402
 import hashlib  # noqa: E402
 import importlib  # noqa: E402
+import json  # noqa: E402
 import os  # noqa: E402
 import traceback  # noqa: E402
 from pathlib import Path  # noqa: E402
@@ -335,6 +336,51 @@ def discard_report_files(out: Path | None) -> None:
             (out / name).unlink(missing_ok=True)
 
 
+def _report_safe_out(out, cfg):
+    if out is None:
+        return None
+    try:
+        from semantic_crosscheck import contract_evidence
+        contract_evidence.preflight(cfg, out)
+        return out
+    except Exception:
+        return None
+
+
+def _report_write(res, out, cfg):
+    """Carry selected-input capture through the final CLI Result publication."""
+    if out is None:
+        return None
+    from semantic_crosscheck import contract_evidence
+    safe = _report_safe_out(out, cfg)
+    evidence = getattr(res, '_contract_evidence', None)
+    outputs = list(getattr(res, '_contract_report_outputs', ()))
+    try:
+        if safe is None:
+            raise ValueError()
+        if evidence is not None and evidence.refresh().invalidated:
+            raise ValueError()
+        target = _write(res, safe)
+        if evidence is not None:
+            published = contract_evidence.capture_outputs((target,))[0]
+            expected = json.dumps(res.to_dict(), ensure_ascii=False, indent=1).encode('utf-8')
+            if published.raw != expected:
+                raise ValueError()
+            outputs.append(published)
+            if evidence.refresh().invalidated:
+                raise ValueError()
+        return target
+    except Exception:
+        # Current selection drift may turn an output into an input. Recheck
+        # before removing only this run's unchanged artifacts.
+        if _report_safe_out(out, cfg) is not None:
+            contract_evidence.remove_unchanged(outputs)
+        res._suppress_paths = True
+        res.add('report_publication', 'error', 'semantic_preflight', reason='protected_or_changed_output')
+        res.next_safe_action = 'Review the selected files locally, rerun semantic-preflight, then rerun report.'
+        return None
+
+
 def _audit_cli_inputs(argv, cli):
     """Identify accepted audit spellings and cleanup paths without typed parsing.
 
@@ -594,6 +640,7 @@ def main(argv=None) -> int:
     cfg = None
     diagnostic_cfg = diagnostic_cfg_sha = None
     expect_cfg = expect_cfg_sha = None
+    report_cfg = report_cfg_sha = None
     out = Path(args.out) if args.out else None
     try:
         if stage == 'expect':
@@ -627,6 +674,28 @@ def main(argv=None) -> int:
             cfg_file = config_path(stage, args.config)
         if out is None:
             out = (cfg_file.resolve().parent if cfg_file else Path.cwd()) / ".sxc"
+        if stage == 'report':
+            # A selected input may itself be named report.json/result.json.
+            # Verify all declared input/output aliases before ensure/cleanup.
+            try:
+                from semantic_crosscheck import contract_evidence
+                contract_evidence.protect_paths((cfg_file,), out)
+                report_raw = cfg_file.read_bytes()
+                report_cfg_sha = hashlib.sha256(report_raw).hexdigest()
+                contract_evidence.preflight_configuration(report_raw, cfg_file, out)
+            except Exception:
+                out = None
+                raise StageError('report: invalid_or_protected_inputs', EXIT_CONFIG) from None
+            # Legacy parse/validation errors still clear old PASS summaries.
+            # Explicit selections were protected above before that can happen.
+            report_cfg = config.loads(report_raw, cfg_file)
+            try:
+                contract_evidence.preflight(report_cfg, out)
+                if hashlib.sha256(cfg_file.read_bytes()).hexdigest() != report_cfg_sha:
+                    raise StageError('report: configuration_changed', EXIT_CONFIG)
+            except Exception:
+                out = None
+                raise StageError('report: invalid_or_protected_inputs', EXIT_CONFIG) from None
         if stage == 'expect' and not _expect_verified(expect_cfg, expect_cfg_sha):
             raise StageError('expect: configuration_changed', EXIT_CONFIG)
         ensure_out(out)
@@ -642,6 +711,11 @@ def main(argv=None) -> int:
                 if before != expect_cfg_sha:
                     raise StageError('expect: configuration_changed', EXIT_CONFIG)
                 cfg = expect_cfg
+            elif stage == 'report':
+                if before != report_cfg_sha:
+                    out = None
+                    raise StageError('report: configuration_changed', EXIT_CONFIG)
+                cfg = report_cfg
             elif diagnostic_mode and stage == "grain":
                 if before != diagnostic_cfg_sha:
                     raise StageError("diagnostic input changed", EXIT_CONFIG)
@@ -677,6 +751,7 @@ def main(argv=None) -> int:
         res = provenance.finish(None if diagnostic_mode else cfg, res, revision_start)
     except StageError as e:
         if stage == "report":
+            out = _report_safe_out(out, cfg or report_cfg)
             discard_report_files(out)
         res = Result(result_name)
         if audit_mode:
@@ -690,12 +765,14 @@ def main(argv=None) -> int:
         else:
             res.add("stage", "error", "", message=str(e))
         res.next_safe_action = "fix the configuration or environment named in the message, then rerun this stage"
-        path = (_expect_write(res, out, expect_cfg, expect_cfg_sha) if stage == 'expect' else
+        path = (_report_write(res, out, cfg or report_cfg) if stage == 'report' else
+                _expect_write(res, out, expect_cfg, expect_cfg_sha) if stage == 'expect' else
                 _diagnostic_write(res, out, args) if diagnostic_mode else _write(res, out))
         print(_summary(res, path, args.quiet), file=sys.stderr)
         return e.exit_code
     except KeyboardInterrupt:
         if stage == "report":
+            out = _report_safe_out(out, cfg or report_cfg)
             discard_report_files(out)
         res = Result(result_name)
         if audit_mode:
@@ -704,12 +781,14 @@ def main(argv=None) -> int:
         if stage == 'expect' and not _expect_legacy(expect_cfg, expect_cfg_sha):
             res._suppress_paths = True
         res.next_safe_action = "the run was interrupted before it finished: rerun this stage"
-        path = (_expect_write(res, out, expect_cfg, expect_cfg_sha) if stage == 'expect' else
+        path = (_report_write(res, out, cfg or report_cfg) if stage == 'report' else
+                _expect_write(res, out, expect_cfg, expect_cfg_sha) if stage == 'expect' else
                 _diagnostic_write(res, out, args) if diagnostic_mode else _write(res, out))
         print(_summary(res, path, args.quiet), file=sys.stderr)
         return EXIT_FAIL
     except Exception as e:  # noqa: BLE001 - unexpected failure: keep only the type and SQLSTATE in the result file
         if stage == "report":
+            out = _report_safe_out(out, cfg or report_cfg)
             discard_report_files(out)
         res = Result(result_name)
         if audit_mode:
@@ -723,11 +802,13 @@ def main(argv=None) -> int:
         else:
             res.add("stage", "error", "", exception=type(e).__name__, sqlstate=_db_error_code(e))
             _crash_note(e)
-        path = (_expect_write(res, out, expect_cfg, expect_cfg_sha) if stage == 'expect' else
+        path = (_report_write(res, out, cfg or report_cfg) if stage == 'report' else
+                _expect_write(res, out, expect_cfg, expect_cfg_sha) if stage == 'expect' else
                 _diagnostic_write(res, out, args) if diagnostic_mode else _write(res, out))
         print(_summary(res, path, args.quiet), file=sys.stderr)
         return EXIT_FAIL
-    path = (_expect_write(res, out, expect_cfg, expect_cfg_sha) if stage == 'expect' else
+    path = (_report_write(res, out, cfg) if stage == 'report' else
+            _expect_write(res, out, expect_cfg, expect_cfg_sha) if stage == 'expect' else
             _diagnostic_write(res, out, args) if diagnostic_mode else res.write(out))
     print(_summary(res, path, args.quiet))
     return res.exit_code()

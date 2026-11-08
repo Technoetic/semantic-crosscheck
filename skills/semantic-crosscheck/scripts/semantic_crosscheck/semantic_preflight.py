@@ -207,6 +207,9 @@ def _publish(res, inputs, out):
             stream.write('*\n')
     _protect(inputs, out)
     published = _Captured.read(res.write(out))
+    expected = json.dumps(res.to_dict(), ensure_ascii=False, indent=1).encode('utf-8')
+    if published.raw != expected:
+        raise _Invalid()
     try:
         _protect(inputs, out)
         published.unchanged()

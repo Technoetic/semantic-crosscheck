@@ -80,6 +80,10 @@ current declarations.
 | Saved passing subset or forged check statuses | Error when recomputed checks disagree |
 | Files/result/generator change during report | Capture is invalidated permanently; report becomes an error |
 
+A stale receipt retains its own worse saved check status and counts. Its
+arbitrary identifiers/explanations are replaced by fixed positional check labels;
+staleness never downgrades a saved failure or error to `not_run`.
+
 Files are rechecked before report assembly and around publication. A changed
 capture is never replaced with a newly captured passing result in the same run.
 Correct the inputs, explicitly rerun semantic-preflight for the configured
@@ -91,6 +95,12 @@ regular single-link file requirement, linked ancestor/reparse rejection and
 existing standard macOS alias exception remain in force. The same bounded
 capture applies to the configured saved diagnostic. These are local observations,
 not a lock against hostile concurrent ancestor replacement.
+
+Before CLI cleanup or direct report writes, the selected configuration, contract
+and plan are protected against `report.json`, `report.md`, `report/result.json`,
+the legacy `report/result.json.part` target and `.gitignore`, including aliases
+and hardlinks. An unsafe selection returns a configuration error without output
+mutation. New random Result temporary files use exclusive creation.
 
 The diagnostic and report's contract-evidence assessment open no Gold/revision
 SQL bodies, databases or network connections. The operational report retains its

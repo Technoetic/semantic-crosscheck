@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.21.1] - 2026-11-08
+
+Release notes: [docs/releases/v0.21.1.md](docs/releases/v0.21.1.md).
+
+### Fixed
+
+- Compare canonical selected paths in the contract/report portability tests.
+  Windows short temporary names and macOS `/private/var` aliases legitimately
+  resolve to a different spelling; a permission-denial test must intercept the
+  actual canonical file and assert the injection occurred.
+- Retain the production input/output/link guards and evidence semantics. This
+  supersedes the tagged v0.21.0 candidate, whose Windows/macOS CI was not green;
+  no formal v0.21.0 release assets were published.
+
+The opt-in contract report evidence, separate PostgreSQL structural diagnostic
+and independent bag fixtures are described below and in this release's notes.
+
+[0.21.1]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.21.1
+
 ## [0.21.0] - 2026-11-08
 
 Release notes: [docs/releases/v0.21.0.md](docs/releases/v0.21.0.md).

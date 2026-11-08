@@ -1,6 +1,6 @@
 {
   "name": "semantic-crosscheck",
-  "version": "0.21.0",
+  "version": "0.21.1",
   "description": "Cross-layer verification for an ontology plus semantic layer on PostgreSQL 17, for Codex and Claude Code.",
   "author": {
     "name": "전문준"
@@ -9,7 +9,7 @@
   "interface": {
     "displayName": "Semantic Crosscheck",
     "shortDescription": "Prove that a PostgreSQL closure, SHACL rules, OWL reasoning and a Cube model agree.",
-    "longDescription": "Release v0.21.0 adds explicitly configured contract/plan preflight evidence to report freshness, an optional offline PostgreSQL17 AST structural diagnostic, and independent synthetic bag/DISTINCT/EXCEPT fixtures. Without the paired semantic_preflight section existing report authority is retained. Missing, changed, mismatched or non-passing preflight evidence cannot satisfy the selected report gate. SQL structure diagnostics use separately installed pinned pglast and never connect to a DB or join report authority. Unsupported SQL and missing parser cannot pass. Formal provenance sources inform original small fixtures; no Lean/ProvSQL runtime is bundled. Matching definitions/SQL structures are not business truth or query-equivalence proof. Reviewed is not authenticated approval, and no shared Gold/Cube MVCC snapshot is added. Rerun operational stages after upgrading because engine code changed. Publication does not update active installations or company databases.",
+    "longDescription": "Release v0.21.1 adds explicitly configured contract/plan preflight evidence to report freshness, an optional offline PostgreSQL17 AST structural diagnostic, and independent synthetic bag/DISTINCT/EXCEPT fixtures. Without the paired semantic_preflight section existing report authority is retained. Missing, changed, mismatched or non-passing preflight evidence cannot satisfy the selected report gate. SQL structure diagnostics use separately installed pinned pglast and never connect to a DB or join report authority. Unsupported SQL and missing parser cannot pass. Formal provenance sources inform original small fixtures; no Lean/ProvSQL runtime is bundled. Matching definitions/SQL structures are not business truth or query-equivalence proof. Reviewed is not authenticated approval, and no shared Gold/Cube MVCC snapshot is added. Rerun operational stages after upgrading because engine code changed. Publication does not update active installations or company databases.",
     "developerName": "Technoetic",
     "category": "Coding",
     "capabilities": [

@@ -1,0 +1,2 @@
+# Optional offline PostgreSQL 17 AST binding; GPL-3.0-or-later, not vendored.
+pglast==7.22

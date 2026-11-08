@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "relation": {"schema": "sxc_demo", "name": "sales_order"},
+  "select": [
+    {"column": "part_id"},
+    {"aggregate": "sum", "column": "qty"}
+  ],
+  "group_by": ["part_id"],
+  "where": [
+    {"column": "ordered_at", "op": ">=", "value": {"parameter": 1}},
+    {"column": "ordered_at", "op": "<", "value": {"parameter": 2}}
+  ]
+}

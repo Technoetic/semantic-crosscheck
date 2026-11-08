@@ -4,7 +4,7 @@
     python sxc.py <stage> [--config crosscheck.toml] [--out DIR] [options]
 
 Stages: doctor, demo, build, reason, cube, verify, report, cube-install, counterexample,
-cube-replay, tlp, shacl-corpus, expect, shacl-repair, grain, boundary-schema, semantic-preflight.
+cube-replay, tlp, shacl-corpus, expect, shacl-repair, grain, boundary-schema, semantic-preflight, sql-structure.
 Each stage writes <out>/<stage>/result.json (counts and check ids only, never row values) and exits with
 0 pass, 1 a check failed or could not run, 2 configuration or usage error, 3 environment missing.
 
@@ -56,6 +56,7 @@ STAGES = {
     "knowledge-evolution": "knowledge_evolution",
     "boundary-schema": "boundary_schema",
     "semantic-preflight": "semantic_preflight",
+    "sql-structure": "sql_structure",
 }
 NEEDS_CONFIG = {"demo", "build", "reason", "cube", "verify", "report", "expect", "grain", "semantic-preflight"}
 DIAGNOSTIC_STAGES = {"shacl-repair", "grain", "okf", "knowledge-evolution", "boundary-schema", "semantic-preflight"}
@@ -184,6 +185,13 @@ def parser(*, audit_errors=False) -> argparse.ArgumentParser:
                        help="check authored business definitions and a structured plan offline")
     s.add_argument("--contract", required=True, metavar="FILE", help="strict version 1 business contract")
     s.add_argument("--plan", required=True, metavar="FILE", help="strict version 1 structured plan")
+
+    s = sub.add_parser("sql-structure", allow_abbrev=False,
+                       help="compare PostgreSQL 17 AST syntax with authored expectations offline")
+    s.add_argument("--sql", required=True, metavar="FILE", help="explicit bounded SQL input")
+    s.add_argument("--expect", required=True, metavar="FILE", help="strict version 1 structural expectations")
+    s.add_argument("--out", metavar="DIR", help="output directory (default: .sxc next to SQL input)")
+    s.add_argument("--quiet", action="store_true", help="print only the summary line")
 
     s = sub.add_parser("shacl-corpus", parents=[common], help="compare pySHACL and Apache Jena against independently expected nonrecursive synthetic reports")
     s.add_argument("--jena-home", default="", help="Apache Jena distribution directory (default: SXC_JENA_HOME)")
@@ -552,6 +560,10 @@ def _expect_write(res, out, cfg, configuration_sha):
 
 def main(argv=None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
+    if argv and (argv[0] == 'sql-structure' or
+                 (argv[0].startswith('-') and 'sql-structure' in argv)):
+        from semantic_crosscheck import sql_structure
+        return sql_structure.cli(argv, parser, _summary)
     if argv and (argv[0] == 'semantic-preflight' or
                  (argv[0].startswith('-') and 'semantic-preflight' in argv)):
         from semantic_crosscheck import semantic_preflight

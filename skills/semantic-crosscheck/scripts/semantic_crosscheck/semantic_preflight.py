@@ -6,7 +6,6 @@ detect ordinary changes; they are not a lock against hostile ancestor races.
 """
 import argparse
 from dataclasses import dataclass
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -207,7 +206,19 @@ def _publish(res, inputs, out):
         with os.fdopen(fd, 'w', encoding='utf-8', newline='\n') as stream:
             stream.write('*\n')
     _protect(inputs, out)
-    res.write(out)
+    published = _Captured.read(res.write(out))
+    try:
+        _protect(inputs, out)
+        published.unchanged()
+    except Exception:
+        # Remove only this unchanged, guarded receipt. Preserve an output that
+        # another writer replaced or aliased while publication was in flight.
+        try:
+            published.unchanged()
+            published.path.unlink()
+        except Exception:
+            pass
+        raise
 
 
 def cli(argv, _parser, summary):
@@ -231,12 +242,10 @@ def cli(argv, _parser, summary):
             res = business_contracts.evaluate(cfg, _decode(inputs[1].raw), _decode(inputs[2].raw))
         except (StageError, ValueError, TypeError, UnicodeError, RecursionError, OverflowError, _Invalid):
             res = _failed()
-        res.inputs = {name + '_sha256': hashlib.sha256(source.raw).hexdigest()
-                      for name, source in zip(('config', 'contract', 'plan'), inputs)}
-        # Bind both files implementing this diagnostic; do not collect generic
-        # fingerprints which read unrelated SQL sources or operational evidence.
-        res.inputs['generator_sha256'] = hashlib.sha256(
-            Path(__file__).read_bytes() + Path(business_contracts.__file__).read_bytes()).hexdigest()
+        from .contract_evidence import fingerprints
+        # Explicit selected paths are hashed as well as their captured bytes.
+        # A passing diagnostic for other files cannot satisfy configured inputs.
+        res.inputs = fingerprints(inputs)
         res.provenance = {'schema_version': 1, 'binding': 'not_applicable'}
         res.runtime_evidence = {'schema_version': 1, 'binding': 'not_applicable'}
         res._suppress_paths = True

@@ -31,7 +31,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from . import config, cube_run, provenance, runtime_provenance
+from . import config, contract_evidence, cube_run, provenance, runtime_provenance
 from .result import STATUSES, Result, inputs_fingerprint, load_result
 from .result_contract import ResultContractError, invalid_result, validate_result
 
@@ -53,6 +53,7 @@ STALE_WHY = {
     "cube_runtime_changed": "{stage} was served by another Cube version or SQL planner than this checkout pins",
     "cube_runtime_missing": "{stage} recorded no Cube version and SQL planner, so it cannot be shown to have been "
                             "served by the pinned ones",
+    "contract_evidence_changed": "{stage} has no current binding to the configured contract, plan and generator",
 }
 # which recorded inputs a stage depends on (result.inputs_fingerprint keys)
 INPUTS = {stage: ("config_sha256", "engine_sha256", "revision_query_sha256") for stage in ("build", "reason", "cube")}
@@ -111,7 +112,14 @@ def counts(r: dict) -> dict:
 def required_stages(cfg) -> list[str]:
     """build, cube and verify; reason too when the configuration has an [ontology] or [[shapes]] (or is unknown)."""
     reason = cfg is None or bool(cfg.ontology.hierarchy) or bool(cfg.shapes)
-    return [s for s in PIPELINE if s in ALWAYS_REQUIRED or (s == "reason" and reason)]
+    required = [s for s in PIPELINE if s in ALWAYS_REQUIRED or (s == "reason" and reason)]
+    if cfg is not None and cfg.semantic_preflight is not None:
+        required.append(contract_evidence.STAGE)
+    return required
+
+
+def _stage_order(required):
+    return (*PIPELINE, contract_evidence.STAGE) if contract_evidence.STAGE in required else PIPELINE
 
 
 def _brief(detail) -> str:
@@ -234,7 +242,7 @@ def _trusted(cfg) -> dict:
 
 def _add_stage_checks(res: Result, results: dict, statuses: dict, required: list[str], stale: dict,
                       counted: dict) -> None:
-    for stage in PIPELINE:
+    for stage in _stage_order(required):
         if stage not in results:
             if stage in required:
                 res.add(f"stage:{stage}", "not_run", "", reason="missing", required=True)
@@ -260,9 +268,12 @@ def _next_action(results: dict, counted: dict, required: list[str], stale: dict)
     that are stale or missing."""
     if not results:
         return f"run `sxc.py doctor`, then {', '.join(required)} (for the demo: demo before build), then rerun report"
-    todo = [s for s in PIPELINE if (s in required and s not in results) or (s in stale and counted.get(s) is not None)]
-    for stage in PIPELINE:
+    todo = [s for s in _stage_order(required) if (s in required and s not in results) or (s in stale and counted.get(s) is not None)]
+    for stage in _stage_order(required):
         if stage in todo:
+            if stage == contract_evidence.STAGE:
+                return ('Run `sxc.py semantic-preflight --config FILE --contract CONFIGURED_CONTRACT '
+                        '--plan CONFIGURED_PLAN` with the configured files, then rerun report.')
             return _rerun_action(todo, results)
         status = counted.get(stage)
         if status not in (None, "pass"):
@@ -325,7 +336,7 @@ def render_md(summary: dict) -> str:
              "ran after the stages it depends on and passed.", "",
              "| Stage | Status | Pass | Fail | Error | Not run | Not proven | Finished |",
              "|---|---|---:|---:|---:|---:|---:|---|"]
-    for stage in PIPELINE:
+    for stage in _stage_order(summary["required"]):
         s = summary["stages"].get(stage)
         if s is None:
             lines.append(f"| {stage} | {_status_cell(stage, summary)} | | | | | | |")
@@ -337,7 +348,7 @@ def render_md(summary: dict) -> str:
     lines += ["", "## Missing or stale stages", ""]
     stale = {item["stage"]: item for item in summary["stale"]}
     blockers = []
-    for stage in PIPELINE:
+    for stage in _stage_order(summary["required"]):
         if stage in summary["missing_required"]:
             blockers.append(f"- {stage}: required, but it has not run (no {stage}/result.json)")
         elif stage in stale and summary["stages"][stage]["counted_as"] is not None:
@@ -384,6 +395,7 @@ def run(cfg, args, out: Path) -> Result:
     res = Result("report")
     results = read_results(out)
     required = required_stages(cfg)
+    evidence = contract_evidence.inspect(cfg, out) if contract_evidence.STAGE in required else None
     try:
         current = provenance.current_probe(cfg)
     except provenance.RevisionError as problem:
@@ -401,33 +413,68 @@ def run(cfg, args, out: Path) -> Result:
         res.not_proven.append(runtime_provenance.BOUND_NOTE)
     cube_version = cfg.cube.version if cfg is not None else config.CUBE_VERSION
     stale = staleness(results, inputs_fingerprint(cfg), current, current_runtime, cube_run.runtime_facts(cube_version))
-    statuses = {stage: stage_status(r) for stage, r in results.items()}
-    # A malformed file cannot be dismissed as an optional stale execution:
-    # its synthetic receipt has no usable fingerprints precisely because the
-    # entire input was rejected. Ordinary optional stale results keep their rule.
-    counted = {stage: ('error' if any(c['id'] == 'result_file' and c['status'] == 'error' for c in _checks(r))
-                       else counted_status(statuses[stage], stage in required, stale.get(stage)))
-               for stage, r in results.items()}
-    _add_stage_checks(res, results, statuses, required, stale, counted)
-    res.next_safe_action = _next_action(results, counted, required, stale)
+    if evidence is not None:
+        evidence.refresh()
+        if evidence.result is not None:
+            results[contract_evidence.STAGE] = evidence.result
+        if evidence.stale:
+            stale[contract_evidence.STAGE] = evidence.stale
+        res.not_proven.append(contract_evidence.NOTE)
+    base_checks = list(res.checks)
+    base_not_proven = list(res.not_proven)
 
-    summary = {
-        "status": res.status,
-        "generated_at": time.strftime(_TIME),
-        "config": cfg.path.name if cfg is not None else "",
-        "required": required,
-        "stages": {stage: _stage_summary(r, statuses[stage], stage in required, stale.get(stage), counted[stage])
-                   for stage, r in results.items()},
-        "not_run": [s for s in PIPELINE if s not in results],
-        "missing_required": [s for s in required if s not in results],
-        "stale": [{"stage": s, **info} for s, info in stale.items()],
-        "not_proven": res.not_proven,
-        "trusted_sql": _trusted(cfg),
-        "provenance": current,
-        "runtime_evidence": current_runtime,
-        "next_safe_action": res.next_safe_action,
-    }
+    def assemble():
+        res.checks = list(base_checks)
+        res.not_proven = list(base_not_proven)
+        statuses = {stage: stage_status(r) for stage, r in results.items()}
+        # Malformed optional evidence cannot disappear as a stale execution.
+        counted = {stage: ('error' if any(c['id'] == 'result_file' and c['status'] == 'error' for c in _checks(r))
+                           else counted_status(statuses[stage], stage in required, stale.get(stage)))
+                   for stage, r in results.items()}
+        _add_stage_checks(res, results, statuses, required, stale, counted)
+        res.next_safe_action = _next_action(results, counted, required, stale)
+        return {
+            "status": res.status,
+            "generated_at": time.strftime(_TIME),
+            "config": cfg.path.name if cfg is not None else "",
+            "required": required,
+            "stages": {stage: _stage_summary(r, statuses[stage], stage in required, stale.get(stage), counted[stage])
+                       for stage, r in results.items()},
+            "not_run": [s for s in _stage_order(required) if s not in results],
+            "missing_required": [s for s in required if s not in results],
+            "stale": [{"stage": s, **info} for s, info in stale.items()],
+            "not_proven": res.not_proven,
+            "trusted_sql": _trusted(cfg),
+            "provenance": current,
+            "runtime_evidence": current_runtime,
+            "next_safe_action": res.next_safe_action,
+        }
+
+    def changed():
+        if evidence is None:
+            return False
+        previous = evidence.result
+        evidence.refresh()
+        if evidence.result is previous:
+            return False
+        results[contract_evidence.STAGE] = evidence.result
+        stale.pop(contract_evidence.STAGE, None)
+        return True
+
+    # A late input/result change invalidates this capture permanently. Rebuild
+    # the summary with an error rather than recapturing and accepting a new pass.
+    summary = assemble()
+    markdown = render_md(summary)
+    if changed():
+        summary = assemble()
+        markdown = render_md(summary)
     out.mkdir(parents=True, exist_ok=True)
-    (out / "report.json").write_text(json.dumps(summary, ensure_ascii=False, indent=1) + "\n", encoding="utf-8", newline="\n")
-    (out / "report.md").write_text(render_md(summary), encoding="utf-8", newline="\n")
+    def publish():
+        (out / "report.json").write_text(json.dumps(summary, ensure_ascii=False, indent=1) + "\n", encoding="utf-8", newline="\n")
+        (out / "report.md").write_text(markdown, encoding="utf-8", newline="\n")
+    publish()
+    if changed():
+        summary = assemble()
+        markdown = render_md(summary)
+        publish()
     return res

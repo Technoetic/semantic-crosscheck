@@ -13,7 +13,7 @@ import re
 import tomllib
 from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 from . import ident
 from .result import EXIT_CONFIG, StageError
@@ -23,7 +23,8 @@ DEFINED_KINDS = ("has_child", "has_parent", "contains_class", "class_with_child"
 STRATA = ("top", "mid", "leaf", "leaf_parent", "deep", "shared", "empty")
 CUBE_VERSION = "1.8.3"           # the adapter's package-lock and native hashes are pinned to this release
 PAIR_KEY_CAP = 2000              # keys per V3 pair query (shape_q: the sample and chunk size); the least budget
-TABLES = ("version", "source", "entities", "hierarchies", "shapes", "measures", "ontology", "cube", "verify", "gold")
+TABLES = ("version", "source", "entities", "hierarchies", "shapes", "measures", "ontology", "cube", "verify", "gold",
+          "semantic_preflight")
 EXPECT_SOURCES = ("authored", "captured")
 EXPECT_KEYS = ("source", "spec", "params", "rows", "partial", "fixture_sha256", "spec_source")
 NULL_CELL = {"null": True}       # TOML has no NULL: an expected cell written { null = true } is SQL NULL
@@ -229,6 +230,29 @@ class Verify:
 
 
 @dataclass
+class SemanticPreflight:
+    contract: str
+    plan: str
+
+    def paths(self, cfg: "Config") -> tuple[Path, Path]:
+        return tuple(cfg.base_dir() / value for value in (self.contract, self.plan))
+
+
+def _semantic_preflight(raw) -> SemanticPreflight:
+    _known_keys(raw, ("contract", "plan"), "semantic_preflight")
+    for key in ("contract", "plan"):
+        value = raw.get(key)
+        # Refuse platform-specific absolute paths on every host, URI schemes,
+        # traversal and empty segments. Sidecars stay relative to the config.
+        parts = value.replace("\\", "/").split("/") if isinstance(value, str) else []
+        if (not parts or not value.strip() or any(part in ("", ".", "..") for part in parts)
+                or any(ord(char) < 32 for char in value) or ":" in value
+                or PureWindowsPath(value).anchor or Path(value).is_absolute()):
+            _err(f"semantic_preflight.{key}", "must be a nonempty relative file path without traversal")
+    return SemanticPreflight(raw["contract"], raw["plan"])
+
+
+@dataclass
 class Config:
     path: Path
     version: int
@@ -241,6 +265,7 @@ class Config:
     cube: Cube
     gold: list
     verify: Verify
+    semantic_preflight: SemanticPreflight | None = None
 
     def entity(self, name: str, ref: str) -> Entity:
         if name not in self.entities:
@@ -478,6 +503,8 @@ def _parse(text: str, p: Path) -> Config:
         _err("verify.mutation_operators", 'use "default" or a list of operator names')
 
     cfg = Config(p.resolve(), 1, src, entities, {}, [], {}, Ontology(), cube, [], verify)
+    if "semantic_preflight" in raw:
+        cfg.semantic_preflight = _semantic_preflight(raw["semantic_preflight"])
 
     for name, h in raw.get("hierarchies", {}).items():
         ref = f"hierarchies.{name}"

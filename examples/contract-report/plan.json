@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "selections": [
+    {
+      "metric_id": "on_hand_stock",
+      "term": "Stock units",
+      "binding": {
+        "measure": "on_hand",
+        "gold": "q01_stock",
+        "cube_member": "m_on_hand.value"
+      },
+      "context": {
+        "unit": "units",
+        "grain": "part_id",
+        "population": "main_and_sub_locations",
+        "aggregation": "sum",
+        "denominator": "not_applicable",
+        "time_basis": "not_applicable",
+        "timezone": "not_applicable"
+      },
+      "period": {
+        "kind": "none"
+      }
+    }
+  ]
+}

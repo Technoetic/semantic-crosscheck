@@ -334,7 +334,7 @@ described in [docs/data-rules.md](../../../docs/data-rules.md); a synthetic exam
 | Key | Type | Default | Meaning |
 |---|---|---|---|
 | `file` | string | required | Config-relative rule file |
-| `views` | boolean | `True` | build creates the lookup views `v_rule_<id>` and `v_rules_subjects` in the output schema, and data-rules checks that they return the agreed rows |
+| `views` | boolean | `True` | build creates the lookup views `v_rule_<id>` and `v_rules_subjects` in the output schema, and data-rules checks that they return the agreed rows; `false` creates none but does not drop the views an earlier build created |
 | `require_examples` | boolean | `True` | A rule without `[[rule.example]]` leaves `rule_example:<id>` `not_run` (`no_example`), so data-rules cannot pass; with `false` such a rule gets only a not-proven line |
 | `max_export_rows` | integer | `200000` | 1..2000000: rows the Python evaluation may export, all entities together |
 | `max_rule_rows` | integer | `200000` | 1..2000000: output rows one compiled rule may return |

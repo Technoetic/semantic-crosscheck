@@ -35,7 +35,7 @@ INSERT INTO sxc_rules.code_value (code_group, code) VALUES
 
 INSERT INTO sxc_rules.part (part_id, name, unit, part_class, procure, issue, retired, stored_level) VALUES
   -- qty_over_limit: one rack with quantities at, just above and far above 500
-  ('Q1', 'Q1 Rack', 'pc', 'ASSY', 'BUY', 'STD', false, NULL),
+  ('QR', 'QR Rack', 'pc', 'ASSY', 'BUY', 'STD', false, NULL),
   ('QA', 'QA Rail', 'pc', 'PART', 'BUY', 'STD', false, NULL),
   ('QB', 'QB Rail', 'pc', 'PART', 'BUY', 'STD', false, NULL),
   ('QC', 'QC Rail', 'pc', 'PART', 'BUY', 'STD', false, NULL),
@@ -170,13 +170,13 @@ INSERT INTO sxc_rules.part (part_id, name, unit, part_class, procure, issue, ret
   ('XC2', 'XC2 Lid', 'pc', 'PART', 'BUY', 'STD', false, NULL);
 
 INSERT INTO sxc_rules.bom_line (line_id, parent_id, child_id, qty_per) VALUES
-  (101, 'Q1', 'QA', 500),
-  (102, 'Q1', 'QB', 500.000001),
-  (103, 'Q1', 'QC', 750),
-  (104, 'Q1', 'QC', 750.000),
-  (105, 'Q1', NULL, NULL),
-  (106, 'Q1', 'QD', 99),
-  (107, 'Q1', 'QE', 1000),
+  (101, 'QR', 'QA', 500),
+  (102, 'QR', 'QB', 500.000001),
+  (103, 'QR', 'QC', 750),
+  (104, 'QR', 'QC', 750.000),
+  (105, 'QR', NULL, NULL),
+  (106, 'QR', 'QD', 99),
+  (107, 'QR', 'QE', 1000),
   (201, 'GHOST', 'PA', 1),
   (202, 'GHOST', 'PB', 2),
   (203, NULL, 'PA', 1),
@@ -309,7 +309,7 @@ INSERT INTO sxc_rules.bom_line (line_id, parent_id, child_id, qty_per) VALUES
   (1601, NULL, 'T1', 0.3333),
   (1602, NULL, 'RX', 1),
   (1603, 'GHOST-V', 'AR2', 1),
-  (1604, 'Q1', NULL, 900),
+  (1604, 'QR', NULL, 900),
   (1605, NULL, NULL, NULL),
   (1606, 'GHOST-V', 'LOST-V', 1),
   (1607, NULL, 'NP', 1);

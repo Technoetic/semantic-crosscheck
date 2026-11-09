@@ -16,8 +16,8 @@ Covered (spec section 12.2 and more):
   SQL mutants m1-m4 and Python mutants e1-e3 make the cross-check fail;
 - other column types: char(n) keys with pad spaces, varchar keys of two lengths with smallint and bigint columns,
   integer keys of two integer types, deterministic ICU columns (ord and group_id stay in code-point order, checked by
-  mutants), a nondeterministic collation (collation not_run), and two collations compared with each other (an SQL
-  error, never a verdict); rule constants with quotes, backslashes, colons, $1, -- and non-ASCII text in the view
+  mutants), a nondeterministic collation (collation not_run), and two collations compared with each other (rule
+  errors 42P22, or for parent and child a snapshot error 42P21, with a collation hint; never a verdict); rule constants with quotes, backslashes, colons, $1, -- and non-ASCII text in the view
   definitions; a reserved word as a column name; a pattern with escaped punctuation in a bracket class;
 - gates and budgets: NaN and infinity (and an entity pointed at a view that clears them), NULL and duplicate node
   keys, a cycle and a shallow max_depth, NULL edge quantities, long text, an empty edge table, max_export_rows (no rule,
@@ -97,8 +97,8 @@ SETTINGS = {"dsn_env": CHECK_ENV, "timeout_ms": 120000, "max_depth": 16, "views"
 # ---- hand-written outputs of the clean-room rules on the base rows of fixture.sql ------------------------------------
 # rule id: (rule status, violations, rows of v_rule_<id> in ord order, numbers as canonical numerals, NULL as None)
 BASE = {
-    "qty_over_limit": ("fail", 4, [("Q1", "QB", "500.000001", "1"), ("Q1", "QC", "750", "2"),
-                                   ("Q1", "QE", "1000", "1")]),
+    "qty_over_limit": ("fail", 4, [("QR", "QB", "500.000001", "1"), ("QR", "QC", "750", "2"),
+                                   ("QR", "QE", "1000", "1")]),
     "parent_unknown": ("fail", 2, [("GHOST",), ("GHOST-T",)]),
     "kit_without_bom": ("fail", 1, [("K1",)]),
     "retired_child_in_active_parent": ("fail", 8, [
@@ -109,7 +109,7 @@ BASE = {
     "unknown_procure_code": ("pass", 5, [("UP1",), ("UP7",), ("Up2",), ("up3",), (U_ACUTE + "P4",)]),
     "temporary_name": ("pass", 1, [("TN1",)]),
     "truncated_third": ("pass", 2, [("TT", "T1", "0.3333", "1"), ("TT", "T2", "0.6666", "1")]),
-    "repeated_line": ("pass", 6, [("DP", "DC", "3"), ("OA", "OT", "3"), ("Q1", "QC", "2"), ("RA1", "RX", "2"),
+    "repeated_line": ("pass", 6, [("DP", "DC", "3"), ("OA", "OT", "3"), ("QR", "QC", "2"), ("RA1", "RX", "2"),
                                   ("SP2", "SB1", "2"), ("TW1", "WS1", "2")]),
     "same_name_components": ("pass", 1, [("SP1",)]),
     "odd_quantity": ("pass", 2, [("OG", "OS", "40", "2", "1"), ("OH", "OS", "0.1", "2", "1")]),
@@ -133,7 +133,7 @@ BASE_SUBJECTS = [   # (subject, severity, severity_rank, rule_count, rules) in o
     ("GHOST", V, 0, 1, ("parent_unknown",)),
     ("GHOST-T", V, 0, 1, ("parent_unknown",)),
     ("K1", V, 0, 1, ("kit_without_bom",)),
-    ("Q1", V, 0, 2, ("qty_over_limit", "repeated_line")),
+    ("QR", V, 0, 2, ("qty_over_limit", "repeated_line")),
     ("RA1", V, 0, 2, ("retired_child_in_active_parent", "repeated_line")),
     ("RU1", V, 0, 1, ("retired_assembly_in_use",)),
     ("RUp", V, 0, 1, ("retired_child_in_active_parent",)),
@@ -467,7 +467,7 @@ where = [{ column = "code_group", op = "ne", value = "PROCURE" }]
 # ---- hand-written outputs on the variant (the base rows plus the variant rows of fixture.sql) -----------------------
 VARIANT = dict(BASE)
 VARIANT.update({
-    "qty_over_limit": ("fail", 5, [("Q1", None, "900", "1")] + BASE["qty_over_limit"][2]),
+    "qty_over_limit": ("fail", 5, [("QR", None, "900", "1")] + BASE["qty_over_limit"][2]),
     "parent_unknown": ("fail", 3, [("GHOST",), ("GHOST-T",), ("GHOST-V",)]),
     "truncated_third": ("pass", 3, [(None, "T1", "0.3333", "1")] + BASE["truncated_third"][2]),
     "child_unknown_line": ("pass", 8, [("405",), ("504",), ("905",), ("1106",), ("1406",), ("1407",), ("1511",),
@@ -1100,6 +1100,13 @@ MIXED_DDL = [     # the node key and the edge endpoints in two different determi
     "qty_per numeric(18,6))",
     "CREATE TABLE sxc_mixed.code_value (code_group text, code text, PRIMARY KEY (code_group, code))",
 ]
+MIXED_ENDS_DDL = [   # the hierarchy parent and child columns in two different deterministic collations
+    "CREATE TABLE sxc_mixends.part (part_id text PRIMARY KEY, name text, unit text, part_class text, procure text, "
+    "issue text, retired boolean, stored_level integer)",
+    'CREATE TABLE sxc_mixends.bom_line (line_id integer PRIMARY KEY, parent_id text COLLATE "C", child_id text '
+    'COLLATE "POSIX", qty_per numeric(18,6))',
+    "CREATE TABLE sxc_mixends.code_value (code_group text, code text, PRIMARY KEY (code_group, code))",
+]
 NUMERIC_DDL = [   # integer node keys, a bigint parent column and an integer child column, numbered in code-point order
     "CREATE TABLE sxc_numeric.key_map (k text PRIMARY KEY, n integer NOT NULL)",
     "INSERT INTO sxc_numeric.key_map SELECT s.k, row_number() OVER (ORDER BY s.k COLLATE \"C\") FROM (SELECT part_id "
@@ -1190,7 +1197,8 @@ class ColumnTypesTest(_RulesCase):
 
     def test_columns_of_two_collations_are_an_sql_error_never_a_verdict(self):
         """Documents the current fail-closed behaviour: comparing the node key with an endpoint of another collation
-        is SQLSTATE 42P22 in PostgreSQL, so those rules end as errors without a verdict (spec section 8)."""
+        is SQLSTATE 42P22 in PostgreSQL, so those rules end as errors without a verdict (spec section 8), and
+        next_safe_action names the collation mismatch instead of the generic privilege hint."""
         source_schema("sxc_mixed")
         admin(*MIXED_DDL, *in_schema(fixture_statements()[3:], "sxc_mixed"), role=OWNER)
         code, console, res = self.project("mixed", "sxc_mixed", "sxc_mixed_out", views="false").data_rules()
@@ -1204,6 +1212,26 @@ class ColumnTypesTest(_RulesCase):
                 self.assertEqual(checks[f"rule_xcheck:{rule_id}"]["detail"]["reason"], "path_error")
         self.assert_agreed(res, ["temporary_name", "qty_over_limit", "repeated_line", "odd_quantity"])
         self.assertIn("SQLSTATE 42P22", res["next_safe_action"])
+        self.assertIn("text columns of different collations", res["next_safe_action"])
+        self.assertNotIn("the check role's privileges", res["next_safe_action"])
+
+    def test_parent_and_child_columns_of_two_collations_stop_the_snapshot(self):
+        """The height gate of stored_metric follows parent and child in a recursive query: two different deterministic
+        collations there are SQLSTATE 42P21 while the gate is parsed, outside the rule savepoints, so the snapshot is
+        an error and no rule is decided (fail-closed), with the collation hint."""
+        source_schema("sxc_mixends")
+        admin(*MIXED_ENDS_DDL, *in_schema(fixture_statements()[3:], "sxc_mixends"), role=OWNER)
+        code, console, res = self.project("mixends", "sxc_mixends", "sxc_mixends_out", views="false").data_rules()
+        self.assertEqual(code, 1, console)
+        checks = by_id(res)
+        snapshot = checks["data_rules:snapshot"]
+        self.assertEqual((snapshot["status"], snapshot["detail"]["sqlstate"]), ("error", "42P21"))
+        for rule_id in BASE:
+            with self.subTest(rule=rule_id):
+                self.assertEqual((checks[f"rule:{rule_id}"]["status"], checks[f"rule:{rule_id}"]["detail"]["reason"]),
+                                 ("not_run", "snapshot_not_read"))
+        self.assertIn("data_rules:snapshot hit a database error (SQLSTATE 42P21)", res["next_safe_action"])
+        self.assertIn("text columns of different collations", res["next_safe_action"])
 
     def test_integer_keys_of_two_integer_types_agree_and_keep_numeric_order(self):
         source_schema("sxc_numeric")
@@ -1463,7 +1491,7 @@ class SnapshotTest(_RulesCase):
         lookups, read_only = sdr._lookups, db.read_only
 
         def lookups_after_a_commit(*args, **kwargs):
-            admin("INSERT INTO sxc_snap.bom_line VALUES (9001, 'Q1', 'QD', 9999)", role=OWNER)
+            admin("INSERT INTO sxc_snap.bom_line VALUES (9001, 'QR', 'QD', 9999)", role=OWNER)
             return lookups(*args, **kwargs)
 
         def read_committed(conn, timeout_ms=60000, isolation=None):
@@ -1635,7 +1663,7 @@ class ViewLifecycleTest(_RulesCase):
         _code, _console, res = p.data_rules()
         self.assertEqual(self.lookups(res), {r: ("pass", None) for r in BASE})
         self.assertEqual(self.view_rows("sxc_out_columns", "qty_over_limit"),
-                         [("QB", "Q1", "500.000001", "1"), ("QC", "Q1", "750", "2"), ("QE", "Q1", "1000", "1")])
+                         [("QB", "QR", "500.000001", "1"), ("QC", "QR", "750", "2"), ("QE", "QR", "1000", "1")])
 
     def test_a_dropped_view_is_missing_until_build_runs_again(self):
         p = self.fresh("dropped")

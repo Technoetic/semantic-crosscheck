@@ -214,7 +214,15 @@ on something the rule's author did not mean.
 - **Nondeterministic collations are refused.** An ICU collation created with `deterministic = false` makes `=`, `IN`
   and `GROUP BY` treat different strings as equal in PostgreSQL, while Python compares code points. Rules that read
   such a column are `not_run` (`collation`); cast the column to a deterministic collation such as `COLLATE "C"` in a
-  database view and point the entity at the view.
+  database view, together with every column it is compared with (next point), and point the entity at the view.
+- **Compared text columns need one collation.** The node key and the hierarchy parent and child columns, and a
+  `not_in_ref` column and its ref column, are compared with each other. When two of them carry different
+  deterministic collations (say the node key `COLLATE "C"` and the edge endpoints an ICU collation, or a view that
+  casts only one side), PostgreSQL cannot choose a collation: a rule comparing them fails with SQLSTATE 42P22 and is
+  an `error` without a verdict, and parent and child columns of different collations already fail the height gate of
+  a `stored_metric` rule with 42P21, which ends the snapshot so that no rule is decided. Never a pass, but the type
+  check does not catch it before the run. Cast every compared column to the same collation in the views the entities
+  point at.
 - **Floating-point columns are refused.** `real` and `double precision` hold binary approximations, so equality and
   sums can differ between the engines. Rules that read them are `not_run` (`column_type`), as for dates, domains and
   every other type outside `int2`, `int4`, `int8`, `numeric`, `text`, `varchar`, `bpchar` and `bool`. Store
@@ -228,6 +236,10 @@ on something the rule's author did not mean.
   inside a subset both read alike: no alternation or letter escapes, `\d` and `\s` expanded to ASCII classes, `$`
   written as `\Z` for Python, no repetition over a group that contains a quantifier. A difference that remains
   shows up as a failing `rule_xcheck:<id>`, never as a pass.
+- **Overlapping quantifiers backtrack slowly in Python.** The subset excludes nested repetition, not neighbouring
+  quantified items that can match the same characters: `([0-9]+)[0-9]*[0-9]*g` is accepted, and Python's `re` tries
+  every split of a long digit run that is not followed by `g`, which takes polynomial time with no time limit on the
+  Python side. Keep neighbouring quantified items disjoint (`\s*([0-9.]+)\s*g`) and `max_text_length` small.
 - **COPY turns an unquoted empty CSV field into NULL.** When the source tables are loaded with `COPY ... (FORMAT
   csv)`, an unquoted empty field becomes NULL and a quoted `""` stays an empty string, so a blank code can arrive as
   NULL. A comparison with NULL is false (`ne`, `not_in` and `not_in_ref` included): a rule that must report blank or

@@ -38,8 +38,10 @@ python skills/semantic-crosscheck/scripts/sxc.py data-rules --config crosscheck.
 python skills/semantic-crosscheck/scripts/sxc.py data-rules --config crosscheck.toml --rule kit_without_bom
 ```
 
-- Run `build` first when `views = true`, and again after every change to the rule file or to `crosscheck.toml`; a
-  lookup view that build made from another rule file is `view_stale`.
+- Run `build` first when `views = true`, and again after every change to the rule file or to `crosscheck.toml`. A
+  lookup is `view_stale` when `build/build.sql` lacks the statement data-rules generates for its view now. This is
+  decided per statement: after a change to one rule's constants only that rule's lookup is stale (and
+  `rule_subjects:lookup` when that rule names a subject), while the other lookups still pass.
 - `--rule ID` (repeatable) checks only the named rules. The others are left out with `scope:rules` `not_run`, so a
   narrowed run never passes, and `rule_subjects:lookup` is `not_run` (`excluded_by_option`) when a left-out rule names
   a subject. An unknown id is exit 2.
@@ -159,6 +161,14 @@ A rule that reads a column of another type (including domains, floating-point an
 nondeterministic collation is not run (`column_type`, `collation`); cast the column in a database view and point the
 entity at it.
 
+Text columns that a rule compares with each other (the node key and the hierarchy parent and child columns, or a
+`not_in_ref` column and its ref column) must share one collation. The type check does not compare collations. With two
+different deterministic collations PostgreSQL cannot choose one: a rule that compares them fails with SQLSTATE 42P22
+and is an `error` without a verdict, and with a `stored_metric` rule, parent and child columns of different
+collations already fail the height gate with 42P21, which ends the snapshot (`data_rules:snapshot` `error`, no rule
+decided). `next_safe_action` names the mismatch. Cast every compared column to the same collation (for example
+`COLLATE "C"`) in database views and point the entities at them; casting only one side is what produces the mismatch.
+
 ### Pattern subset (`text_quantity`)
 
 Python `re` and PostgreSQL regular expressions differ, so a pattern must stay inside a subset both read alike:
@@ -170,7 +180,12 @@ Python `re` and PostgreSQL regular expressions differ, so a pattern must stay in
 - **Refused:** alternation, backreferences, lookaround, named groups, inline flags, lazy or possessive quantifiers,
   `\w`, `\W`, `\S`, `\D`, `\b`, `\B` and every other letter escape, POSIX classes, more than 256 characters, more than
   16 quantifiers, and a repetition (`*`, `+`, `{m,}` or an upper bound above 1) over a group that contains a
-  quantifier. `?` and `{0,1}` over such a group stay allowed. These rules keep Python's backtracking bounded.
+  quantifier. `?` and `{0,1}` over such a group stay allowed.
+- **Backtracking.** These rules exclude the nested repetition that makes Python's backtracking exponential, but they
+  do not bound it. Neighbouring quantified items that can match the same characters (`[0-9]+[0-9]*`, or
+  `[0-9]*.[0-9]*`, since `.` matches a digit too) still backtrack polynomially on a long text that does not match,
+  and the Python evaluation has no time limit (`statement_timeout_ms` bounds only the SQL side). Keep neighbouring
+  quantified items disjoint, as `\s*([0-9.]+)\s*g` does, and `max_text_length` no larger than the data needs.
 - The pattern needs 1 or 2 capturing groups: the amount, and optionally the divisor. Refused examples:
   `(?:[0-9]+)+x`, `(?:ab*){2,3}`.
 
@@ -310,10 +325,17 @@ SELECT * FROM sxc_out.v_rule_kit_without_bom ORDER BY ord;
   `rule_lookup:<id>` is `not_run` while the rule is not agreed (`rule_not_agreed`), and when build has not run
   (`build_missing`), did not create the view (`view_not_built`), created it from another rule file or configuration
   (`view_stale`: `build/build.sql` lacks the statement data-rules generates now) or the view is gone (`view_missing`).
+- **A lookup certifies rows, not the rule's verdict.** `rule_lookup:<id>` compares the view with the rows both
+  evaluations agreed on. It can pass while `rule:<id>` is `not_run` because an authored example failed
+  (`example_mismatch`), and that rule's subjects then stay in a passing `v_rules_subjects`. Check `rule:<id>` before
+  acting on a rule's rows.
 - **Constants are visible in view definitions.** The rule's constants appear as literals in the view definitions
   (`pg_views`) and in `build/build.sql`, as `sql_violation` predicates do; the output directory has a `.gitignore` of
   `*`.
-- With `views = false` nothing is created and nothing persists the agreed rows; a `not_proven` line says so.
+- With `views = false` build creates no rule view and data-rules certifies none; a `not_proven` line says so. build
+  does not drop the rule views an earlier build created: they stay live in the output schema and still return source
+  rows to anyone who can read it. Drop them by hand when they must go (`v_rules_subjects` first, then each
+  `v_rule_<id>` that carries the comment above).
 
 ## Checks
 
@@ -324,7 +346,7 @@ SELECT * FROM sxc_out.v_rule_kit_without_bom ORDER BY ord;
 | data-rules | `rule:<id>` | both paths agree, no example failed, and the rule found nothing or is a `warning` | `fail` (agreed, a `violation` rule found rows); `not_run` (`paths_disagree`, `example_mismatch`, a gate or budget reason, `snapshot_not_read`); `error` (SQLSTATE, `evaluator`) |
 | data-rules | `rule_xcheck:<id>` | the canonical output multisets are equal (`sql_outputs`, `py_outputs`, `sql_ms`, `py_ms`) | `fail` (`sql_only`, `py_only`); `not_run` (a gate reason, `path_error`) |
 | data-rules | `rule_example:<id>` | SQL = Python = `expect` for every example | `fail` (`common_mode`, `sql_mismatch`, `py_mismatch`, `both_mismatch` counts); `not_run` (`no_example`, `example_not_evaluable`); `error` |
-| data-rules | `rule_lookup:<id>` | `v_rule_<id>` returns exactly the agreed rows in canonical `ord` order | `fail` (`lookup_only`, `agreed_only`, `order_differs`); `not_run` (see above); `error` |
+| data-rules | `rule_lookup:<id>` | `v_rule_<id>` returns exactly the agreed rows in canonical `ord` order, whatever the rule's verdict | `fail` (`lookup_only`, `agreed_only`, `order_differs`); `not_run` (see above); `error` |
 | data-rules | `rule_subjects:lookup` | `v_rules_subjects` equals the Python roll-up of the agreed outputs, in order | `fail`; `not_run` (`incomplete`, `excluded_by_option`, the view reasons); `error` |
 | data-rules | `scope:rules` | never passes | `not_run` (`excluded_by_option`): `--rule` left rules out |
 | data-rules | `data_rules:inputs` | error check only | `error` (`inputs_changed`): crosscheck.toml or the rule file changed during the run |
@@ -353,6 +375,15 @@ or the rule file, rerun build and data-rules).
   values are only in the views, never in results.
 - **Regex engines.** The pattern subset keeps Python and PostgreSQL matches equal for the supported forms; any
   remaining difference in how captures are assigned shows up as a disagreement (`paths_disagree`), never as a pass.
+- **Pattern backtracking.** The subset excludes nested repetition but does not bound Python's backtracking over
+  neighbouring quantified items that can match the same characters, and the Python evaluation has no time limit. Keep
+  such items disjoint (see [Pattern subset](#pattern-subset-text_quantity)).
+- **Collations of compared columns.** Text columns a rule compares with each other must share one collation. Two
+  different deterministic collations make the rules comparing them errors (SQLSTATE 42P22), or end the snapshot
+  (42P21 from the height gate of a `stored_metric` rule): never a verdict. Cast them to one collation in database
+  views (see [Typing](#atoms)).
+- **Views after opting out.** `views = false` stops build from creating rule views but does not drop the ones an
+  earlier build created; they stay live until dropped by hand.
 - **Single-column node key.** The hierarchy node entity needs a one-column key.
 - **Report separation.** `report` never reads the data-rules result; run data-rules and read its result separately.
 - **No file of keys.** The keys a rule found are only in the database views, never written to a file.

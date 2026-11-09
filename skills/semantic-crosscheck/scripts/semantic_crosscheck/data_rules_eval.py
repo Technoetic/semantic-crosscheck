@@ -63,8 +63,8 @@ authored output as an Outcome and example_verdict() names how the SQL, Python an
 differ. subjects() rolls the agreed outputs of the rules that name a subject up into the rows of the subjects view,
 in its order; sort_key() and ordered() give the typed order of the lookup views.
 
-Imports: the standard library and canon only, so an application that already vendors canon can add this file. The
-rule file's objects are read through their attributes. Messages name entities, columns and types, never a value.
+Imports: the standard library and canon only, never the compiler or a stage module. The rule file's objects are read
+through their attributes. Messages name entities, columns and types, never a value.
 """
 
 import operator

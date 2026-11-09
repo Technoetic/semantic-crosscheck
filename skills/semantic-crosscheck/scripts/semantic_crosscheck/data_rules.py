@@ -23,8 +23,8 @@ cell() and sort_key() give the canonical comparison form of output cells and the
 < numbers by value < text by code point, which is UTF-8 byte order and COLLATE "C"). view_name() and SUBJECTS_VIEW
 name the lookup views in the output schema.
 
-This module imports only the standard library, canon and ident, so an application that already vendors canon and
-ident can add it, and the evaluator built on it, without the stage modules.
+This module imports only the standard library, canon and ident; it never imports a stage module, the compiler or the
+evaluator.
 """
 
 import hashlib
@@ -1065,8 +1065,10 @@ def compile_subset(pattern: str) -> Pattern:
     Refused: alternation, backreferences, lookaround, named groups, inline flags, lazy or possessive quantifiers, any
     other letter escape (\\w \\W \\S \\D \\b \\B ...), POSIX classes, NUL, more than 256 characters, more than 16
     quantifiers, and a repetition (* + {m,} or an upper bound above 1) over a group that contains a quantifier; ?
-    and {0,1} over such a group stay allowed. These rules keep Python's backtracking bounded and the two engines'
-    matches and captures equal. Raises PatternError naming the construct, never the pattern."""
+    and {0,1} over such a group stay allowed. These rules keep the two engines' matches and captures equal and exclude
+    the nested repetition that makes Python's backtracking exponential; neighbouring quantified items that can match
+    the same characters are still accepted and can backtrack polynomially on a long text that does not match.
+    Raises PatternError naming the construct, never the pattern."""
     if not isinstance(pattern, str) or not pattern:
         raise PatternError("empty")
     if len(pattern) > MAX_PATTERN_LENGTH:

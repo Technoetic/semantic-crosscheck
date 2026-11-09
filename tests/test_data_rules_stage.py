@@ -4,8 +4,9 @@ A fake pg8000 connection answers the catalog, gate, rule, lookup, export and exa
 the statement texts it knows are generated here with data_rules_sql for the same configuration, so a statement the
 stage should not send fails the test. The canned SQL outputs are written by hand from the semantic contract, never
 computed with the Python evaluation, so the Python path is checked against them. Covered: every status and reason of
-the checks, the budget stop (no rule, lookup or export statement), the timeout hint, narrowing, the next_safe_action
-order, the not_proven lines, the result boundary (synthetic row markers never reach result.json, the console or
+the checks, the budget stop (no rule, lookup or export statement), the timeout and collation-mismatch hints,
+narrowing, no earlier rules.sql left by a configuration error, the next_safe_action order, the not_proven lines, the
+result boundary (synthetic row markers never reach result.json, the console or
 rules.sql), the import independence of the two paths, Python mutants e1, e2 and e3 against correct SQL rows, and
 build's view transaction (lock, savepoints, 42P16, orphans, the subjects view, build.sql). No database is needed.
 """
@@ -1061,6 +1062,25 @@ class CliTest(StageCase):
         self.assertEqual(code, 3, console)
         self.assertIn("SXC_PG_DSN", console)
 
+    def test_a_configuration_error_leaves_no_rules_sql_of_an_earlier_run(self):
+        """rules.sql is removed before the rule file is read, so an exit-2 run never leaves the statements of an
+        earlier run next to its error result."""
+        invalid = RULES.replace('severity = "warning"\nwhere = [{ column = "qty_per", op = "in"',
+                                'severity = "minor"\nwhere = [{ column = "qty_per", op = "in"')
+        self.assertNotEqual(invalid, RULES)
+        cases = [("unknown --rule", self.world(), ("--rule", "no_such_rule")),
+                 ("invalid rule file", self.world(invalid), ()),
+                 ("no [data_rules]", self.world(config_text=CONFIG.split("[data_rules]")[0]), ())]
+        for label, world, argv in cases:
+            with self.subTest(case=label):
+                stale = world.out / "data_rules" / "rules.sql"
+                stale.parent.mkdir(exist_ok=True)
+                stale.write_text("-- an earlier run\n", encoding="utf-8")
+                code, console = world.cli(*argv)
+                self.assertEqual(code, 2, console)
+                self.assertFalse(stale.exists())
+                self.assertEqual(world.result()["status"], "error")
+
     def test_the_rule_file_must_not_lie_in_the_output_directory(self):
         w = self.world(config_text=CONFIG.replace('file = "data-rules.toml"', 'file = ".sxc/data-rules.toml"'))
         shutil.copy(w.dir / "data-rules.toml", w.out / "data-rules.toml")
@@ -1104,6 +1124,21 @@ class NextActionTest(unittest.TestCase):
                                                                  "gate": "cycle_or_depth_limit"})))
         self.assertIn("raise data_rules.max_export_rows", self.action(("data_rules:snapshot", "not_run",
                                                                        {"reason": "resource_limit"})))
+
+    def test_a_collation_mismatch_gets_its_own_hint(self):
+        """Text columns of two different deterministic collations compared with each other: 42P22 makes a rule an
+        error, 42P21 (the height gate's recursive query over parent and child) ends the snapshot. Neither is a
+        verdict, and the hint names the cause instead of the check role's privileges."""
+        for check_id, code in (("rule:a", "42P22"), ("data_rules:snapshot", "42P21"), ("rule_lookup:a", "42P22")):
+            with self.subTest(check=check_id, sqlstate=code):
+                self.assertIn(code, sdr.COLLATION_MISMATCH)
+                text = self.action((check_id, "error", {"sqlstate": code}))
+                self.assertIn(f"{check_id} hit a database error (SQLSTATE {code})", text)
+                self.assertIn("text columns of different collations", text)
+                self.assertIn('COLLATE "C"', text)
+                self.assertNotIn("privileges", text)
+                self.assertTrue(text.endswith("then rerun data-rules"))
+        self.assertNotIn("collation", self.action(("rule:a", "error", {"sqlstate": "42601"})))
 
 
 class NotProvenTest(StageCase):

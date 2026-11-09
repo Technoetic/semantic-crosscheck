@@ -5,6 +5,9 @@ The goldens next to this file were written by this script on v0.21.1, before any
     python -X utf8 tests/fixtures/compat_v0_21_1/capture.py --write     # write the goldens (done once, in P0)
     python -X utf8 tests/fixtures/compat_v0_21_1/capture.py             # compare the current code with them
 
+The comparison allows one difference by design, as tests/test_data_rules_compat.py does: static/stages.txt may gain
+the stages added since v0.21.1 (NEW_STAGES) and nothing else. It is reported as expected and does not fail the run.
+
 tests/test_data_rules_compat.py calls collect() and compares every golden byte for byte. Everything runs offline:
   - static/: shapes.violation_sql per shape, shapes.shapes_ttl, shapes.fk_review_sql, the sorted sxc.STAGES, the
     inputs_fingerprint key names, report.TRUSTED_NOTE and stage_build.BUILD_SQL_HEADER;
@@ -50,6 +53,8 @@ SCENARIOS = {
     "pass": {"child_exists": 0, "qty_positive": 0, "stock_nonnegative": 0, "open_le_total": 0},
     "fail": {"child_exists": 2, "qty_positive": 0, "stock_nonnegative": 1, "open_le_total": 3},
 }
+STAGES = "static/stages.txt"
+NEW_STAGES = {"data-rules"}                     # stages added since v0.21.1: the only allowed golden difference
 TIME = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:[+-]\d{4}|Z)?")
 ENGINE = re.compile(r'"engine_sha256": "[0-9a-f]{64}"')
 NO_ROWS = ("BEGIN", "COMMIT", "ROLLBACK", "SET LOCAL ", "SAVEPOINT ", "RELEASE SAVEPOINT ", "CREATE ", "DROP ",
@@ -213,6 +218,16 @@ def differences(files: dict, folder: Path = HERE) -> list[str]:
     return sorted(changed + sorted(found - set(files)))
 
 
+def expected_difference(rel: str, files: dict, folder: Path = HERE) -> bool:
+    """True when rel is static/stages.txt and the current stage list is the golden one plus stages of NEW_STAGES."""
+    path = folder / rel
+    if rel != STAGES or rel not in files or not path.is_file():
+        return False
+    golden = path.read_bytes().decode("utf-8").splitlines()
+    current = files[rel].splitlines()
+    return set(current) - set(golden) <= NEW_STAGES and [s for s in current if s not in NEW_STAGES] == golden
+
+
 def main(argv: list[str]) -> int:
     files = collect()
     if argv[1:] == ["--write"]:
@@ -223,10 +238,14 @@ def main(argv: list[str]) -> int:
         print("usage: capture.py [--write]")
         return 2
     changed = differences(files)
-    for rel in changed:
+    expected = [rel for rel in changed if expected_difference(rel, files)]
+    unexpected = [rel for rel in changed if rel not in expected]
+    for rel in expected:
+        print(f"differs as expected: {rel} (the stage list gained only {', '.join(sorted(NEW_STAGES))})")
+    for rel in unexpected:
         print(f"differs: {rel}")
-    print(f"{len(files)} goldens, {len(changed)} differ")
-    return 1 if changed else 0
+    print(f"{len(files)} goldens, {len(unexpected)} differ" + (f", {len(expected)} as expected" if expected else ""))
+    return 1 if unexpected else 0
 
 
 if __name__ == "__main__":

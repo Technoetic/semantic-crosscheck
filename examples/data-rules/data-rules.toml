@@ -1,4 +1,4 @@
-# data-rules.toml - clean-room synthetic example: one rule per kind and atom family, invented values and thresholds.
+# data-rules.toml - clean-room synthetic example: the six kinds and most atom families, invented values and thresholds.
 # Entities and the hierarchy come from crosscheck.toml ([data_rules] file = "data-rules.toml").
 version = 1
 hierarchy = "has_component"          # optional when crosscheck.toml has exactly one hierarchy

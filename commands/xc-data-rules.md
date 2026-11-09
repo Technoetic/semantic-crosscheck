@@ -51,8 +51,10 @@ python "${CLAUDE_PLUGIN_ROOT}/skills/semantic-crosscheck/scripts/sxc.py" data-ru
   agree but differ from the authored rows; `rule:<id>` is then `not_run` (`example_mismatch`). A rule without examples
   leaves it `not_run` (`no_example`) while `require_examples = true`.
 - `rule_lookup:<id>` and `rule_subjects:lookup` certify the lookup views (`build_missing`: build has not run;
-  `view_stale`: build ran with another rule file or configuration; `rule_not_agreed`: the rule has no agreed rows to
-  compare).
+  `view_stale`: build.sql lacks the statement data-rules generates for that view now, decided per view, so a changed
+  constant makes only that rule's lookup stale, plus `rule_subjects:lookup` when the rule names a subject;
+  `rule_not_agreed`: the rule has no agreed rows to compare). A lookup certifies the agreed rows, not the verdict: it
+  can pass while `rule:<id>` is `not_run` (`example_mismatch`).
 - `data_rules:snapshot` and `data_rules:key:<entity>` report the row budget, the gates and the key checks. A gate that
   trips (NULL or duplicate keys, NaN, NULL edge quantities, cycles, long text, unsupported types) or a budget leaves
   the rules it concerns `not_run`, never passed.
@@ -64,8 +66,9 @@ python "${CLAUDE_PLUGIN_ROOT}/skills/semantic-crosscheck/scripts/sxc.py" data-ru
 ## Next steps
 
 - Follow `next_safe_action`. To look at the rows a rule found, query `v_rules_subjects` and `v_rule_<id>` (ORDER BY
-  ord) in the database with the user; results hold counts only, and no file of keys is written. The views are live:
-  they equal the checked rows only until the data changes, so rerun data-rules after a change.
+  ord) in the database with the user, after checking `rule:<id>`; results hold counts only, and no file of keys is
+  written. The views are live: they equal the checked rows only until the data changes, so rerun data-rules after a
+  change. With `views = false` build creates no rule view but leaves the ones an earlier build created in place.
 - A disagreement (`rule_xcheck:<id>` fails) is a defect in one evaluation or a column the contract does not cover:
   check the rule's column types, NULLs and pattern against [docs/data-rules.md](../docs/data-rules.md), then report it.
   Never edit the rule only to make the two evaluations agree.

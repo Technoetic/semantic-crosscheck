@@ -1,8 +1,10 @@
 # Synthetic data-rules example
 
 A clean-room example for the optional `data-rules` stage ([docs/data-rules.md](../../docs/data-rules.md)): a small
-invented bill of materials in the schema `sxc_rules` (tables `part`, `bom_line` and `code_value`) and 15 rules, one per
-kind and atom family, each with an authored example. Every name, value and threshold is invented.
+invented bill of materials in the schema `sxc_rules` (tables `part`, `bom_line` and `code_value`) and 15 rules covering
+the six kinds and most atom families, each with an authored example. Endpoint structure atoms, `exists = true`, the
+`none` quantifier and the operators `ne`, `lt`, `le`, `ge`, `not_in` and `is_not_null` are exercised in
+`tests/test_data_rules_pg.py` instead. Every name, value and threshold is invented.
 
 | File | Content |
 |---|---|
@@ -20,6 +22,10 @@ createdb -U postgres sxc_rules_db
 psql -U postgres -d sxc_rules_db -v loader_role=sxc_loader -v check_role=sxc_check -v source_schema=sxc_rules -v output_schema=sxc_out -f docs/setup-roles.sql
 ```
 
+The template sets no passwords. On a server with password authentication, set both before the next step,
+interactively as the superuser (`\password sxc_loader` and `\password sxc_check` in psql), and give each of the
+commands below its role's password through `PGPASSWORD`, never in a file.
+
 Load the fixture as the loader role, then run the stages with the check role:
 
 ```bash
@@ -30,8 +36,7 @@ python skills/semantic-crosscheck/scripts/sxc.py build --config examples/data-ru
 python skills/semantic-crosscheck/scripts/sxc.py data-rules --config examples/data-rules/crosscheck.toml
 ```
 
-Set passwords interactively (`\password sxc_check` in psql) or through `PGPASSWORD`, never in a file. Results go to
-`examples/data-rules/.sxc/`.
+Results go to `examples/data-rules/.sxc/`.
 
 ## What to expect
 
@@ -51,18 +56,22 @@ Set passwords interactively (`\password sxc_check` in psql) or through `PGPASSWO
   ```
 
   `stored_level_drift` names no subject, so it does not feed `v_rules_subjects`; its rows are in
-  `v_rule_stored_level_drift`.
+  `v_rule_stored_level_drift`. A passing lookup certifies the rows both evaluations agreed on, not the rule's
+  verdict, so read `rule:<id>` before acting on a rule's rows.
 
 ## Things to try
 
 - `--rule kit_without_bom` checks one rule: `scope:rules` is `not_run`, and so is `rule_subjects:lookup`
   (`excluded_by_option`), so the run cannot pass.
-- Change a constant in `data-rules.toml` and rerun only `data-rules`: the lookups are `view_stale` until `build` runs
-  again.
+- Change a constant of one rule in `data-rules.toml` and rerun only `data-rules`: that rule's lookup is `view_stale`
+  until `build` runs again, and so is `rule_subjects:lookup` when the rule names a subject; the other lookups still
+  pass.
 - Change an `expect` row: `rule_example:<id>` fails with `common_mode` (both evaluations agree, the authored rows
-  differ) and `rule:<id>` becomes `not_run` (`example_mismatch`). Check the example against the business rule first.
-- Set `views = false`: build creates no rule views, the lookups are not checked, and a `not_proven` line says that the
-  agreed rows are not persisted anywhere.
+  differ) and `rule:<id>` becomes `not_run` (`example_mismatch`), while its lookup still passes. Check the example
+  against the business rule first.
+- Set `views = false`: build creates no rule views, the lookups are not checked, and a `not_proven` line says so. The
+  views an earlier build created stay in `sxc_out` and still return rows: drop `v_rules_subjects` and then the
+  `v_rule_*` views by hand when you no longer want them.
 
 Agreement of the two evaluations and of the examples shows that the rules do what their examples say on this data;
 it does not show that they are the right business rules for other data.

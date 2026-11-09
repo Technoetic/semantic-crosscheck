@@ -97,7 +97,9 @@ current directory. Use `verify-full` (or `verify-ca`) whenever the connection le
 - **The output schema holds row values.** The shape views, cycle tables and data rule views return source rows to
   anyone who may read the output schema, and the rule views' definitions show the rule file's constants. Grant
   access to the output schema as to the source data. The data rule views are live: they equal the rows
-  `data-rules` certified only at the time it ran.
+  `data-rules` certified only at the time it ran. Setting `[data_rules] views = false` stops build from creating
+  them but does not drop the ones an earlier build created; drop `v_rules_subjects` and the `v_rule_*` views by hand
+  when they must go.
 - **Install hints and local paths.** When a package or the Cube adapter is missing, results store the hint
   with the placeholders `<python>` and `<plugin>`; `sxc.py` prints it with the interpreter and the plugin
   directory filled in, so the command works from any directory while result files stay free of local paths

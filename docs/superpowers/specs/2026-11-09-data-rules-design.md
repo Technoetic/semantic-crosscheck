@@ -20,7 +20,7 @@ subjects view, and data-rules proves that they return exactly the agreed rows in
 Alternatives considered and not taken in this release: a trusted SQL rule with a Python twin (it would open the
 closed rule language), a SHACL engine as a third evaluation (slow at realistic sizes and it needs a deadline
 worker), folding data-rule findings into the report verdict (kept separate on purpose), and a local file of
-problem keys (it changes the row-value policy, so it waits for an explicit decision and would ship later).
+problem keys (it would change the row-value policy; not part of this design).
 
 ## Configuration and rule file
 
@@ -71,8 +71,8 @@ problem keys (it changes the row-value policy, so it waits for an explicit decis
   when `[data_rules]` is configured.
 - Without `[data_rules]` every generated file, check list, result and report stays byte-identical to v0.21.1,
   enforced by goldens captured before any data-rules code existed. Only the engine fingerprint changes.
-- The evaluator imports only the standard library, `canon`, `ident` and `data_rules`, so it can be reused without
-  the stage modules; the pinned shared modules stay unchanged.
+- The evaluator imports only the standard library and `canon`, never the SQL compiler or a stage module; the core
+  shared modules stay unchanged.
 
 ## Verification
 
@@ -87,5 +87,6 @@ must make the cross-check fail. Independent verification and leak scans precede 
 
 Agreement of two evaluations does not show that a rule or its constants are the right business rule; authored
 examples pin only the cases they contain. The views are live and equal the certified rows only at check time.
-Regex capture differences between the engines fail closed. The node key must be a single column. There is no
-file of problem keys and no integration into other applications in this release.
+Regex capture differences between the engines fail closed. Text columns a rule compares with each other need one
+collation: two different deterministic collations are an SQL error (42P22, or 42P21 from the height gate), never a
+verdict. The node key must be a single column. There is no file of problem keys.

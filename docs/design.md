@@ -924,13 +924,18 @@ closed at every level, with messages that name positions and never a constant, a
 [data-rules.md](data-rules.md) is the reference for the file, the atoms, the pattern subset and the semantic contract
 both evaluation paths implement separately. The stage (`stage_data_rules.py`):
 
-1. Loads and validates the rule file and records its SHA-256; `--rule` narrows the run (an unknown id is exit 2) and
-   the previous `data_rules/rules.sql` is removed. With `views = true` it reads `build/result.json` and
-   `build/build.sql`; their absence is not exit 2 (the lookups are `not_run`, `build_missing`).
+1. Removes the previous `data_rules/rules.sql` first (so a configuration error leaves none), then loads and validates
+   the rule file and records its SHA-256; `--rule` narrows the run (an unknown id is exit 2). With `views = true` it
+   reads `build/result.json` and `build/build.sql`; their absence is not exit 2 (the lookups are `not_run`,
+   `build_missing`).
 2. Connects (exit 3), checks every table and column the rules read with build's source check (exit 2 or 3), reads one
    catalog type plan and type-checks every atom, constant and example value (exit 2). A rule that reads a column of an
    unsupported type (anything but `int2`, `int4`, `int8`, `numeric`, `text`, `varchar`, `bpchar`, `bool`; domains
-   included) or text with a nondeterministic collation is `not_run` (`column_type`, `collation`).
+   included) or text with a nondeterministic collation is `not_run` (`column_type`, `collation`). Compared text
+   columns of two different deterministic collations (the node key and the edge endpoints, a ref column and the
+   column compared with it) are not detected here: a rule comparing them fails with SQLSTATE 42P22 (an `error`
+   without a verdict), and parent and child columns of different collations fail the height gate of a
+   `stored_metric` rule with 42P21, which ends the snapshot.
 3. Takes one READ ONLY REPEATABLE READ snapshot: the server encoding (UTF8); the rows of every needed entity, counted
    no further than `max_export_rows + 1` (a total above `max_export_rows` makes every rule `not_run`,
    `resource_limit`, and no rule, lookup or export statement runs); the gates (NULL and duplicate keys, NaN and
@@ -979,8 +984,10 @@ rows only at check time.
 **Not proven and next action.** Every run with an agreed rule adds the line that agreement of the PostgreSQL and
 Python evaluations does not show that a rule or its constants are the right business rule, and that authored
 examples pin only the cases they contain. Vacuous comparisons (both outputs empty, an entity with 0 rows), rules
-without examples under `require_examples = false`, `views = false` (the agreed rows are not persisted anywhere),
-budgets and gates add their own lines. `next_safe_action` takes the first match of: an error with its SQLSTATE hint;
+without examples under `require_examples = false`, `views = false` (no lookup view was certified; build does not
+drop the rule views an earlier build created), budgets and gates add their own lines. `next_safe_action` takes the
+first match of: an error with its SQLSTATE hint (57014 a timeout, 42501 a privilege, 42P21 or 42P22 a collation
+mismatch between compared columns);
 a disagreement; `common_mode`; a gate or budget; a lookup; violations found (query
 `<output_schema>.v_rules_subjects ORDER BY ord` and `v_rule_<id>` in the database with the user); otherwise a rerun
 hint.
@@ -1013,7 +1020,7 @@ never touches the database.
 - **Data rules** are not a report stage. When the configuration has `[data_rules]`, report adds one `not_proven`
   line (data rules run in the separate data-rules stage; report does not read `data_rules/result.json`, so data-rule
   findings do not change its verdict). Required stages, inputs and staleness rules are unchanged, and a configuration
-  without `[data_rules]` gets byte-identical reports.
+  without `[data_rules]` gets byte-identical reports apart from the engine fingerprint.
 - Each stage's status is recomputed from its checks (fail-closed; a hand-edited `status` can only make it
   worse). A stage whose own status is `not_run` (a run narrowed with `--only`, `--gold` or `--hierarchy`) is
   `stage:<name>` `not_run`.

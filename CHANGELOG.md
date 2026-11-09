@@ -25,8 +25,9 @@ Release notes: [docs/releases/v0.22.0.md](docs/releases/v0.22.0.md).
 ### Changed
 
 - build creates the rule views when configured (`rule_view:<id>`, `rule_subjects:view`); configurations without
-  `[data_rules]` produce byte-identical build output, results and reports. report adds one not_proven line when
-  `[data_rules]` is configured and never reads the data-rules result. expect builds its fixture without rule views.
+  `[data_rules]` produce byte-identical build output, results and reports apart from the engine fingerprint. report
+  adds one not_proven line when `[data_rules]` is configured and never reads the data-rules result. expect builds its
+  fixture without rule views.
 
 Results keep counts, ids and enums only; no file holds row values. Agreement of the two evaluations does not show
 that a rule or its constants are right; authored examples pin only the cases they contain. Engine code changed:

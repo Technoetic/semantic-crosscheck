@@ -8,9 +8,10 @@ two independent paths, and it gets a verdict only when they agree:
           transaction; it never sees SQL
 
 Order of work (configuration errors fail before any row is read, as in build):
-  1. [data_rules] and the rule file are loaded and validated (exit 2); --rule narrows the run (an unknown id is exit
-     2). The rules.sql of an earlier run is removed. With views = true, build/result.json and build/build.sql are read:
-     a lookup view counts only when build created it from the rule file as it is now (view_stale otherwise).
+  1. The rules.sql of an earlier run is removed first, so a run that stops on a configuration error leaves none.
+     [data_rules] and the rule file are loaded and validated (exit 2); --rule narrows the run (an unknown id is exit
+     2). With views = true, build/result.json and build/build.sql are read: a lookup view counts only when build.sql
+     holds the statement data-rules generates for it now (view_stale otherwise).
   2. Connect (exit 3). Every table and column the rules read must exist (exit 2) and be readable (exit 3). One catalog
      query gives the type plan; every atom, constant and example value is type-checked against it (exit 2). Rules that
      read a column of an unsupported type or a nondeterministic collation are not run.
@@ -52,13 +53,15 @@ EXCLUDED = "excluded_by_option"
 VIEW_MISSING = "42P01"
 TIMEOUT = "57014"
 COLUMNS_CHANGED = "42P16"            # CREATE OR REPLACE VIEW cannot change the view's columns
+COLLATION_MISMATCH = ("42P21", "42P22")   # text columns of two different collations compared (42P22 in a rule,
+                                          # 42P21 from the height gate's recursive query over parent and child)
 DATA_GATES = ("resource_limit", "server_encoding", "column_type", "collation", "non_finite_values", "null_values",
               "key_null", "key_not_unique", "cycle_or_depth_limit", "value_too_long")
 LOOKUP_REASONS = ("build_missing", "view_not_built", "view_stale", "view_missing", "rule_not_agreed", "incomplete")
 AGREEMENT_NOTE = ("data rules: agreement of the PostgreSQL and Python evaluations does not show that a rule or its "
                   "constants are the right business rule; authored examples pin only the cases they contain")
-VIEWS_OFF_NOTE = ("data rules: views = false, so the agreed rows are not persisted anywhere (no lookup view was "
-                  "certified)")
+VIEWS_OFF_NOTE = ("data rules: views = false, so no lookup view was certified and build persists no agreed rows; rule "
+                  "views an earlier build created are not dropped and stay live in the output schema")
 
 
 # ---- shared with build ------------------------------------------------------------------------------
@@ -651,6 +654,7 @@ def subjects_check(cfg, spec, prep: Prepared, state, evaluations: dict, snap: Sn
 # ---- the stage --------------------------------------------------------------------------------------------
 def run(cfg, args, out: Path) -> Result:
     out = Path(out)
+    (out / STAGE / "rules.sql").unlink(missing_ok=True)       # first: a configuration error must not leave it behind
     if getattr(cfg, "data_rules", None) is None:
         raise StageError("crosscheck.toml has no [data_rules] table: add [data_rules] with file = \"data-rules.toml\" "
                          "(the rule file, relative to crosscheck.toml) to run data-rules", EXIT_CONFIG)
@@ -658,7 +662,6 @@ def run(cfg, args, out: Path) -> Result:
     spec = config.load_data_rules(cfg, out)
     settings = cfg.data_rules
     selected = select_rules(spec, getattr(args, "rule", None))
-    (out / STAGE / "rules.sql").unlink(missing_ok=True)
     build = Build.read(out) if settings.views else None
     log: list = []
     conn = db.connect(cfg.source.dsn_env)
@@ -820,6 +823,11 @@ def _error_action(cfg, c) -> str:
     elif code == "42501":
         hint = ("the check role lacks a privilege data-rules needs (SELECT on the source tables, USAGE on the output "
                 "schema for the lookup views): run `sxc.py doctor --config` to see which")
+    elif code in COLLATION_MISMATCH:
+        hint = ("a statement compares text columns of different collations (the node key with the edge endpoints, the "
+                "parent column with the child column, or a ref column with the column compared with it): give every "
+                "compared column one collation, for example COLLATE \"C\" on each in database views the entities "
+                "point at (rerun build when views = true)")
     else:
         hint = f"check [{c.config_ref}] and the check role's privileges"
     return f"{c.id} hit a database error (SQLSTATE {code}): {hint}, then rerun data-rules"

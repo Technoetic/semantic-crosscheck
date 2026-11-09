@@ -6,12 +6,14 @@ the inputs_fingerprint keys, and two offline `build` + `report` runs of demo/cro
 recording stand-in for the database (every statement build sends, build.sql, result.json, the console summaries,
 report.md and report.json, and the check lists). Every golden must stay byte-identical; capture.py normalises only
 run times, the engine fingerprint (new modules change it by design) and output paths. The command-line stage list
-may gain data-rules and nothing else. With [data_rules] and views = false, build still sends exactly the v0.21.1
+may gain data-rules and nothing else, here and in capture.py's check mode. With [data_rules] and views = false, build still sends exactly the v0.21.1
 statements and writes the same build.sql; report adds its one data-rules line only when [data_rules] is configured;
 expect's fixture configuration drops [data_rules]. No database is needed.
 """
 
+import contextlib
 import importlib.util
+import io
 import shutil
 import tempfile
 import unittest
@@ -67,6 +69,31 @@ class CompatibilityGoldenTest(unittest.TestCase):
 
     def test_the_capture_is_deterministic(self):
         self.assertEqual(self.capture.collect(), self.current)
+
+    def test_the_capture_check_mode_passes_with_the_new_stage_reported_as_expected(self):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            code = self.capture.main(["capture.py"])
+        self.assertEqual(code, 0, buf.getvalue())
+        self.assertIn(f"differs as expected: {STAGES}", buf.getvalue())
+        self.assertNotIn("differs: ", buf.getvalue())
+        self.assertTrue(buf.getvalue().rstrip().endswith(" goldens, 0 differ, 1 as expected"))
+
+    def test_the_capture_check_mode_allows_no_other_stage_list_change(self):
+        golden = self.golden(STAGES).decode("utf-8").splitlines()
+        with tempfile.TemporaryDirectory(prefix="sxc_compat_stages_") as tmp:
+            folder = Path(tmp)
+            (folder / "static").mkdir()
+            (folder / STAGES).write_bytes(self.golden(STAGES))
+            lists = {"golden plus data-rules": (sorted(golden + ["data-rules"]), True),
+                     "another new stage": (sorted(golden + ["data-rules", "zz-stage"]), False),
+                     "a stage removed": (sorted(golden[1:] + ["data-rules"]), False),
+                     "another order": (list(reversed(golden)), False)}
+            for label, (stages, allowed) in lists.items():
+                with self.subTest(case=label):
+                    files = {STAGES: "".join(f"{s}\n" for s in stages)}
+                    self.assertEqual(self.capture.expected_difference(STAGES, files, folder), allowed)
+            self.assertFalse(self.capture.expected_difference("static/shapes.ttl", {"static/shapes.ttl": ""}, folder))
 
     def test_build_and_report_scenarios_cover_pass_and_fail(self):
         checks = self.current["checks.txt"].splitlines()

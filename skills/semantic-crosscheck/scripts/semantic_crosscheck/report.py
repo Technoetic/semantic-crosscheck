@@ -68,6 +68,8 @@ _INPUT_NAMES = {"config_sha256": "crosscheck.toml", "gold_sha256": "gold SQL",
 TRUSTED_NOTE = ("`sql_violation` predicates and gold SQL files are trusted code from the configuration: the harness "
                 "runs them as written (values only as bound parameters) and does not generate or validate them, so "
                 "review them like code.")
+DATA_RULES_NOTE = ("data rules ([data_rules]) run in the separate data-rules stage; report does not read "
+                   "data_rules/result.json, so data-rule findings do not change this verdict")
 _TIME = "%Y-%m-%dT%H:%M:%S%z"
 
 
@@ -427,6 +429,8 @@ def run(cfg, args, out: Path) -> Result:
         if evidence.stale:
             stale[contract_evidence.STAGE] = evidence.stale
         res.not_proven.append(contract_evidence.NOTE)
+    if getattr(cfg, "data_rules", None) is not None:
+        res.not_proven.append(DATA_RULES_NOTE)
     base_checks = list(res.checks)
     base_not_proven = list(res.not_proven)
 

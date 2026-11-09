@@ -14,6 +14,13 @@ Order of work:
      failing hierarchy leaves the others built. With --hierarchy h every other hierarchy gets closure:<other>
      not_run (reason excluded_by_option): its closure was not rebuilt with the current data, so reason and verify
      must not take a partial build for a full one, and the build itself is no pass.
+With [data_rules] views = true (only then) the rule file is loaded before connecting (exit 2), the columns its rules
+read join the source check, one catalog query gives their type plan and every rule view is rendered before the output
+schema is touched (exit 2 on a type-incompatible rule). After the shape views, one more write transaction (lock first)
+drops v_rules_subjects, creates or replaces v_rule_<id> for every rule under a savepoint (marked by a fixed comment;
+rule_view:<id>), drops the marked rule views the rule file no longer generates (never an unmarked object, never
+CASCADE) and creates v_rules_subjects over the subject rules' views (rule_subjects:view). sxc.py data-rules certifies
+those views; build records them in build.sql in literal form. Without [data_rules] nothing of this runs.
 Two runs on the same output schema (two terminals, two agents) would otherwise race on the same views and closure
 tables and fail with a unique violation: every write transaction starts by taking a transaction-level advisory
 lock on the output schema, so concurrent builds wait for each other's transactions instead.
@@ -23,7 +30,7 @@ violating keys stay in the views and example cycles in naming.cycles_table.
 
 from pathlib import Path
 
-from . import closure, db, ident, naming, shapes
+from . import closure, config, db, ident, naming, shapes
 from .result import EXIT_CONFIG, EXIT_ENV, Result, StageError
 
 BUILD_SQL_HEADER = """\
@@ -69,22 +76,28 @@ def source_columns(cfg, hierarchies) -> list[tuple[str, str, list[str]]]:
 def check_sources(conn, cfg, hierarchies) -> None:
     """A missing table or column is a configuration error (exit 2); a table the check role cannot read is an
     environment error (exit 3). Columns used only inside a trusted sql_violation predicate are not checked."""
+    check_tables(conn, source_columns(cfg, hierarchies))
+
+
+def check_tables(conn, needed, origin: str = "crosscheck.toml") -> None:
+    """check_sources for any (ref, table, columns) list; origin names the file the refs belong to (the data-rules
+    stage checks the rule file's columns with it)."""
     found = {}
-    for ref, table, cols in source_columns(cfg, hierarchies):
+    for ref, table, cols in needed:
         if table not in found:
             schema, name = ident.split(table)
             r = db.rows(conn, SOURCE_SQL, s=schema, t=name)
             found[table] = r[0] if r else None
         info = found[table]
         if not info or not info["found"]:
-            raise StageError(f"crosscheck.toml [{ref}]: table {table} does not exist in the connected database "
+            raise StageError(f"{origin} [{ref}]: table {table} does not exist in the connected database "
                              "(fix the entity, or load the data first)", EXIT_CONFIG)
         if not (info["usage"] and info["readable"]):
             raise StageError(f"the check role cannot read {table} (used by [{ref}]): grant it USAGE on the schema "
                              "and SELECT on the table", EXIT_ENV)
         missing = [c for c in cols if c not in info["columns"]]
         if missing:
-            raise StageError(f"crosscheck.toml [{ref}]: column {missing[0]} not found in {table}", EXIT_CONFIG)
+            raise StageError(f"{origin} [{ref}]: column {missing[0]} not found in {table}", EXIT_CONFIG)
 
 
 def _role_sql(name: str) -> str:
@@ -173,6 +186,128 @@ def build_shapes(conn, cfg, res: Result, executed: list[str]) -> None:
         res.add(f"shape:{shape.id}", status, shapes.config_ref(cfg, shape), **detail)
 
 
+def rule_file(cfg, out):
+    """The validated rule file when build creates the data rule views ([data_rules] with views = true), else None.
+    An invalid rule file is a configuration error (exit 2) found before the database is touched."""
+    if getattr(cfg, "data_rules", None) is None or not cfg.data_rules.views:
+        return None
+    return config.load_data_rules(cfg, out)
+
+
+def prepare_rule_views(conn, cfg, spec):
+    """Before the output schema is touched: the columns the rules read must exist and be readable (exit 2 or 3), and
+    every rule view is rendered from their catalog type plan (exit 2 on a type-incompatible rule). Returns the plan.
+    No data-dependent gate runs here: data-rules applies them."""
+    from . import stage_data_rules
+    check_tables(conn, stage_data_rules.rule_sources(cfg, spec.rules), spec.label)
+    plan, _catalog = stage_data_rules.read_type_plan(conn, cfg, spec)
+    stage_data_rules.view_statements(cfg, spec, plan)
+    return plan
+
+
+def _rule_view(conn, cfg, spec, plan, rule, statement: str) -> tuple[str, str]:
+    """Create or replace one rule view under a savepoint and mark it; (SQLSTATE or '', the statements as build.sql
+    records them, the view statement verbatim). On an error the view is dropped, as shapes._create_view does."""
+    from . import data_rules, data_rules_sql as dsql, stage_data_rules as sdr
+    name = data_rules.view_name(cfg, rule.id)
+    view = ident.qualified(name)
+    log = [statement[:-1]]                 # the statement ends with ';', which the block below writes back
+    code, _ = sdr.attempt(conn, [(log[0], {})])
+    if code == "42P16":                    # the view's columns changed: replace it by drop and create
+        log += [f"DROP VIEW {view}", f"CREATE VIEW {view} AS\n{dsql.view_query(cfg, spec, plan, rule)}"]
+        code, _ = sdr.attempt(conn, [(log[1], {}), (log[2], {})])
+    if not code:
+        log.append(dsql.comment_statement(name))
+        code, _ = sdr.attempt(conn, [(log[-1], {})])
+    if code:
+        log.append(f"DROP VIEW IF EXISTS {view}")
+        sdr.attempt(conn, [(log[-1], {})])  # leave no stale or broken view behind
+    return code, "\n".join(s + ";" for s in log)
+
+
+def _subjects_view(conn, cfg, statement: str) -> tuple[str, str]:
+    from . import data_rules, data_rules_sql as dsql, stage_data_rules as sdr
+    name = data_rules.subjects_view_name(cfg)
+    log = [statement[:-1]]
+    code, _ = sdr.attempt(conn, [(log[0], {})])
+    if not code:
+        log.append(dsql.comment_statement(name))
+        code, _ = sdr.attempt(conn, [(log[-1], {})])
+    if code:
+        log.append(dsql.drop_view_statement(name))
+        sdr.attempt(conn, [(log[-1], {})])
+    return code, "\n".join(s + ";" for s in log)
+
+
+def build_rule_views(conn, cfg, spec, plan, res: Result, executed: list[str]) -> None:
+    """Every data rule view in one write transaction (lock first): drop v_rules_subjects, create or replace
+    v_rule_<id> per rule under a savepoint with its marker comment (rule_view:<id>), drop the marked rule views the rule
+    file no longer generates, then create v_rules_subjects when every subject rule's view exists (rule_subjects:view).
+    A rule reading a column of an unsupported type or a nondeterministic collation gets no view (not_run). A database
+    error outside the savepoints rolls everything back and makes every check an error, as in build_shapes."""
+    from . import data_rules, data_rules_sql as dsql, stage_data_rules as sdr
+    unusable, views, subjects_sql = sdr.view_statements(cfg, spec, plan)
+    subjects_view = data_rules.subjects_view_name(cfg)
+    outcomes, blocks, kept, subjects_code = {}, [], 0, None
+    try:
+        with db.write_tx(conn, cfg.source.statement_timeout_ms):
+            lock = lock_output_schema(conn, cfg)
+            drop = dsql.drop_view_statement(subjects_view)
+            conn.run(drop)
+            blocks.append(drop + ";")
+            for rule in spec.rules:
+                if rule.id not in unusable:
+                    outcomes[rule.id], block = _rule_view(conn, cfg, spec, plan, rule, views[rule.id])
+                    blocks.append(block)
+            created = {data_rules.VIEW_PREFIX + rule_id for rule_id, code in outcomes.items() if not code}
+            text, params = dsql.orphan_statement(cfg).parameterized()
+            for row in conn.run(text, **params) or []:
+                statement = "" if row[0] in created else sdr.drop_statement(cfg, row[0])
+                if not statement:
+                    continue
+                code, _ = sdr.attempt(conn, [(statement, {})])
+                kept += bool(code)
+                blocks.append(f"-- a marked rule view the rule file no longer generates was not dropped (SQLSTATE "
+                              f"{code})" if code else statement + ";")
+            if spec.subject_rules and subjects_sql and all(outcomes.get(r.id) == "" for r in spec.subject_rules):
+                subjects_code, block = _subjects_view(conn, cfg, subjects_sql)
+                blocks.append(block)
+    except Exception as e:
+        code = shapes.sqlstate(e)
+        if not code:
+            raise
+        executed.append(f"-- data rule views: SQLSTATE {code}, transaction rolled back (its statements are not "
+                        "recorded)")
+        for rule in spec.rules:
+            res.add(f"rule_view:{rule.id}", "error", rule.config_ref, sqlstate=code, kind=rule.kind,
+                    view=data_rules.view_name(cfg, rule.id))
+        if spec.subject_rules:
+            res.add("rule_subjects:view", "error", "data_rules", sqlstate=code, view=subjects_view,
+                    subject_rules=len(spec.subject_rules))
+        return
+    executed += ["-- data rule views (one transaction)", lock] + blocks
+    for rule in spec.rules:
+        detail = {"kind": rule.kind, "view": data_rules.view_name(cfg, rule.id)}
+        if rule.id in unusable:
+            res.add(f"rule_view:{rule.id}", "not_run", rule.config_ref, reason=unusable[rule.id], **detail)
+        elif outcomes[rule.id]:
+            res.add(f"rule_view:{rule.id}", "error", rule.config_ref, sqlstate=outcomes[rule.id], **detail)
+        else:
+            res.add(f"rule_view:{rule.id}", "pass", rule.config_ref, **detail)
+    if spec.subject_rules:
+        detail = {"view": subjects_view, "subject_rules": len(spec.subject_rules)}
+        if subjects_code is None:
+            res.add("rule_subjects:view", "not_run", "data_rules",
+                    reason="rule_view_missing" if subjects_sql else "column_type", **detail)
+        elif subjects_code:
+            res.add("rule_subjects:view", "error", "data_rules", sqlstate=subjects_code, **detail)
+        else:
+            res.add("rule_subjects:view", "pass", "data_rules", **detail)
+    if kept:
+        res.not_proven.append(f"rule views: {kept} marked view(s) the rule file no longer generates could not be "
+                              "dropped (another object depends on them); drop them by hand")
+
+
 def build_closure(conn, cfg, h, res: Result, executed: list[str]) -> None:
     """The closure of one hierarchy in its own write transaction; a database error becomes an `error` check."""
     ref = f"hierarchies.{h.name}"
@@ -207,6 +342,7 @@ def exclude_hierarchies(cfg, built: list, res: Result) -> None:
 def error_hint(cfg, c) -> str:
     """What to do about a database error of a shape or closure check, by SQLSTATE."""
     code = c.detail.get("sqlstate", "")
+    where = "the rule file" if c.id.startswith(("rule_view:", "rule_subjects:")) else "crosscheck.toml"
     if code == "57014":
         return ("raise source.statement_timeout_ms or simplify the entry (waiting for another build of the same output "
                 "schema counts against the timeout too)")
@@ -215,12 +351,20 @@ def error_hint(cfg, c) -> str:
     if code == "42501":
         needs = ("TEMPORARY on the database for the closure's temporary tables, " if c.id.startswith("closure:") else "")
         return (f"the check role lacks a privilege the build needs ({needs}SELECT on the source tables or CREATE on the "
-                f"output schema): run `sxc.py doctor --config` to see which, or fix [{c.config_ref}] in crosscheck.toml")
-    return f"fix [{c.config_ref}] in crosscheck.toml or the check role's privileges"
+                f"output schema): run `sxc.py doctor --config` to see which, or fix [{c.config_ref}] in {where}")
+    return f"fix [{c.config_ref}] in {where} or the check role's privileges"
 
 
 def next_action(cfg, res: Result) -> str:
-    """One sentence for the agent: the first database error, else every failure to look at, else the next stage."""
+    """One sentence for the agent: the first database error, else every failure to look at, else the next stage;
+    when build created data rule views, data-rules comes next as well."""
+    action = _next_action(cfg, res)
+    if any(c.id.startswith("rule_view:") and c.status == "pass" for c in res.checks):
+        action += "; run `sxc.py data-rules` to cross-check the data rules and their views"
+    return action
+
+
+def _next_action(cfg, res: Result) -> str:
     if not res.checks:
         return "the configuration has no [[shapes]] or [hierarchies] entries to build: add some, then rerun build"
     errors = [c for c in res.checks if c.status == "error"]
@@ -245,6 +389,14 @@ def next_action(cfg, res: Result) -> str:
     views = [c.detail["view"] for c in res.checks if c.status == "fail" and c.id.startswith("shape:")]
     if views:
         clauses.append(f"shapes failed: inspect the violating keys in {', '.join(views)}, then fix the data or the [[shapes]] entries")
+    unbuilt = [c.id.partition(":")[2] for c in res.checks if c.status == "not_run" and c.id.startswith("rule_view:")]
+    if unbuilt:
+        clauses.append(f"no view was built for the data rules {', '.join(unbuilt)}: they read a column of an "
+                       "unsupported type or a nondeterministic collation, so cast the column in a database view, "
+                       "change the rule, or set data_rules.views = false")
+    elif any(c.id == "rule_subjects:view" and c.status == "not_run" for c in res.checks):
+        clauses.append("v_rules_subjects was not built because the node key has no supported type: cast it in a "
+                       "database view, or set data_rules.views = false")
     excluded = [c.id.partition(":")[2] for c in res.checks if c.detail.get("reason") == EXCLUDED]
     if clauses and excluded:
         return "; ".join(clauses) + "; then rerun build without --hierarchy, so every closure is current"
@@ -275,12 +427,16 @@ def run(cfg, args, out: Path) -> Result:
         shapes.violation_sql(cfg, shape)   # a bad entry stops here with exit 2, before the database is touched
     ttl, _no_shacl = shapes.shapes_ttl(cfg)   # shapes without a SHACL form are reported by the reason stage
     fk_sql = shapes.fk_review_sql(cfg) if any(s.fk_ddl == "review_only" for s in cfg.shapes) else ""
+    rules = rule_file(cfg, out)        # [data_rules] views = true only; an invalid rule file stops here with exit 2
     executed: list[str] = []
     conn = db.connect(cfg.source.dsn_env)
     try:
         check_sources(conn, cfg, hierarchies)
+        plan = prepare_rule_views(conn, cfg, rules) if rules is not None else None
         executed += ensure_output_schema(conn, cfg)
         build_shapes(conn, cfg, res, executed)
+        if rules is not None:
+            build_rule_views(conn, cfg, rules, plan, res, executed)
         for h in hierarchies:
             build_closure(conn, cfg, h, res, executed)
     finally:

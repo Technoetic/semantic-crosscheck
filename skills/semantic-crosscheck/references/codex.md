@@ -47,6 +47,7 @@ default.
 | `boundary-schema` (since v0.19.0) | [xc-boundary-schema.md](../../../commands/xc-boundary-schema.md) | `sxc.py boundary-schema --spec spec.json` |
 | `shacl-corpus` | [xc-shacl-corpus.md](../../../commands/xc-shacl-corpus.md) | `sxc.py shacl-corpus --jena-home /opt/apache-jena --timeout-ms 30000` |
 | `expect` | [xc-expect.md](../../../commands/xc-expect.md) | `sxc.py expect --config crosscheck.toml --allow-fixture-database` |
+| `data-rules` | [xc-data-rules.md](../../../commands/xc-data-rules.md) | `sxc.py data-rules --config crosscheck.toml` |
 | `shacl-repair` | [xc-shacl-repair.md](../../../commands/xc-shacl-repair.md) | `sxc.py shacl-repair --spec examples/shacl-repair/valid.json` |
 | `grain` | [xc-grain.md](../../../commands/xc-grain.md) | `sxc.py grain --config crosscheck.toml --spec contract.json` |
 | `okf` (since v0.15.0) | [xc-okf.md](../../../commands/xc-okf.md) | `sxc.py okf --config crosscheck.toml --export contract-bundle --select q01_explosion` |

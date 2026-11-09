@@ -4,7 +4,8 @@
     python sxc.py <stage> [--config crosscheck.toml] [--out DIR] [options]
 
 Stages: doctor, demo, build, reason, cube, verify, report, cube-install, counterexample,
-cube-replay, tlp, shacl-corpus, expect, shacl-repair, grain, boundary-schema, semantic-preflight, sql-structure.
+cube-replay, tlp, shacl-corpus, expect, shacl-repair, grain, boundary-schema, semantic-preflight, sql-structure,
+data-rules.
 Each stage writes <out>/<stage>/result.json (counts and check ids only, never row values) and exits with
 0 pass, 1 a check failed or could not run, 2 configuration or usage error, 3 environment missing.
 
@@ -58,8 +59,10 @@ STAGES = {
     "boundary-schema": "boundary_schema",
     "semantic-preflight": "semantic_preflight",
     "sql-structure": "sql_structure",
+    "data-rules": "stage_data_rules",
 }
-NEEDS_CONFIG = {"demo", "build", "reason", "cube", "verify", "report", "expect", "grain", "semantic-preflight"}
+NEEDS_CONFIG = {"demo", "build", "reason", "cube", "verify", "report", "expect", "grain", "semantic-preflight",
+                "data-rules"}
 DIAGNOSTIC_STAGES = {"shacl-repair", "grain", "okf", "knowledge-evolution", "boundary-schema", "semantic-preflight"}
 DEFAULT_CONFIG = "crosscheck.toml"
 
@@ -231,6 +234,12 @@ def parser(*, audit_errors=False) -> argparse.ArgumentParser:
                                                                           "closure tables in that database's output schema, "
                                                                           "and holding SHARE locks on the fixture's source and "
                                                                           "closure tables while the cases run (writers wait)")
+
+    s = sub.add_parser("data-rules", parents=[common],
+                       help="evaluate the [data_rules] rule file twice on one read-only snapshot (compiled PostgreSQL "
+                            "and independent Python) and certify the lookup views build created")
+    s.add_argument("--rule", action="append", default=[], metavar="ID", help="check only this rule id (repeatable); "
+                                                                            "a narrowed run never passes")
     return p
 
 
@@ -741,9 +750,12 @@ def main(argv=None) -> int:
                 raise StageError("diagnostic input changed", EXIT_CONFIG)
         if stage not in {"cube-replay", "tlp", "shacl-corpus"} and not audit_mode and not diagnostic_mode:
             sources = res.inputs.get('spec_sources') if stage == 'expect' else None
+            rules_sha = res.inputs.get('data_rules_sha256') if stage == 'data-rules' else None
             res.inputs = inputs
             if sources is not None:
                 res.inputs['spec_sources'] = sources
+            if rules_sha is not None:
+                res.inputs['data_rules_sha256'] = rules_sha
         if stage == "grain":
             res.inputs["configuration"] = inputs
         if stage == "knowledge-evolution":

@@ -217,6 +217,15 @@ Every check id is listed in [docs/design.md](../../docs/design.md).
 - [docs/design.md](../../docs/design.md) — the full contract: result format, check catalogue and
   verification semantics
 
+## Optional data rules
+
+- [xc-data-rules](../../commands/xc-data-rules.md): `data-rules --config crosscheck.toml` evaluates the typed rules
+  of the `[data_rules]` rule file twice on one read-only snapshot (compiled PostgreSQL and an independent Python
+  evaluation) and certifies the lookup views build created (`v_rule_<id>`, `v_rules_subjects`). A rule gets a
+  verdict only when both evaluations agree, and agreement is not correctness: write `[[rule.example]]` rows from
+  the business rule. To look at the rows a rule found, query those views (ORDER BY ord) in the database with the
+  user. It is outside the required report pipeline.
+
 ## Optional diagnostic contracts
 
 - [xc-shacl-repair](../../commands/xc-shacl-repair.md): `shacl-repair --spec FILE` validates independent before/after synthetic SHACL reports, retained targets and hard immutable facts. It rejects operational configuration and does not repair data automatically.

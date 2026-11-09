@@ -137,10 +137,12 @@ def operational_variables(cfg) -> tuple[list[str], list[str]]:
 
 def fixture_config(cfg, env_name: str):
     """A copy of cfg whose every connection uses env_name. The data revision and runtime probes are off (they would
-    probe the operational endpoints); everything else, the gold entries included, is shared."""
+    probe the operational endpoints), and so is [data_rules], so the fixture build never creates data rule views;
+    everything else, the gold entries included, is shared."""
     source = dataclasses.replace(cfg.source, dsn_env=env_name, owner_dsn_env=env_name, data_revision_sql_file="",
                                  runtime_evidence=False)
-    return dataclasses.replace(cfg, source=source, cube=dataclasses.replace(cfg.cube, dsn_env=env_name))
+    return dataclasses.replace(cfg, source=source, cube=dataclasses.replace(cfg.cube, dsn_env=env_name),
+                               data_rules=None)
 
 
 # ---- one case ---------------------------------------------------------------------------------------------

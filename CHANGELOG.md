@@ -1,5 +1,39 @@
 # Changelog
 
+## [0.22.0] - 2026-11-09
+
+Release notes: [docs/releases/v0.22.0.md](docs/releases/v0.22.0.md).
+
+### Added
+
+- Optional `data-rules` stage and `/xc-data-rules`: typed rules in a separate file (`[data_rules] file`) with six
+  kinds (row, duplicate, mode_outlier, same_signature, stored_metric, text_quantity). Every rule is evaluated twice
+  on one READ ONLY REPEATABLE READ snapshot, as compiled PostgreSQL SQL with bound parameters and as an independent
+  standard-library Python evaluation of the rows exported in the same transaction. `rule:<id>` reports a verdict
+  by severity only when `rule_xcheck:<id>` shows equal outputs; a disagreement leaves the rule `not_run`.
+- Authored rule examples (`[[rule.example]]`): small typed rows and the expected output written from the business
+  rule, evaluated by both engines without touching tables (`rule_example:<id>`, `common_mode` when both agree but
+  differ from the authored rows). Required by default (`require_examples = true`).
+- Database lookup relations: with `views = true` (default) build creates `v_rule_<id>` (output rows with `ord`) and
+  `v_rules_subjects` (one row per subject key with worst severity, rule count and rule ids); data-rules proves they
+  return exactly the agreed rows in canonical order (`rule_lookup:<id>`, `rule_subjects:lookup`).
+- Gates and budgets that are never a pass: column types and collations, server encoding, node-key uniqueness,
+  NaN and infinities, NULL edge quantities, unbounded heights, long text, `max_export_rows`, `max_rule_rows`.
+- `docs/data-rules.md` (rule file, semantic contract, lookups, checks and limits), a clean-room synthetic example
+  in `examples/data-rules/`, and data-rule pitfalls in the skill references.
+
+### Changed
+
+- build creates the rule views when configured (`rule_view:<id>`, `rule_subjects:view`); configurations without
+  `[data_rules]` produce byte-identical build output, results and reports. report adds one not_proven line when
+  `[data_rules]` is configured and never reads the data-rules result. expect builds its fixture without rule views.
+
+Results keep counts, ids and enums only; no file holds row values. Agreement of the two evaluations does not show
+that a rule or its constants are right; authored examples pin only the cases they contain. Engine code changed:
+rerun operational stages after upgrading.
+
+[0.22.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.22.0
+
 ## [0.21.1] - 2026-11-08
 
 Release notes: [docs/releases/v0.21.1.md](docs/releases/v0.21.1.md).

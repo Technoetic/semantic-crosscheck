@@ -1,5 +1,5 @@
 ---
-description: "Build the shape violation views and hierarchy closures in the output schema and write build.sql, shapes.ttl and fk_review.sql for review"
+description: "Build the shape violation views, the hierarchy closures and, when configured, the data rule views in the output schema and write build.sql, shapes.ttl and fk_review.sql for review"
 argument-hint: "[--config crosscheck.toml] [--hierarchy NAME] [--out DIR] [--quiet]"
 ---
 
@@ -13,6 +13,9 @@ code: pass each one as its own argument and never splice them into a shell strin
 - Again after every change to `entities`, `hierarchies` or `shapes` in `crosscheck.toml`, and after the
   source data changes. `reason`, `cube` and `verify` read what `build` produced, and `report` counts
   them as stale until they run again after it.
+- With `[data_rules]` and `views = true`: again after every change to the rule file, before
+  [/xc-data-rules](xc-data-rules.md), which certifies the rule views only when build created them from the
+  rule file as it is now.
 
 ## Command
 
@@ -34,6 +37,16 @@ python "${CLAUDE_PLUGIN_ROOT}/skills/semantic-crosscheck/scripts/sxc.py" build -
   these write transactions, so it relies on the check role's privileges, which doctor proves. The output
   schema is created when missing and the check role may create it; otherwise the stage stops with exit
   code 3 and prints the statement an administrator should run.
+- With `[data_rules]` and `views = true` (only then) build also loads the rule file before connecting (exit 2
+  when it is invalid), checks the columns its rules read (exit 2 or 3) and renders every rule view from their
+  catalog types (exit 2 on a type-incompatible rule) before the output schema is touched. After the shape
+  views, one more write transaction creates or replaces `v_rule_<id>` for every rule (its output rows plus
+  `ord`) and `v_rules_subjects` (one row per node key the subject rules found, with the worst severity and
+  the rule ids), each marked with a fixed comment. These names are created or replaced as the shape views
+  are; of the other views whose names start with `v_rule_`, build drops only marked ones the rule file no
+  longer generates, never with CASCADE. The views hold row values in the output schema,
+  like `v_shape_<id>`; the rule's constants appear as literals in their definitions and in `build.sql`.
+  Without `[data_rules]` none of this runs. See [docs/data-rules.md](../docs/data-rules.md).
 - Every write transaction first takes an advisory lock on the output schema, so two builds of the same
   output schema run one after the other; the wait counts against `source.statement_timeout_ms`.
 - Files next to the configuration: `.sxc/build/result.json`, `.sxc/build/build.sql` (every statement,
@@ -52,6 +65,10 @@ Exit code 0 with:
   detail has edge, pair, path and depth counts.
 - `closure_apply:<h>`: after the `MERGE`, the table equals the recomputation in both directions
   (inserted, updated and deleted counts are reported).
+- `rule_view:<id>` (with `[data_rules]` and `views = true`): `v_rule_<id>` was created or replaced from the
+  current rule file (detail `kind`, `view`). `rule_subjects:view`: `v_rules_subjects` was created over the
+  views of every rule that names a subject. A pass says the view exists, not that its rows are right:
+  `data-rules` checks them.
 
 ## Failures
 
@@ -79,6 +96,13 @@ views: they are rewritten on every run.
   else writes to it. Rerun `build`; never edit the closure table by hand.
 - A note about `null_quantity_edges`: edges with a NULL quantity give a NULL `qty` for the affected
   pairs. Fix the data or accept it explicitly in the report.
+- `rule_view:<id>` is `error`: the view could not be created (the detail has the SQLSTATE); it is dropped
+  and the other rule views are still built. Fix the rule in the rule file, then rerun build. `rule_view:<id>`
+  is `not_run` (`column_type`, `collation`): the rule reads a column of an unsupported type or a
+  nondeterministic collation, so it gets no view; cast the column in a database view, change the rule, or
+  set `data_rules.views = false`. `rule_subjects:view` is `not_run` (`rule_view_missing`) while a subject
+  rule's view is missing.
 - Exit code 2: unknown entity, column or identifier in the configuration, or a table or column that does
-  not exist in the database. Exit code 3: no connection, PostgreSQL older than 17, a source table the
-  check role cannot read, or an output schema it cannot create or use.
+  not exist in the database; with `[data_rules]` and `views = true` also an invalid rule file or a rule
+  whose constants do not suit its column types. Exit code 3: no connection, PostgreSQL older than 17, a
+  source table the check role cannot read, or an output schema it cannot create or use.

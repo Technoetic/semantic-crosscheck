@@ -65,6 +65,8 @@ A disagreement between two layers is a defect in one of them. Every failed check
   wants evidence that these layers say the same thing.
 - The user asks to run the demo, to install the Cube adapter, or to explain a `result.json` or
   `report.md` from this tool.
+- The user wants the keys that break structural data rules over such a hierarchy, checked by two independent
+  evaluations: the optional `data-rules` stage with a `[data_rules]` rule file (see Optional data rules below).
 
 Not for: designing an ontology from scratch, migrating data, PostgreSQL versions before 17, or
 databases where a read-only check role cannot be provided.
@@ -157,8 +159,9 @@ plugin's `requirements/` files). The roles come from
 ## Rules
 
 1. **Edit `crosscheck.toml`, never the generated output.** `build.sql`, `shapes.ttl`,
-   `fk_review.sql`, the Cube YAML, `model.json`, the closure tables and the `v_shape_*` views are
-   rewritten on every run. When a check fails, fix the configuration entry named in `config_ref`, the
+   `fk_review.sql`, `rules.sql`, the Cube YAML, `model.json`, the closure tables and the `v_shape_*`,
+   `v_rule_*` and `v_rules_subjects` views are rewritten on every run. When a check fails, fix the
+   configuration entry named in `config_ref` (for data rules, the rule in the `[data_rules]` rule file), the
    gold SQL, or the source data.
 2. **A pass means only what the checks prove.** Show the NOT PROVEN lines with every verdict: empty
    strata, equivalent mutants, shapes compared only in SQL, vacuous defined classes, sampled or chunked
@@ -174,8 +177,10 @@ plugin's `requirements/` files). The roles come from
    failed check.
 5. **No row values.** Results and console output carry counts and ids only. Do not copy keys, names or
    quantities from the database into messages, reports, issues or commits. To look at violating rows,
-   query the `v_shape_<id>` view in the database with the user. `SXC_CUBE_DEBUG=1` and `SXC_DEBUG=1`
-   produce local debug output that can hold row values: never paste it.
+   query `v_shape_<id>`, or for data rules `v_rule_<id>` and `v_rules_subjects` (ORDER BY ord), in the
+   database with the user. Row values stay in those output-schema views; no file of keys is written.
+   `SXC_CUBE_DEBUG=1` and `SXC_DEBUG=1` produce local debug output that can hold row values: never paste
+   it.
 6. **Credentials stay in the environment.** DSNs come only from environment variables; the
    `*_dsn_env` keys hold variable names. Never write a DSN or password into `crosscheck.toml`, a command
    line, a file or a message, and never ask for one in the chat.
@@ -223,8 +228,17 @@ Every check id is listed in [docs/design.md](../../docs/design.md).
   of the `[data_rules]` rule file twice on one read-only snapshot (compiled PostgreSQL and an independent Python
   evaluation) and certifies the lookup views build created (`v_rule_<id>`, `v_rules_subjects`). A rule gets a
   verdict only when both evaluations agree, and agreement is not correctness: write `[[rule.example]]` rows from
-  the business rule. To look at the rows a rule found, query those views (ORDER BY ord) in the database with the
-  user. It is outside the required report pipeline.
+  the business rule, never from an output, and show the NOT PROVEN lines with every verdict. To look at the rows a
+  rule found, query those views (ORDER BY ord) in the database with the user. It is outside the required report
+  pipeline. Rule file, semantic contract and limits: [docs/data-rules.md](../../docs/data-rules.md).
+- **Data rules or `[[shapes]]`.** Keep class and bound rules on one column in `[[shapes]]`: build creates
+  `v_shape_<id>` and reason cross-checks it with SHACL. Use data rules to find the keys behind richer structural
+  rules (endpoint existence and attributes, conditions over children or parents, reference sets, duplicates, mode
+  outliers, identical assemblies, stored heights, quantities written in text). With `views = true` run `build`
+  first and again after every rule-file change. A `rule_xcheck:<id>` failure means the two evaluations disagree:
+  report it, and never edit a rule only to make them agree. `common_mode` in `rule_example:<id>` means both
+  evaluations agree with each other but not with the authored rows: check the examples against the business rule
+  first.
 
 ## Optional diagnostic contracts
 

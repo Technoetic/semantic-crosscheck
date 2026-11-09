@@ -1,6 +1,6 @@
 {
   "name": "semantic-crosscheck",
-  "version": "0.21.1",
+  "version": "0.22.0",
   "description": "Cross-layer verification for an ontology plus semantic layer on PostgreSQL 17, for Codex and Claude Code.",
   "author": {
     "name": "전문준"
@@ -9,7 +9,7 @@
   "interface": {
     "displayName": "Semantic Crosscheck",
     "shortDescription": "Prove that a PostgreSQL closure, SHACL rules, OWL reasoning and a Cube model agree.",
-    "longDescription": "Release v0.21.1 adds explicitly configured contract/plan preflight evidence to report freshness, an optional offline PostgreSQL17 AST structural diagnostic, and independent synthetic bag/DISTINCT/EXCEPT fixtures. Without the paired semantic_preflight section existing report authority is retained. Missing, changed, mismatched or non-passing preflight evidence cannot satisfy the selected report gate. SQL structure diagnostics use separately installed pinned pglast and never connect to a DB or join report authority. Unsupported SQL and missing parser cannot pass. Formal provenance sources inform original small fixtures; no Lean/ProvSQL runtime is bundled. Matching definitions/SQL structures are not business truth or query-equivalence proof. Reviewed is not authenticated approval, and no shared Gold/Cube MVCC snapshot is added. Rerun operational stages after upgrading because engine code changed. Publication does not update active installations or company databases.",
+    "longDescription": "Release v0.22.0 adds an optional data-rules stage: typed rules from a separate rule file are evaluated twice on one read-only PostgreSQL snapshot, as compiled SQL with bound parameters and as an independent standard-library Python evaluation, and a rule gets a verdict only when both agree and its authored examples hold. With views enabled, build creates lookup views whose rows data-rules certifies, so the keys a rule found are read in the database while results keep counts and ids only. Unsupported types, nondeterministic collations, NaN, NULL or duplicate keys, cycles and row budgets leave rules not_run, never passed. Configurations without data_rules keep byte-identical build output, results and reports, and report never reads the data-rules result. Agreement of the two evaluations is not proof of the business rule. Earlier contract/plan report evidence, SQL structure diagnostics and synthetic fixtures are unchanged. Rerun operational stages after upgrading because engine code changed. Publication does not update active installations or company databases.",
     "developerName": "Technoetic",
     "category": "Coding",
     "capabilities": [

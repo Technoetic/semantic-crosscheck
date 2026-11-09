@@ -27,7 +27,7 @@ python skills/semantic-crosscheck/scripts/sxc.py --version
 |---|---|---|---|
 | `doctor` | Python, pg8000, the check-role DSN, PostgreSQL >= 17, the check role's privileges, optional components | `--require core,reason,cube` (default `core`) | `doctor/result.json` |
 | `demo` | loads the synthetic demo with the loader role | `--variant clean\|dirty` (default `clean`), `--seed N` (default 20261013), `--scale N` (default 1) | `demo/result.json`, `demo/expected.json` |
-| `build` | shape violation views and hierarchy closures in the output schema | `--hierarchy NAME` | `build/result.json`, `build/build.sql`, `build/shapes.ttl`, `build/fk_review.sql` (only while a shape has `fk_ddl = "review_only"`) |
+| `build` | shape violation views and hierarchy closures in the output schema; with `[data_rules]` and `views = true` also the data rule views (section 7, Data rules) | `--hierarchy NAME` | `build/result.json`, `build/build.sql`, `build/shapes.ttl`, `build/fk_review.sql` (only while a shape has `fk_ddl = "review_only"`) |
 | `reason` | SHACL against SQL, OWL consistency, OWL against SQL (V5) | `--only shacl,owl` (default both) | `reason/result.json` |
 | `cube` | generates the Cube model, serves it, checks gold members and metadata | none | `cube/result.json`, `cube/model/*.yml`, `cube/model.json`, `cube/server.log` |
 | `verify` | V1 strict compare, V2 strata sweep, V3 query shapes, V4 mutation tests | `--only v1,v2,v3,v4` (default all), `--gold ID` (repeatable) | `verify/result.json`, `verify/server.log`, `verify/mutants/<operator>__<target>/` (`model/*.yml`, `model.json`, `server.log`) |
@@ -38,6 +38,7 @@ python skills/semantic-crosscheck/scripts/sxc.py --version
 | `tlp` | optional ternary-logic partition consistency of a synthetic relation, including exact COUNT or SUM | required `--spec FILE`, `--seed` (7), `--max-examples` (64), `--dsn-env` (`SXC_TLP_DSN`), `--statement-timeout-ms` (10000), `--replay` | `tlp/result.json`, `tlp/fixture.json` |
 | `shacl-corpus` | optional actual pySHACL and Apache Jena comparison against independent expected nonrecursive reports, or (since 0.9.0) against the pinned W3C SHACL core suite's expected reports inside the sxc profile | `--jena-home` (`SXC_JENA_HOME`), `--timeout-ms` (30000 per case and engine), `--w3c-suite [DIR]` (bare: `SXC_W3C_SHACL_SUITE`), `--allow-unpinned-suite` | `shacl_corpus/result.json` |
 | `expect` | optional literal expected rows of `[[gold.expect]]` against the gold SQL and Cube on a dedicated fixture database | required `--allow-fixture-database`, `--dsn-env` (`SXC_EXPECT_DSN`) | `expect/result.json`, `expect/build/`, `expect/cube/`, `expect/server.log` |
+| `data-rules` | since 0.22.0, optional: the typed rules of the `[data_rules]` rule file, each evaluated twice on one read-only snapshot (compiled PostgreSQL and an independent Python evaluation), their authored examples, and the lookup views build created (section 7, Data rules) | `--rule ID` (repeatable) | `data_rules/result.json`, `data_rules/rules.sql` |
 
 Common options:
 
@@ -83,8 +84,8 @@ Exit codes:
 | Code | Meaning | Typical causes |
 |---|---|---|
 | 0 | the stage status is `pass` | every check passed |
-| 1 | a check failed, errored or did not run | a `fail`, `error` or `not_run` check; a run narrowed by `--only`, `--gold` or `--hierarchy`; `report` with a missing or stale required stage; Ctrl-C; an unexpected exception |
-| 2 | configuration or usage error | a malformed `crosscheck.toml` entry, an explicit `--config` that does not exist, no `./crosscheck.toml` for a stage that needs one, an unknown `--require`, `--only`, `--gold` or `verify.mutation_operators` value, `--scale` below 1, a missing prerequisite result (`run sxc.py <stage> first`), `build/shapes.ttl` older than the shapes in the configuration, a configured table or column that does not exist, demo tables with other columns than the demo defines, a `--native-file` that does not exist, a `--home` directory that is neither empty nor an adapter install, `expect` with cases but without `--allow-fixture-database`, with a `--dsn-env` that is not a variable name, or with a fixture DSN that equals, or names the same host, port and database as, an operational DSN variable set in this environment (another name for the same server is not detected) |
+| 1 | a check failed, errored or did not run | a `fail`, `error` or `not_run` check; a run narrowed by `--only`, `--gold`, `--hierarchy` or `--rule`; `report` with a missing or stale required stage; Ctrl-C; an unexpected exception |
+| 2 | configuration or usage error | a malformed `crosscheck.toml` entry, an explicit `--config` that does not exist, no `./crosscheck.toml` for a stage that needs one, an unknown `--require`, `--only`, `--gold`, `--rule` or `verify.mutation_operators` value, `data-rules` without a `[data_rules]` table, an invalid data rule file or a data rule whose constants or example values do not suit the column types, `--scale` below 1, a missing prerequisite result (`run sxc.py <stage> first`), `build/shapes.ttl` older than the shapes in the configuration, a configured table or column that does not exist, demo tables with other columns than the demo defines, a `--native-file` that does not exist, a `--home` directory that is neither empty nor an adapter install, `expect` with cases but without `--allow-fixture-database`, with a `--dsn-env` that is not a variable name, or with a fixture DSN that equals, or names the same host, port and database as, an operational DSN variable set in this environment (another name for the same server is not detected) |
 | 3 | environment missing | a DSN variable that is not set or holds a malformed DSN, an unsupported `sslmode` or DSN parameter, an unreadable `sslrootcert`, a failed connection, PostgreSQL older than 17, pg8000 or the reason packages missing, Java missing (`reason`), Node.js missing or older than 22, the Cube adapter missing, incomplete or stale, Cube not starting, the check role unable to read a source table or to create in the output schema (`build`), an unsupported platform or a glibc too old (`cube-install`), Python older than 3.11 |
 
 `doctor` reports a missing DSN, a failed connection and an old server as failing checks (exit 1) instead of
@@ -140,7 +141,11 @@ exit 3, so one run lists everything to fix.
   check role's privileges; it writes only to the output schema and to temporary tables. Each build transaction
   first takes `pg_advisory_xact_lock(hashtext('semantic-crosscheck build <output_schema>'))`, so two builds of
   one output schema wait for each other. `demo` writes with the loader role under its own advisory lock, in one
-  transaction with a 10-minute statement timeout.
+  transaction with a 10-minute statement timeout. `data-rules` runs every gate, rule, lookup and export statement of
+  a run in one `READ ONLY REPEATABLE READ` transaction (`db.read_only(..., isolation="repeatable read")`), so both
+  of its evaluations see one snapshot, then its authored examples in a second `READ ONLY` transaction that reads no
+  table; it writes nothing. With `[data_rules]` and `views = true`, `build` creates the data rule views in one more
+  write transaction of its own, after the shape views and before the closures, under the same advisory lock.
 - **Cube sessions are read-only and bounded.** Cube connects with the check role (or `[cube].dsn_env`), with
   `PGOPTIONS='-c default_transaction_read_only=on -c statement_timeout=<cube.query_timeout_s * 1000>'` and
   `CUBEJS_DB_QUERY_TIMEOUT=<cube.query_timeout_s>`. Cube's Postgres driver sets `statement_timeout` from the
@@ -190,7 +195,10 @@ exit 3, so one run lists everything to fix.
 - **Programs** (`node`, `npm`, `java`) are looked up on `PATH` only (`procutil.which`), never in the current
   directory.
 - **Generated SQL** uses validated identifiers (`ident.py`) and bound parameters; `sql_violation` predicates and
-  gold SQL files are trusted code from the configuration and are labelled as such in reports.
+  gold SQL files are trusted code from the configuration and are labelled as such in reports. Data rules are
+  compiled from a closed rule language without SQL text: `data-rules` binds their constants as parameters
+  (`CAST(:pN AS type)`; the compiler never writes `::`), and the rule view definitions build creates and records in
+  `build.sql` carry them as escaped `E'...'` literals from the validated rule file.
 
 ### 3.1 TLS
 
@@ -240,6 +248,17 @@ PostgreSQL, in the output schema:
   quantity of their lines. Built level by level (no path enumeration); applied with MERGE.
 - `<h>_cycles(start, length, path)`: example cycles (only when cycles exist).
 - `v_shape_<id>`: key columns of the target rows violating shape `<id>`.
+- Only with `[data_rules]` and `views = true` (names from `data_rules.view_name()` and `data_rules.SUBJECTS_VIEW`,
+  not from `naming.py`, which is unchanged):
+  - `v_rule_<id>`: the output columns of data rule `<id>` plus `ord bigint`, the row number in canonical order
+    (`row_number() OVER (ORDER BY` each output column, text with `COLLATE "C"`, `NULLS FIRST)`);
+  - `v_rules_subjects(subject, severity, severity_rank, rule_count, rules, ord)`: one row per non-NULL subject value
+    over the rules that name a subject, with the worst severity (`violation` rank 0, `warning` rank 1), the number of
+    rules and their ids as `text[]` in configuration order; `ord` orders by severity rank, then subject.
+
+  Both carry the fixed comment `semantic-crosscheck data rule view: rows are cross-checked only by sxc.py data-rules`.
+  A rule id whose `v_rule_<id>` would equal a name `naming.py` generates is refused (exit 2); `v_rules_` has `s` at
+  index 6, where every `v_rule_<id>` has `_`, so the subjects view never collides with a rule view.
 
 Cube (see `cube_gen.py` for the exact model):
 - `<entity>` cubes; `<h>_closure` with `qty` (sum) and `pairs` (count); `<h>_ancestor` / `<h>_descendant`
@@ -896,6 +915,81 @@ with no cycle edges dropped; an inconsistent ontology entails everything, so the
 Above `verify.owl_max_individuals`, `owl:consistency` and every configured V5 comparison are `not_run` with
 `reason=resource_limit`. Size limits never turn a selected engine into a successful untested part of a run.
 
+### Data rules
+
+`data-rules` (since 0.22.0) is optional and outside the report pipeline. The rule file named by `[data_rules] file`
+holds typed rules of six kinds (`row`, `duplicate`, `mode_outlier`, `same_signature`, `stored_metric`,
+`text_quantity`), named sets and reference sets, and authored `[[rule.example]]` rows. `data_rules.py` validates it
+closed at every level, with messages that name positions and never a constant, a cell or the pattern (exit 2).
+[data-rules.md](data-rules.md) is the reference for the file, the atoms, the pattern subset and the semantic contract
+both evaluation paths implement separately. The stage (`stage_data_rules.py`):
+
+1. Loads and validates the rule file and records its SHA-256; `--rule` narrows the run (an unknown id is exit 2) and
+   the previous `data_rules/rules.sql` is removed. With `views = true` it reads `build/result.json` and
+   `build/build.sql`; their absence is not exit 2 (the lookups are `not_run`, `build_missing`).
+2. Connects (exit 3), checks every table and column the rules read with build's source check (exit 2 or 3), reads one
+   catalog type plan and type-checks every atom, constant and example value (exit 2). A rule that reads a column of an
+   unsupported type (anything but `int2`, `int4`, `int8`, `numeric`, `text`, `varchar`, `bpchar`, `bool`; domains
+   included) or text with a nondeterministic collation is `not_run` (`column_type`, `collation`).
+3. Takes one READ ONLY REPEATABLE READ snapshot: the server encoding (UTF8); the rows of every needed entity, counted
+   no further than `max_export_rows + 1` (a total above `max_export_rows` makes every rule `not_run`,
+   `resource_limit`, and no rule, lookup or export statement runs); the gates (NULL and duplicate keys, NaN and
+   infinities, NULL edge quantities, unbounded heights, text length); every eligible rule under its own savepoint,
+   at most `max_rule_rows + 1` rows (a parameterized variant of the shape savepoint, so `shapes.py` is unchanged);
+   the lookups of `v_rule_<id>` and `v_rules_subjects` in `ord` order, each under a savepoint; and the export of
+   the needed columns, whose row count must equal the budget count (`export_incomplete`). It is rolled back.
+4. Runs every authored example in a second READ ONLY transaction: the rule compiled over CTEs of its bound example
+   values, under a savepoint each. No table is read.
+5. Path 2, `data_rules_eval.py`, evaluates every rule whose gates passed over the exported typed rows (str, Decimal,
+   int, bool, None) and every example over its own rows, with explicit three-valued logic and Decimal arithmetic at
+   precision 60 with Inexact trapped (an inexact step is an evaluator error). It imports only the standard library
+   and the pinned `canon` module, never the compiler (`data_rules_sql.py`), the stage modules, `config`, `db` or
+   `result`; an AST test checks the import independence in both directions.
+6. Compares the canonical output multisets (duplicates count). `rule:<id>` gets a verdict only when they are equal
+   (`rule_xcheck:<id>` passes) and no example failed; a disagreement leaves it `not_run` (`paths_disagree`), and an
+   example where both evaluations agree but differ from the authored rows (`common_mode`) leaves it `not_run`
+   (`example_mismatch`). The subjects are rolled up in Python from the agreed outputs and compared with
+   `v_rules_subjects`.
+7. Re-hashes `crosscheck.toml` and the rule file (`data_rules:inputs`) and writes `rules.sql`: the statements the run
+   executed, in order, with `:pN` placeholders and identifiers only. `sxc.py` keeps the stage's `data_rules_sha256`
+   in the result inputs next to `inputs_fingerprint(cfg)`.
+
+**Build.** Only with `[data_rules]` and `views = true`, build loads the rule file before connecting (exit 2), adds the
+columns its rules read to the source check, reads their type plan and renders every view statement before the output
+schema is touched (exit 2 on an incompatible rule); it applies no data-dependent gate. After the shape transaction and
+before the closures, one more write transaction (advisory lock first) drops `v_rules_subjects`, creates or replaces
+`v_rule_<id>` per rule under a savepoint (dropped and created again on 42P16, then marked with the fixed comment;
+`rule_view:<id>`, `error` with the view dropped when either fails), drops the marked rule views the rule file no
+longer generates (never an unmarked object, never CASCADE; a drop that fails leaves a `not_proven` line) and creates
+`v_rules_subjects` when every subject rule's view exists (`rule_subjects:view`, else `not_run`,
+`rule_view_missing`). An error outside the savepoints makes every `rule_view:<id>` an `error`. A rule that reads an
+unusable column gets no view (`not_run`, `column_type` or `collation`). `build.sql` records the statements in
+literal form and `next_safe_action` adds the data-rules step only when rule views were built. Without `[data_rules]`
+build sends and writes exactly what v0.21.1 did (compatibility goldens), and `expect` builds its fixture without rule
+views.
+
+**Lookups.** `rule_lookup:<id>` compares the rows of `v_rule_<id>` with the agreed multiset and requires `ord` to be
+1..N in canonical order: NULL < false < true < numbers by value < text by code point, which equals UTF-8 byte order
+and `COLLATE "C"`. It counts a view only when build created it from the rule file as it is now: `build/build.sql`
+must hold the exact statement data-rules regenerates (`view_stale` otherwise), as reason requires for shape views.
+`rule_subjects:lookup` compares `v_rules_subjects` with the Python roll-up (subject, severity, rule count, rule ids,
+order); it is `not_run` (`incomplete`) unless every subject rule agreed. The views are live and equal the certified
+rows only at check time.
+
+**Not proven and next action.** Every run with an agreed rule adds the line that agreement of the PostgreSQL and
+Python evaluations does not show that a rule or its constants are the right business rule, and that authored
+examples pin only the cases they contain. Vacuous comparisons (both outputs empty, an entity with 0 rows), rules
+without examples under `require_examples = false`, `views = false` (the agreed rows are not persisted anywhere),
+budgets and gates add their own lines. `next_safe_action` takes the first match of: an error with its SQLSTATE hint;
+a disagreement; `common_mode`; a gate or budget; a lookup; violations found (query
+`<output_schema>.v_rules_subjects ORDER BY ord` and `v_rule_<id>` in the database with the user); otherwise a rerun
+hint.
+
+**Boundary.** The result and console hold counts, check ids, configuration ids (rule ids, entity and relation names),
+small enums, SQLSTATEs, exception type names and input hashes; detail values are scalars. Row values live only in the
+output-schema views, as in `v_shape_<id>`; rule constants appear as literals in the view definitions and in
+`build.sql`, and authored example rows are bound as parameters and never stored.
+
 ## 8. Report
 
 `report` reads the results of `doctor`, `demo`, `build`, `reason`, `cube` and `verify` in the output directory and
@@ -916,6 +1010,10 @@ never touches the database.
 - **Optional stages** (`doctor`, `demo`): a present result that passed, failed or errored is mirrored (a failing
   doctor or demo fails the report); one that is `not_run` or stale gets only a `not_proven` line. A missing
   `doctor` adds the `not_proven` line that the check role's privileges were not verified.
+- **Data rules** are not a report stage. When the configuration has `[data_rules]`, report adds one `not_proven`
+  line (data rules run in the separate data-rules stage; report does not read `data_rules/result.json`, so data-rule
+  findings do not change its verdict). Required stages, inputs and staleness rules are unchanged, and a configuration
+  without `[data_rules]` gets byte-identical reports.
 - Each stage's status is recomputed from its checks (fail-closed; a hand-edited `status` can only make it
   worse). A stage whose own status is `not_run` (a run narrowed with `--only`, `--gold` or `--hierarchy`) is
   `stage:<name>` `not_run`.
@@ -1043,6 +1141,15 @@ or the checks it exercises without being reported). See `commands/xc-demo.md` fo
   the code: stages, options, check ids, configuration keys and defaults, minimum versions and pins.
 - The demo's `expected` numbers come from an independent Python implementation and are the reference for the
   closure, the shapes and the dirty-data findings.
+- Data rules: `tests/test_data_rules_spec.py` (the rule-file model, the pattern subset, typing and position-only
+  messages), `tests/test_data_rules_sql.py` (golden SQL per atom and kind, no configured constant in parameterized
+  SQL, literal escaping, and a parse of both renderings with pglast when it is installed),
+  `tests/test_data_rules_eval.py` (the hand-written outputs of the clean-room example in `examples/data-rules/`,
+  three-valued logic, boundaries and planted evaluator defects), `tests/test_data_rules_stage.py` (a fake connection
+  that answers only the statements the compiler generates: every status and reason, budgets, result-boundary scans,
+  import independence) and `tests/test_data_rules_compat.py` (goldens captured on v0.21.1 for a configuration
+  without `[data_rules]`). `tests/test_data_rules_pg.py` runs the example fixture on PostgreSQL 17, including SQL
+  mutants that must make `rule_xcheck:<id>` fail; the strict CI integration job allows no skip.
 
 
 ## Opt-in structured and finite-domain counterexample search

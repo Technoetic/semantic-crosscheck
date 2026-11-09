@@ -196,3 +196,46 @@ gold SQL and `crosscheck.toml` avoid them too.
 - **Times are compared in UTC.** `time` members are compared as UTC timestamps at microsecond precision:
   a date equals its midnight, an aware timestamp is converted to UTC, and Cube's
   `YYYY-MM-DDTHH:MM:SS.mmm` output is read as UTC (which is how the generated time members render).
+
+## Data rules
+
+The `data-rules` stage evaluates each rule in PostgreSQL and in Python and gives a verdict only when both agree
+([docs/data-rules.md](../../../docs/data-rules.md)). These are the traps that make the two disagree, or make both agree
+on something the rule's author did not mean.
+
+- **Text compares exactly.** No trimming, case folding or Unicode normalization: `'tmp-1'` does not start with
+  `'TMP-'`, a value with a trailing space differs from the same value without it, and a name typed in decomposed
+  Unicode (NFD) differs from the composed form (NFC). Clean the data or list every spelling in the set; never rely on
+  a collation to make values equal.
+- **bpchar pad spaces are not part of the value.** PostgreSQL compares `character(n)` values without their trailing
+  pad spaces, and a cast to text drops them. Both evaluations read bpchar that way (every compiled reference and the
+  export cast it to text), so a padded `char(n)` key equals the same key in a text column. In a `text` or `varchar`
+  column a trailing space stays significant.
+- **Nondeterministic collations are refused.** An ICU collation created with `deterministic = false` makes `=`, `IN`
+  and `GROUP BY` treat different strings as equal in PostgreSQL, while Python compares code points. Rules that read
+  such a column are `not_run` (`collation`); cast the column to a deterministic collation such as `COLLATE "C"` in a
+  database view and point the entity at the view.
+- **Floating-point columns are refused.** `real` and `double precision` hold binary approximations, so equality and
+  sums can differ between the engines. Rules that read them are `not_run` (`column_type`), as for dates, domains and
+  every other type outside `int2`, `int4`, `int8`, `numeric`, `text`, `varchar`, `bpchar` and `bool`. Store
+  quantities as `numeric`, or cast in a view.
+- **NaN and infinities stop a rule.** `numeric` accepts `'NaN'`, `'Infinity'` and `'-Infinity'`. PostgreSQL orders NaN
+  above every number, while Python's Decimal refuses to order it. A numeric column a rule reads must hold none of them,
+  or the rule is `not_run` (`non_finite_values`).
+- **Two regular-expression engines.** PostgreSQL's advanced regular expressions and Python's `re` differ: alternation
+  can pick another match, `\d`, `\w` and `\s` cover other characters (Python's are Unicode-aware), Python's `$` also
+  matches before a final newline, and captures can be assigned differently. `text_quantity` patterns therefore stay
+  inside a subset both read alike: no alternation or letter escapes, `\d` and `\s` expanded to ASCII classes, `$`
+  written as `\Z` for Python, no repetition over a group that contains a quantifier. A difference that remains
+  shows up as a failing `rule_xcheck:<id>`, never as a pass.
+- **COPY turns an unquoted empty CSV field into NULL.** When the source tables are loaded with `COPY ... (FORMAT
+  csv)`, an unquoted empty field becomes NULL and a quoted `""` stays an empty string, so a blank code can arrive as
+  NULL. A comparison with NULL is false (`ne`, `not_in` and `not_in_ref` included): a rule that must report blank or
+  missing codes needs an explicit `is_null` branch (`any = [[... not_in_ref ...], [... is_null ...]]`). Load with
+  every field quoted, or with `FORCE_NOT_NULL`, when blanks must stay blank.
+- **Exact numbers only.** Write constants and example values as decimal strings or integers: TOML floats are refused,
+  because `0.1` as a binary float is not 0.1. Numbers compare by value (`2.0` equals `2.000000`), but an example value
+  must fit its column exactly: `"0.1234567"` for a `numeric(18,6)` column is exit 2, so neither evaluation rounds.
+- **NULL is a violation only when asked for.** A NULL endpoint has no node row to compare, an `all` quantifier needs at
+  least one neighbour, and NULL key parts form no duplicate group. Use `is_null` or an `exists = false` endpoint atom
+  when a missing value or a dangling reference is the defect.

@@ -1,0 +1,9 @@
+-- rule same_name_components (duplicate): parameterized; p1 bigint
+SELECT DISTINCT d."parent_id" FROM (SELECT t."parent_id" AS "parent_id" FROM "sxc_rules"."bom_line" t JOIN "sxc_rules"."part" nc ON nc."part_id" = t."child_id" WHERE t."parent_id" IS NOT NULL AND nc."name" IS NOT NULL GROUP BY t."parent_id", nc."name" HAVING count(DISTINCT t."child_id") >= CAST(:p1 AS bigint)) d WHERE d."parent_id" IS NOT NULL;
+
+-- rule same_name_components: view
+CREATE OR REPLACE VIEW "sxc_out"."v_rule_same_name_components" AS
+SELECT r.*, row_number() OVER (ORDER BY r."parent_id" COLLATE "C" NULLS FIRST) AS ord FROM (SELECT DISTINCT d."parent_id" FROM (SELECT t."parent_id" AS "parent_id" FROM "sxc_rules"."bom_line" t JOIN "sxc_rules"."part" nc ON nc."part_id" = t."child_id" WHERE t."parent_id" IS NOT NULL AND nc."name" IS NOT NULL GROUP BY t."parent_id", nc."name" HAVING count(DISTINCT t."child_id") >= CAST(E'2' AS bigint)) d WHERE d."parent_id" IS NOT NULL) r;
+
+-- example same_name_components[0]: parameterized; 23 parameters
+WITH "sxc_ex_bom_line"("parent_id", "child_id") AS (VALUES (CAST(:p1 AS text), CAST(:p2 AS text)), (CAST(:p3 AS text), CAST(:p4 AS text)), (CAST(:p5 AS text), CAST(:p6 AS text)), (CAST(:p7 AS text), CAST(:p8 AS text)), (CAST(:p9 AS text), CAST(:p10 AS text)), (CAST(:p11 AS text), CAST(:p12 AS text)), (CAST(:p13 AS text), CAST(:p14 AS text)), (CAST(:p15 AS text), CAST(:p16 AS text))), "sxc_ex_part"("part_id", "name") AS (VALUES (CAST(:p17 AS text), CAST(:p18 AS text)), (CAST(:p19 AS text), CAST(:p20 AS text)), (CAST(:p21 AS text), CAST(:p22 AS text))) SELECT * FROM (SELECT DISTINCT d."parent_id" FROM (SELECT t."parent_id" AS "parent_id" FROM "sxc_ex_bom_line" t JOIN "sxc_ex_part" nc ON nc."part_id" = t."child_id" WHERE t."parent_id" IS NOT NULL AND nc."name" IS NOT NULL GROUP BY t."parent_id", nc."name" HAVING count(DISTINCT t."child_id") >= CAST(:p23 AS bigint)) d WHERE d."parent_id" IS NOT NULL) r;

@@ -1036,6 +1036,55 @@ never touches the database.
   configuration changed since they ran, and verify when the configuration or a gold file changed
   (`reason=stale`, `why=inputs_changed`); a result without a fingerprint cannot be shown to be current.
 
+### Evidence kinds
+
+Every check of `doctor`, `demo`, `build`, `reason`, `cube`, `verify`, `report` and `semantic-preflight` has one
+evidence kind, which says what the two sides of the check are. It does not say that a side is right.
+
+- **authored**: one side is the rows of a gold SQL file a person wrote, with no generated text in it. Authored says
+  who wrote one side; it does not say that the gold SQL is right or independent of the configuration.
+- **recomputed**: one side is recomputed from source rows by engine code that imports no generator module and reads
+  no generated artifact on that side. It is independent of generator code, not of the configuration entry (the
+  closure oracle reimplements the builder's rules).
+- **generated**: both sides come from `crosscheck.toml` through generators, or one generated layer is compared with
+  itself. A second engine is not enough: the OWL closure check runs HermiT, but its OWL side is built by the
+  ontology generator and its SQL side reads the generated closure table.
+- **structural**: there is one side only: a rule on the data, the configuration, the environment, the served
+  model, the scope or the bookkeeping of a run.
+- **mutation**: a V4 mutant check. A pass means that a suite item failed against the mutant, not that a gold query
+  did.
+- **unclassified**: no row below names the check. It is never counted as authored or recomputed.
+
+To decide a kind, name the code behind each side, then take the first that applies: one side only is structural;
+a V4 mutant is mutation; a side that is a gold SQL file without generated text is authored; a side that reads only
+source rows through code whose module-level imports reach no generator module (`cube_gen`, `closure`, `shapes`,
+`shape_q`, `mutate`, `owl`) is recomputed; anything else is generated. Sharing the configuration does not make a
+side generated; sharing generator code or a generated artifact does. Imports inside functions that only serve
+provenance metadata do not count. A unit test pins the module-level imports of every recomputed row.
+
+The registry is `evidence.RULES`. Its rows are ordered, the first row that names a check wins and there is no
+default row. The table is rendered from the registry, and a unit test keeps the two equal. `*` stands for one or
+more id segments.
+
+| # | Stage | Check ids | Kind | Why |
+|---|---|---|---|---|
+| 1 | any | `stage`, `data_revision:stable`, `data_revision:current`, `runtime_evidence:stable`, `runtime_evidence:current` | structural | the stage run and its data and runtime revisions: one side |
+| 2 | doctor, demo, cube, semantic-preflight, report | every id | structural | the environment, the demo load, the served model, an offline preflight, report bookkeeping: one side |
+| 3 | build | `shape:<id>`, `closure:<h>`, `rule_view:<id>`, `rule_subjects:view` | structural | a rule on the source data, or the build's own outcome: one side |
+| 4 | build | `closure_apply:<h>` | generated | the closure table against a recomputation by the same builder in the same transaction |
+| 5 | reason | `shacl:meta:generated`, `owl:consistency`, `owl:explanation`, `scope:shacl`, `scope:owl`, `v5:witness:<name>` | structural | the generated shapes' syntax, the ontology's consistency, parts left out, and synthetic graphs the engine wrote: one side, not this data |
+| 6 | reason | `shacl:pair:<id>`, `shacl:<id>`, `v5:defined:<name>`, `v5:closure:<h>` | generated | both sides come from one shape entry or one ontology definition; the OWL closure is built by the ontology generator and compared with the generated closure table (a second engine is not an independent side) |
+| 7 | verify | `v1:<gold>`, `v2:<gold>:<stratum>` | authored (generated when the gold SQL contains generated text, unclassified without a recorded gold kind) | one side is the rows of a gold SQL file a person wrote; authored says who wrote it, not that it is right |
+| 8 | verify | `v3:closure_oracle:<h>` | recomputed | the raw edges recomputed in Python by code that imports no generator module |
+| 9 | verify | `v3:*`, `v3w:*` | generated | Cube against SQL built from the configuration by generator code (the measure filter, the closure table), or Cube against Cube |
+| 10 | verify | `v4:suite`, `scope:v1`, `scope:v2`, `scope:v3`, `scope:v4`, `scope:gold:<gold>`, `gold_evidence:<element>` | structural | parts or gold queries a narrowed run left out, the suite on the unmutated model, and the authored evidence of a configuration element: one side |
+| 11 | verify | `v4:<operator>:<target>` | mutation | a broken copy of the generated model served to the suite; pass means a suite item failed against it |
+
+The only kind a stage records is the kind of a gold query in the verify result, and it applies to `v1:<gold>` and
+`v2:<gold>:<stratum>` only. It can lower authored to generated, never raise a kind: a gold entry recorded as
+authored with generated text, or with any value other than authored or generated, counts as generated and is
+counted as overridden. Without a gold entry these checks count as unclassified.
+
 ### Synthetic counterexamples and data provenance
 
 The optional `counterexample` command is independent of the configured pipeline. It always ignores

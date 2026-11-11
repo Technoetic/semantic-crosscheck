@@ -301,7 +301,11 @@ def _node_pairs(cfg, cubes: dict, kinds: dict) -> list[dict]:
 
 
 def measure_total_sql(cfg, m) -> str:
-    """The configuration's definition of a measure's total (independent of the Cube model)."""
+    """The configuration's definition of a measure's total.
+
+    Its WHERE clause is cube_gen.where_sql(m), the same generator call that builds the filter of the measure cube,
+    so a v3:total check of a measure compares two generated layers (evidence kind generated, see evidence.py).
+    """
     ent = cfg.entity(m.entity, f"measures.{m.name}")
     return (f"SELECT {m.agg}(t.{ident.quote(m.column)}) FROM {ident.qualified(ent.table)} t"
             f" WHERE {cube_gen.where_sql(m)}")

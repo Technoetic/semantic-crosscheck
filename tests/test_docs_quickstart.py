@@ -7,9 +7,14 @@ and that the CI workflow runs the same command lines with the exit codes the REA
 
 The integration test (SXC_TEST_ADMIN_DSN, Java, the reason packages, Node.js and a Cube adapter installed from this
 checkout) runs those command lines in a copy of the demo directory, with roles created by docs/setup-roles.sql in
-database sxc_f_docs_quick: every summary line and NOT PROVEN line of the clean run must be the one the README shows,
-the dirty run must exit as the README says with the documented checks failing, and every check id in every result
-must be in the catalogue of docs/design.md.
+database sxc_f_docs_quick: every summary line, NOT PROVEN line and report EVIDENCE line of the clean run must be the
+one the README shows (on any difference the test first prints the whole console output of the clean run between
+"==== SXC README BLOCK" lines, ready to copy into the README), the dirty run must exit as the README says with the
+documented checks failing, and every check id in every result must be in the catalogue of docs/design.md. What verify
+and report record about the evidence of both runs must satisfy what test_evidence_pg checks for any run (V4
+attribution through evidence.v4_violations, the mutant split, facets, zero-row lists, report's counts and EVIDENCE
+lines), and the clean run what is known about the clean demo by reading; the measured values are printed between
+"==== SXC MEASURED" lines so that they can be pinned.
 """
 
 import importlib.util
@@ -26,9 +31,10 @@ from pathlib import Path
 
 import pgfixture
 import test_docs_catalogue as catalogue
+import test_evidence_pg as evidence_pg
 from test_docs_setup_roles import Psql
 
-from semantic_crosscheck import cube_run, demo, owl, procutil, provenance, runtime_provenance
+from semantic_crosscheck import config, cube_run, demo, owl, procutil, provenance, runtime_provenance
 
 ROOT = pgfixture.ROOT
 README = ROOT / "README.md"
@@ -86,17 +92,29 @@ def dirty_run() -> list[list[str]]:
 
 
 def expected_output() -> dict[str, dict]:
-    """{stage: {"summary": text before '  ->', "not_proven": [lines]}} from the README's expected-output block."""
+    """{stage: {"summary": text before '  ->', "not_proven": [lines], "evidence": [lines]}} from the README's
+    expected-output block (EVIDENCE lines are the ones report prints after its NOT PROVEN lines)."""
     block = next(b for b in code_blocks(quick_start()) if any(line.startswith("[sxc ") for line in b))
     out, stage = {}, None
     for line in block:
         m = re.match(r"\[sxc (\S+)\] ", line)
         if m:
             stage = m.group(1)
-            out[stage] = {"summary": line.split("  ->", 1)[0], "not_proven": []}
+            out[stage] = {"summary": line.split("  ->", 1)[0], "not_proven": [], "evidence": []}
         elif line.startswith("  NOT PROVEN  ") and stage:
             out[stage]["not_proven"].append(line.strip())
+        elif line.startswith("  EVIDENCE  ") and stage:
+            out[stage]["evidence"].append(line.strip())
     return out
+
+
+def console_output(stage: str, output: str) -> dict:
+    """The parts of one stage's console output that expected_output() reads from the README, in the same shape."""
+    lines = output.split("\n")
+    summary = next((line for line in lines if line.startswith(f"[sxc {stage}] ")), "")
+    return {"summary": summary.split("  ->", 1)[0],
+            "not_proven": [line.strip() for line in lines if line.startswith("  NOT PROVEN  ")],
+            "evidence": [line.strip() for line in lines if line.startswith("  EVIDENCE  ")]}
 
 
 def promised_exit_codes() -> dict[str, int]:
@@ -260,33 +278,75 @@ class QuickStartRunTest(unittest.TestCase):
                 with self.subTest(stage=stage, check=check["id"]):
                     self.assertTrue(catalogue.matches(check["id"]), "a result holds a check id design.md does not list")
 
+    def readme_block(self, outputs: dict[str, tuple[int, str]]) -> str:
+        """The whole console output of every clean stage, as the README block writes it: the work directory as `...`,
+        the checkout as <plugin>, this interpreter as <python>. Results hold ids and counts only; anything shaped like
+        a demo row id is masked all the same."""
+        lines = []
+        for _rc, output in outputs.values():
+            text = output.replace(str(self.work), "...").replace(f'"{sys.executable}"', "<python>")
+            for line in text.replace(str(ROOT), "<plugin>").rstrip("\n").split("\n"):
+                if line.startswith("[sxc ") and "  -> " in line:
+                    head, path = line.split("  -> ", 1)
+                    line = f"{head}  -> {path.replace(chr(92), '/')}"
+                lines.append(evidence_pg.ROW_ID.sub("<row value>", line))
+        return "\n".join(lines)
+
+    def run_evidence(self, report_output: str) -> tuple[dict, dict, list[str]]:
+        """(verify result, report.json `evidence`, the EVIDENCE console lines without their prefix) of the last run;
+        empty when absent."""
+        report = self.work / "demo" / ".sxc" / "report.json"
+        report_json = json.loads(report.read_text(encoding="utf-8")) if report.is_file() else {}
+        prefix = "  EVIDENCE  "
+        console = [line[len(prefix):].rstrip("\r") for line in report_output.split("\n") if line.startswith(prefix)]
+        return self.results().get("verify", {}), report_json.get("evidence") or {}, console
+
     def test_readme_quick_start(self):
         expected = expected_output()
-        for argv in clean_run():
-            rc, output = self.sxc(argv)
-            stage = argv[0]
-            lines = output.split("\n")
-            summary = next(line for line in lines if line.startswith(f"[sxc {stage}] ")).split("  ->", 1)[0]
-            not_proven = [line.strip() for line in lines if line.startswith("  NOT PROVEN  ")]
-            with self.subTest(stage=stage):
-                self.assertEqual(rc, 0, output[-2000:])
-                self.assertEqual(summary, expected[stage]["summary"])
-                self.assertEqual(not_proven, expected[stage]["not_proven"])
-        self.assert_catalogued()
+        out = self.work / "demo" / ".sxc"
+        measured: dict[str, dict] = {}
+        try:
+            outputs = {argv[0]: self.sxc(argv) for argv in clean_run()}
+            got = {stage: console_output(stage, output) for stage, (_rc, output) in outputs.items()}
+            if any(rc != 0 or got[stage] != expected.get(stage) for stage, (rc, _output) in outputs.items()):
+                print(f"\n==== SXC README BLOCK {self.id()} (console output of the clean run, ids and counts only) "
+                      f"====\n{self.readme_block(outputs)}\n==== END SXC README BLOCK {self.id()} ====", flush=True)
+            for stage, (rc, output) in outputs.items():
+                with self.subTest(stage=stage):
+                    self.assertEqual(rc, 0, output[-2000:])
+                    self.assertEqual(got[stage]["summary"], expected[stage]["summary"])
+                    self.assertEqual(got[stage]["not_proven"], expected[stage]["not_proven"])
+                    self.assertEqual(got[stage]["evidence"], expected[stage]["evidence"])
+            self.assert_catalogued()
+            verify, report_ev, console = self.run_evidence(outputs.get("report", (0, ""))[1])
+            measured["clean"] = {"verify": evidence_pg.verify_measures(verify),
+                                 "report": evidence_pg.report_measures(report_ev, console)}
+            with self.subTest(evidence="clean"):
+                cfg = config.load(self.work / "demo" / "crosscheck.toml")
+                evidence_pg.assert_verify_evidence(self, verify, out, cfg)
+                evidence_pg.assert_report_evidence(self, report_ev, self.results(), console, verify)
+                evidence_pg.assert_clean_demo(self, verify, report_ev)
 
-        promised = promised_exit_codes()
-        for argv in dirty_run():
-            rc, output = self.sxc(argv)
-            with self.subTest(stage=argv[0], variant="dirty"):
-                self.assertEqual(rc, promised[argv[0]], output[-2000:])
-        statuses = {c["id"]: c["status"] for r in self.results().values() for c in r["checks"]}
-        table = defect_table()
-        self.assertGreaterEqual(len(table), len(demo.REPORTED))
-        for check, outcome in table.items():
-            with self.subTest(check=check):
-                self.assertEqual(statuses.get(check), re.match(r"(pass|fail)\b", outcome).group(1))
-        self.assertEqual(statuses.get("v4:measure_normalization_drop:on_hand"), "pass")
-        self.assert_catalogued()
+            promised = promised_exit_codes()
+            for argv in dirty_run():
+                rc, output = self.sxc(argv)
+                with self.subTest(stage=argv[0], variant="dirty"):
+                    self.assertEqual(rc, promised[argv[0]], output[-2000:])
+            statuses = {c["id"]: c["status"] for r in self.results().values() for c in r["checks"]}
+            table = defect_table()
+            self.assertGreaterEqual(len(table), len(demo.REPORTED))
+            for check, outcome in table.items():
+                with self.subTest(check=check):
+                    self.assertEqual(statuses.get(check), re.match(r"(pass|fail)\b", outcome).group(1))
+            verify = self.results().get("verify", {})
+            measured["dirty"] = {"verify": evidence_pg.verify_measures(verify)}
+            with self.subTest(evidence="dirty"):
+                cfg = config.load(self.work / "demo" / "crosscheck.toml")
+                evidence_pg.assert_verify_evidence(self, verify, out, cfg)
+            self.assertEqual(statuses.get("v4:measure_normalization_drop:on_hand"), "pass")
+            self.assert_catalogued()
+        finally:
+            evidence_pg.print_measured(self.id(), measured)
 
 
 if __name__ == "__main__":

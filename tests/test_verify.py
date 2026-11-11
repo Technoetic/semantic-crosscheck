@@ -30,7 +30,7 @@ import unittest
 from pathlib import Path
 
 import pgfixture
-from semantic_crosscheck import closure, config, cube_gen, cube_run, db, stage_verify, sweep
+from semantic_crosscheck import closure, config, cube_gen, cube_run, db, evidence, stage_verify, sweep
 from semantic_crosscheck.result import Result
 
 CUBE_READY = cube_run.installed(cube_run.cube_home()) and bool(shutil.which("node"))
@@ -367,7 +367,14 @@ class VerifyStageTest(unittest.TestCase):
         for c in checks.values():
             self.assertEqual(c.status, "pass", c.detail)
             self.assertRegex(c.detail["killed_by"], r"^v[123]:\S+$")
-        self.assertEqual(res.not_proven, [])
+        # A mutant that only a V3 item killed passes with a not_proven line (N5): never read as a gold detection.
+        for line in res.not_proven:
+            c = checks.get(line.split(": ", 1)[0])
+            self.assertIsNotNone(c, line)
+            self.assertEqual(c.detail.get("detection"), "generated_only", line)
+            self.assertTrue(line.startswith(f"{c.id}: killed by {c.detail['killed_by']}, a check between generated "
+                                            "layers; no replayed gold item detected this change to "), line)
+        self.assertEqual(evidence.v4_violations(res), [])
         self.assertEqual({c.id for c in res.checks if c.status == "not_run"}, {"scope:v1", "scope:v2", "scope:v3"})
 
     def node_variant(self, table: str, edit: str) -> tuple:

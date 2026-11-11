@@ -22,7 +22,7 @@ RECOMPUTED_CLOSURES = {
                        "result_contract"},
 }
 # Tokens of the rendered table whose check is created by a later phase; the catalogue row comes with the check.
-NOT_YET_CATALOGUED = {"gold_evidence:<element>"}
+NOT_YET_CATALOGUED: set[str] = set()
 
 
 def design_table() -> str:

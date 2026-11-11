@@ -1,4 +1,6 @@
-"""[verify] accepted_gaps: known gaps of authored evidence, named so they stop being reported as new.
+"""[verify] accepted_gaps and gold_observation: the evidence keys of the configuration.
+
+accepted_gaps: known gaps of authored evidence, named so they stop being reported as new.
 
 Why: an entry that names nothing of this configuration would silently accept nothing (or, after a rename, hide a
 real gap), so every entry must name a measure, hierarchy or ontology.class_column of the configuration, one of their
@@ -58,6 +60,29 @@ class AcceptedGapsTest(unittest.TestCase):
                 with self.assertRaises(StageError) as e:
                     demo_with(line, without)
                 self.assertEqual(e.exception.exit_code, EXIT_CONFIG)
+
+
+class GoldObservationTest(unittest.TestCase):
+    """[verify] gold_observation: "disclose" (the default) only discloses; "require" turns the disclosures into check
+    statuses. Any other value is a configuration error (exit 2) whose message does not repeat it."""
+
+    def test_default_is_disclose(self):
+        self.assertEqual(config.loads(DEMO, pgfixture.DEMO_CONFIG).verify.gold_observation, "disclose")
+
+    def test_both_modes_are_accepted(self):
+        for mode in ("disclose", "require"):
+            with self.subTest(mode=mode):
+                self.assertEqual(demo_with(f'gold_observation = "{mode}"').verify.gold_observation, mode)
+
+    def test_bad_values_are_configuration_errors(self):
+        for value in ('"REQUIRE"', '"strict"', '""', "1", "true", '["require"]', '"SECRET-MODE"'):
+            with self.subTest(value=value):
+                with self.assertRaises(StageError) as e:
+                    demo_with(f"gold_observation = {value}")
+                self.assertEqual(e.exception.exit_code, EXIT_CONFIG)
+                self.assertIn("verify.gold_observation", str(e.exception))
+                self.assertNotIn("SECRET-MODE", str(e.exception))
+                self.assertNotIn("strict", str(e.exception), "the value is not repeated")
 
 
 if __name__ == "__main__":

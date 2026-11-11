@@ -65,6 +65,16 @@ every element with a gap or an accepted gap gets one not_proven line. Its mutati
 and puts every selected mutant in one bucket (killed with an authored detection, killed by generated checks only,
 unattributed, accepted, survived, not judged, equivalent, not applicable).
 
+verify.gold_observation = "require" (opt-in; the default "disclose" changes no status) turns these disclosures into
+statuses, and only ever a pass into a fail or not_run: a V4 kill that only a generated item (or an item of no known
+kind) made fails with reason generated_only or unattributed, or is not_run (suite_incomplete) when suite items were left
+out, unless verify.accepted_gaps lists the check; killed_by still names the first failing item, so read detection. On
+full-scope runs every measure, hierarchy and ontology.class_column gets a check gold_evidence:<element>: pass when none
+of its facets is a gap, not_run when every gap is gold_not_run or not_in_model, else fail with the reason of its first
+other gap. A passing v1:<gold> of a gold query whose every comparison had zero rows is not_run (no_rows_compared); an
+error or a fail stays. Operators verify.mutation_operators leaves out are named in a not_proven line and in the detail
+of every gold_evidence check.
+
 Results hold counts, check ids and positions in the deterministic binding order, never parameter values or rows.
 """
 
@@ -82,6 +92,7 @@ MAX_INDEXES = 10
 MAX_LISTED = 10                    # ids named in one evidence line; the rest are counted
 EVIDENCE_SCHEMA = 1
 _SUMS = ("missing_in_cube", "extra_in_cube", "duplicate_keys_gold", "duplicate_keys_cube", "declared_null_as_zero")
+NOT_RUN_REASONS = ("gold_not_run", "not_in_model")   # facet gaps that leave a gold_evidence:<element> check not_run
 _SPACE = re.compile(r"\s+")
 _RULE_VIEW = re.compile(r'(?<![A-Za-z0-9_."])"?(' + re.escape(data_rules.VIEW_PREFIX)
                         + r'[a-z0-9_]{1,56})"?(?![A-Za-z0-9_])', re.IGNORECASE)
@@ -160,6 +171,13 @@ def _cut(ids: list) -> str:
     """Ids for a line: at most MAX_LISTED, then how many more."""
     text = ", ".join(ids[:MAX_LISTED])
     return text + (f", and {len(ids) - MAX_LISTED} more" if len(ids) > MAX_LISTED else "")
+
+
+def _killer(d: dict) -> str:
+    """The item that killed a mutant no authored gold item detected, with what kind of check it is."""
+    if d.get("detection") == "generated_only":
+        return f"{d.get('killed_by')}, a check between generated layers"
+    return f"{d.get('killed_by')}, which no evidence rule classifies"
 
 
 def run(cfg, args, out: Path) -> Result:
@@ -318,7 +336,7 @@ class _Verify:
         # why suite items are missing (a survivor of an incomplete suite is not judged)
         self.excluded: set[str] = {"excluded_by_gold"} if len(self.golds) < len(cfg.gold) else set()
         # evidence: facets are judged only when every part ran over every gold query
-        self.mode = "disclose"
+        self.mode = cfg.verify.gold_observation   # disclose (default) or require
         self.full = set(only) == set(PARTS) and len(self.golds) == len(cfg.gold)
         self.gold_kinds: dict[str, str] = {}             # gold id -> authored | generated (stored at plan time)
         self.gold_found: dict[str, list[str]] = {}       # gold id -> generated_text matches
@@ -448,6 +466,7 @@ class _Verify:
         self.gold_evidence()
         if "v4" in self.only:
             self.v4(conn)
+        self.operators_line()
         self.facets()
 
     def closure_oracles(self, conn):
@@ -600,12 +619,29 @@ class _Verify:
         self.ledger = ledger
         summaries = next((dict(detail["summary"]) for _cid, _st, _ref, detail in checks
                           if detail and "summary" in detail), None)
+        accepted = set(self.cfg.verify.accepted_gaps)
         changed = []
         for cid, st, ref, detail in checks:
             detail = dict(detail or {})
             if "killed_by" in detail:
                 detail = self._attribute(cid, detail)
-            if st == "fail" and self.excluded:
+            if self.mode == "require" and st == "pass" and cid not in accepted \
+                    and detail.get("detection") in ("generated_only", "unattributed"):
+                # require mode: no replayed authored gold item detected the mutant, so the kill is not a pass. It
+                # counts as survived (or, with suite items left out that might have detected it, as not judged).
+                if self.excluded:
+                    row = {"outcome": "not_run", "reason": "suite_incomplete", "excluded": sorted(self.excluded)}
+                else:
+                    row = {"outcome": "survived", "reason": detail["detection"]}
+                st = "fail" if row["outcome"] == "survived" else "not_run"
+                detail = {**detail, **{k: v for k, v in row.items() if k != "outcome"}}
+                if summaries is not None:
+                    summaries["killed"] -= 1
+                    summaries[row["outcome"]] += 1
+                for ledger_row in ledger:
+                    if ledger_row["id"] == cid:
+                        ledger_row.update(row)
+            elif st == "fail" and self.excluded:
                 if summaries is not None:
                     summaries["survived"] -= 1
                     summaries["not_run"] += 1
@@ -667,7 +703,8 @@ class _Verify:
 
     def _kill_lines(self, checks: list) -> list[str]:
         """not_proven lines of the V4 mutants that only a generated item (N5) or an item of no known kind (N6) killed;
-        a kill listed in verify.accepted_gaps gets the accepted line (N5a) instead."""
+        a kill listed in verify.accepted_gaps gets the accepted line (N5a) instead. In require mode such a kill is a
+        fail, whose status says it, or, with suite items left out, not judged with its own line (N5b)."""
         accepted = set(self.cfg.verify.accepted_gaps)
         lines = []
         for c in checks:
@@ -679,7 +716,9 @@ class _Verify:
                 lines.append(f"{c.id}: killed only by {item}, a check between generated layers or of no known kind; "
                              "accepted by verify.accepted_gaps, so this is not proven")
             elif self.mode != "disclose":
-                continue
+                if c.status == "not_run" and d.get("reason") == "suite_incomplete":
+                    lines.append(f"{c.id}: killed only by {_killer(d)}; gold items were left out "
+                                 f"({', '.join(d.get('excluded', []))}), which might have detected it; not judged")
             elif d["detection"] == "generated_only":
                 parts = c.id.split(":") + ["", ""]
                 lines.append(f"{c.id}: killed by {item}, a check between generated layers; no replayed gold item "
@@ -758,6 +797,24 @@ class _Verify:
                 self.res.not_proven.append(f"gold:{g.id}: every comparison that ran ({n}) had zero rows on both sides; "
                                            f"{' and '.join(parts)} pass without comparing any row; add a binding, "
                                            "stratum or parameter set with rows")
+                if self.mode == "require":
+                    self._zero_rows_v1(g)
+
+    def _zero_rows_v1(self, g):
+        """require mode: a passing v1 of a gold query whose every comparison had zero rows is not_run
+        (no_rows_compared). Any other status stays: an error or a fail is never rewritten."""
+        cid = f"v1:{g.id}"
+        for i, c in enumerate(self.res.checks):
+            if c.id == cid and c.status == "pass":
+                self.res.checks[i] = Check(cid, "not_run", {**c.detail, "reason": "no_rows_compared"}, c.config_ref)
+
+    def operators_line(self):
+        """require mode: one not_proven line naming the operators verify.mutation_operators leaves out (N7)."""
+        left_out = [op for op in mutate.OPERATORS if op not in mutate.selected(self.cfg)]
+        if self.mode == "require" and left_out:
+            self.res.not_proven.append(f"verify.mutation_operators leaves out {_cut(left_out)}; require mode judges "
+                                       "only the selected operators, so changes of those kinds are not proven to be "
+                                       "detected")
 
     def _detections(self) -> dict[str, list[str]]:
         """facet -> the V4 checks on it whose mutant an authored gold item detected."""
@@ -830,6 +887,36 @@ class _Verify:
             if accepted:
                 self.res.not_proven.append(f"{element}: no authored evidence for {_cut(accepted)}; accepted by "
                                            "verify.accepted_gaps, so this is not proven")
+        if self.mode == "require":
+            self.element_checks()
+
+    def element_checks(self):
+        """require mode, full-scope runs: one gold_evidence:<element> check per measure, hierarchy and
+        ontology.class_column (when set), after every other check. pass: no facet is a gap; not_run: every gap is
+        gold_not_run or not_in_model (reason: the first of them), and an element without any facet in the model is
+        not_in_model; fail: reason = the first other gap in facet order."""
+        left_out = [op for op in mutate.OPERATORS if op not in mutate.selected(self.cfg)]
+        elements = [f"measures.{m}" for m in self.cfg.measures] + [f"hierarchies.{h}" for h in self.cfg.hierarchies]
+        if self.cfg.ontology.class_column:
+            elements.append(evidence.CLASS_ELEMENT)
+        for element in elements:
+            rows = [row for row in self.facet_rows if row["element"] == element]
+            gaps = [row for row in rows if row["status"] == "gap"]
+            other = [row for row in gaps if row["reason"] not in NOT_RUN_REASONS]
+            if not rows:
+                status, reason = "not_run", "not_in_model"
+            elif not gaps:
+                status, reason = "pass", ""
+            elif other:
+                status, reason = "fail", other[0]["reason"]
+            else:
+                status, reason = "not_run", gaps[0]["reason"]
+            counts = {"facets": len(rows),
+                      "with_evidence": sum(1 for row in rows if row["status"] in ("compared", "detected")),
+                      "accepted": sum(1 for row in rows if row["status"] == "accepted"), "gaps": len(gaps),
+                      "operators_not_selected": left_out}
+            detail = {"reason": reason, **counts} if reason else counts
+            self.res.add(f"gold_evidence:{element}", status, element, **detail)
 
     def _zero_row_checks(self) -> tuple[list[str], list[str]]:
         """V1 and V2 checks that compared no row (V1 empty; V2 with every binding empty, or an empty stratum), those
@@ -917,6 +1004,13 @@ def _not_run_action(c: Check) -> str:
     if c.id.startswith("v3:closure_oracle:") and why == "budget_exceeded":
         return (f"{c.id} exceeded the independent oracle limit {c.detail['limit']}: use a smaller hierarchy or review "
                 "closure_oracle.Limits before raising the bound; no partial closure was certified")
+    if why == "suite_incomplete" and c.detail.get("killed_by"):
+        return (f"{c.id}: killed only by {_killer(c.detail)}, while gold items were left out "
+                f"({', '.join(c.detail.get('excluded', []))}): make every gold query and closure run (full verify, "
+                "passing builds), then rerun verify")
+    if why == "no_rows_compared":
+        return (f"{c.id}: every comparison of this gold query had zero rows on both sides; check its parameters, "
+                "strata and the data, then rerun verify")
     if why == "suite_incomplete":
         return (f"{c.id} survived a suite with items left out ({', '.join(c.detail.get('excluded', []))}): make every "
                 "gold query and closure run (full verify, passing builds), then rerun verify")
@@ -944,6 +1038,38 @@ def _not_run_action(c: Check) -> str:
             "then cube), then rerun verify")
 
 
+def _kill_action(c: Check) -> str:
+    """require mode: a V4 mutant that only a generated item (or an item of no known kind) killed."""
+    d = c.detail
+    parts = c.id.split(":") + ["", ""]
+    readers = _Verify._readers(d)
+    if d.get("detection") == "generated_only":
+        seen = f"no replayed gold item did ({readers})"
+    else:
+        seen = f"no replayed gold item is shown to have detected it ({readers})"
+    return (f"{c.id}: only {_killer(d)}, detected the mutant; {seen}; {evidence.remedy(parts[1], parts[2])}, or list "
+            f"{c.id} in verify.accepted_gaps, then rerun verify (do not drop the operator)")
+
+
+def _element_action(res: Result, c: Check) -> str:
+    """require mode: a gold_evidence:<element> check that did not pass, naming the facets it lacks evidence for (from
+    the evidence object of the result)."""
+    recorded = getattr(res, "evidence", None)
+    rows = [row for row in ((recorded or {}).get("facets") or []) if isinstance(row, dict)
+            and row.get("element") == c.config_ref and row.get("status") == "gap"]
+    if c.status == "not_run":
+        facets = _cut([row["facet"] for row in rows]) or c.config_ref
+        return (f"{c.id}: the gold queries that compare {facets} did not run, or the model lacks their cube; fix their "
+                "errors or gates (rerun build and cube for a missing closure cube), then rerun verify")
+    if c.detail.get("reason") == "no_values":
+        facets = _cut([row["facet"] for row in rows if row.get("reason") == "no_values"]) or c.config_ref
+        return (f"{c.id}: no authored evidence for {facets}: compared rows held no value of them (NULL, 0 or empty); "
+                "add a binding or parameter set whose rows hold values, then rerun verify")
+    facets = _cut([row["facet"] for row in rows if row.get("reason") not in NOT_RUN_REASONS]) or c.config_ref
+    return (f"{c.id}: no authored evidence for {facets}; add a gold query that maps them and compares rows, or list "
+            "them in verify.accepted_gaps, then rerun verify")
+
+
 def _next_action(res: Result) -> str:
     st = res.status
     if st == "pass":
@@ -957,6 +1083,10 @@ def _next_action(res: Result) -> str:
         return "nothing was verified: add gold queries or measures to crosscheck.toml, run build and cube, then verify"
     if st == "error":
         return _error_action(first)
+    if first.id.startswith("gold_evidence:"):
+        return _element_action(res, first)
+    if st == "fail" and first.id.startswith("v4:") and first.detail.get("reason") in ("generated_only", "unattributed"):
+        return _kill_action(first)
     if st == "fail" and first.id.startswith("v4:"):
         return (f"{first.id} survived: no gold query observes this kind of error in {first.config_ref}; add a gold "
                 "query, a mapped column or a stratum that would, then rerun verify (do not drop the operator)")

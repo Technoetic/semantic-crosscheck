@@ -800,7 +800,8 @@ queries whose kind is unknown, rank 1 the items of gold queries whose SQL contai
 "Evidence kinds"), rank 2 every other item. Without such a gold query this is the planned order, so the same items
 run in the same order as before. With one, its items run after the authored ones, so `killed_by` and the V4 status
 can change for that configuration: another item can be the first to fail, or an item error or the item budget can
-be met first. Every V4 detail with a `killed_by` key gains, right after it:
+be met first. The change goes either way: `error` or `not_run` can become `pass`, and `pass` can become `error` or
+`not_run`; the coverage receipts change with it. Every V4 detail with a `killed_by` key gains, right after it:
 
 - `detection`: the kind of the `killed_by` item. `authored` (an item of an authored gold query), `generated_only` (a
   V3 item or an item of a gold query with generated text), `unattributed` (an item of no known kind) or `none`
@@ -1167,11 +1168,16 @@ one space. No other normalisation. Then, in this order:
 1. `output_schema`: the output schema as a qualifier, `(?<![A-Za-z0-9_"])"?<schema>"?\s*\.`, case-insensitive.
    Reading generated tables or views is never independent.
 2. `relation:<name>`: the bare name of a generated relation as an identifier, `(?<![A-Za-z0-9_."])"?<name>"?(?![A-Za-z0-9_])`,
-   case-insensitive: `<h>_closure` and `<h>_cycles` of every hierarchy, `v_shape_<id>` of every shape,
-   `v_rules_subjects`, and any `v_rule_` followed by 1 to 56 characters of `[a-z0-9_]` (verify does not read the rule
-   file, so rule views are matched by their prefix and reported lowercased). Gold SQL runs with the connection's own
-   `search_path`, so a gold query can read a generated table without naming the schema. A source table or CTE with
-   the same name is found too; that only lowers a kind.
+   case-insensitive: `<h>_closure` and `<h>_cycles` of every hierarchy, `v_shape_<id>` of every shape, any `v_rule_`
+   followed by 1 to 56 characters of `[a-z0-9_]`, and `v_rules_subjects`, in this order. verify does not read the
+   rule file, so rule views are matched by their prefix, and any number of matches gives the one fixed item
+   `relation:v_rule_*`, never the text that matched (it may be the content of a literal). Gold SQL runs with the
+   connection's own `search_path`, so a gold query can read a generated table without naming the schema. A source
+   table or CTE with the same name is found too; that only lowers a kind.
+
+Case folding in rules 1 and 2 is ASCII only, as PostgreSQL folds unquoted identifiers: a non-ASCII lookalike of a
+letter (U+017F for `s`, U+212A for `k`) does not match, and a non-ASCII letter right after a name does not stop a
+match. Every item is built from the configuration or is fixed text, so nothing the gold SQL holds reaches a result.
 3. `filter:measures.<m>`: a clause of `cube_gen.where_clauses(m)` other than the first (the grain clause
    `t."<by>" IS NOT NULL` is too common), whitespace-collapsed, occurs in the text. `cube_gen.where_sql(m)` is these
    clauses joined with `AND`.
@@ -1221,7 +1227,7 @@ joins.
 | `measures.<m>` with `date_column` | `m_<m>.ts` | it | `dated_shift_one_day` |
 | `measures.<m>` with `closure_join` (one hierarchy) | `<h>_closure+m_<m>` | a member of `<h>_closure` and `m_<m>.value` | `closure_join_swap` |
 | `measures.<m>` with a node, no `date_column`, a single-column node key | `<node>+m_<m>` | a member of the node cube and `m_<m>.value` | none |
-| `ontology.class_column` (when set) | `<entity>.<class_column>` for every entity cube of the model that has the column | it | none |
+| `ontology.class_column` (when set) | `<entity>.<class_column>` for every entity cube of the model that has the column; when none has it, the one facet `*.<class_column>` (cube `*`, never in a model, so its reason is `not_in_model`) | it | none |
 | `hierarchies.<h>` | `<h>_closure.qty`, `<h>_closure.path_count`, `<h>_closure.min_depth` | it | `closure_qty_single_path`, `closure_path_count_one`, `closure_depth_shift` |
 | `hierarchies.<h>` | `<h>_closure.max_depth`, `<h>_closure.pairs` | it | none |
 | `hierarchies.<h>` | `<h>_ancestor.*`, `<h>_descendant.*` | any member of that cube | none; `closure_end_swap` for the descendant cube |
@@ -1276,7 +1282,7 @@ the sampled-pair line; then N7; the facet lines N4 and N4a last, before the unbo
 | Line | When | Text |
 |---|---|---|
 | N1 | the gold SQL names the output schema | `gold:{g}: the gold SQL names the output schema {schema}; v1:{g} and v2:{g}:* count as generated evidence, not authored` |
-| R | the gold SQL names a generated relation | `gold:{g}: the gold SQL names the generated relation {names}; v1:{g} and v2:{g}:* count as generated evidence, not authored` |
+| R | the gold SQL names a generated relation; `{names}` are the matched names, comma-separated, in the order of rule 2 (a rule view reads `v_rule_*`) | `gold:{g}: the gold SQL names the generated relation {names}; v1:{g} and v2:{g}:* count as generated evidence, not authored` |
 | N2 | the gold SQL contains a generated filter clause | `gold:{g}: the gold SQL contains the generated filter of {refs} verbatim; v1:{g} and v2:{g}:* count as generated evidence, not authored` |
 | N3 | every comparison of the gold query that ran ({n} of them) had zero rows on both sides; {ids} is `v1:{g}`, `v2:{g}:*` or both, for the parts that ran | `gold:{g}: every comparison that ran ({n}) had zero rows on both sides; {ids} pass without comparing any row; add a binding, stratum or parameter set with rows` |
 | N4 | disclose mode, full scope: an element with a facet gap; each gap reads `{facet} ({reason}: {golds})`, without `: {golds}` when none is named | `{element}: no authored evidence for {gaps}; only checks between generated layers cover these facets; add a gold query, stratum or parameter set that compares them, or list them in verify.accepted_gaps` |
@@ -1316,15 +1322,17 @@ Next actions (`next_safe_action`) for the checks require mode adds or rewrites, 
 `[verify] gold_observation`: `"disclose"` (default) or `"require"`; any other value is exit 2. `[verify]
 accepted_gaps`: a list of strings, default `[]`; each is an element (`measures.<m>`, `hierarchies.<h>`,
 `ontology.class_column` when it is set), a facet id of the table above (class facets are accepted for every
-configured entity, since configuration validation has no model), or a V4 check id `v4:<operator>:<target>` of an
+configured entity, since configuration validation has no model; the facet `*.<class_column>` is accepted through the
+element `ontology.class_column`), or a V4 check id `v4:<operator>:<target>` of an
 operator on a target it applies to; anything else is exit 2 naming the entry's position. Both keys live in
 `crosscheck.toml`, so changing them changes the configuration hash and makes earlier results stale. In require mode,
 on full-scope runs, every measure, hierarchy and `ontology.class_column` (when set) gets one `gold_evidence:<element>`
 check after every other check (section 6): `pass` when no facet is a gap; `not_run` when every gap is `gold_not_run` or
 `not_in_model` (the reason is the first of them), and an element without any facet in the model is `not_run`
-`not_in_model`; otherwise `fail` with the reason of the first other gap in facet order. Its detail holds `reason` (not
-on a pass), `facets`, `with_evidence` (compared and detected), `accepted`, `gaps` and `operators_not_selected`, so a
-passing check shows which operators were dropped.
+`not_in_model` (a set class column always has a facet: with `*.<class_column>` alone its check is `not_run`
+`not_in_model` with `facets` 1 and `gaps` 1); otherwise `fail` with the reason of the first other gap in facet
+order. Its detail holds `reason` (not on a pass), `facets`, `with_evidence` (compared and detected), `accepted`,
+`gaps` and `operators_not_selected`, so a passing check shows which operators were dropped.
 
 #### In report
 

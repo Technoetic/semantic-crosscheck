@@ -161,6 +161,9 @@ def assert_verify_evidence(tc: unittest.TestCase, result: dict, out: Path, cfg) 
     tc.assertNotIn("btrim", new_outputs, "no gold or generated SQL text")
     tc.assertNotIn("sxc_demo.", json.dumps(ev), "no gold or generated SQL text")
     tc.assertIsNotNone(evidence.observation(ev), "report can read the evidence object")
+    read = evidence.summarise({"verify": result["checks"]}, [], result["checks"], ev)
+    tc.assertTrue(read["observation_recorded"], "report reads the evidence object: its mutant split follows from the "
+                                                "V4 checks of the same result")
     for c in result["checks"]:
         tc.assertTrue(catalogue.matches(c["id"]), f"a result holds a check id design.md does not list: {c['id']}")
     golds, overridden = evidence.gold_kinds(ev["gold"])

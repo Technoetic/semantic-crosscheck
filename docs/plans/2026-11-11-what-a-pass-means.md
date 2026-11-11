@@ -25,7 +25,8 @@ engine and the demo configuration (facts in 3.3).
 
 - Status set stays closed: `pass`, `fail`, `error`, `not_run` (`E/result_contract.py:13`, `E/result.py:29-31`).
   No `not_proven` status. not_proven lines never change a status (`docs/design.md:106-109`, `SKILL.md:162`).
-- Fail-closed contract and exit codes unchanged (`E/result.py:51-66`). A check that did not run is never a pass.
+- Fail-closed contract and exit codes unchanged (`E/result.py:51-66`), apart from the new exit 2 for an identifier
+  or Cube member that ends with a line break. A check that did not run is never a pass.
   No rewrite in this design makes a status less severe: require mode only turns `pass` into `fail` or `not_run`.
 - Results, console lines and report outputs hold counts, check ids, configuration ids, Cube member names and small
   enums only. Gold SQL text is read for matching and never stored.
@@ -114,7 +115,7 @@ mode, the V3 guard and import-closure tests, and remedies in the line texts.
 |---|---|---|
 | `authored` | rows of a gold SQL file a person wrote, with no generated text in it | `v1:<g>`, `v2:<g>:<s>` |
 | `recomputed` | recomputed from source rows by engine code that imports no generator and reads no generated artifact on that side | `v3:closure_oracle:<h>` |
-| `generated` | both sides come from `crosscheck.toml` through generators, or one generated layer is compared with itself | `v3:*`, `shacl:<shape>`, `v5:closure:<h>`, `closure_apply:<h>`, gold with generated text |
+| `generated` | both sides come from `crosscheck.toml` through generators, or one generated layer is compared with itself | other `v3:*`, `shacl:<shape>`, `v5:closure:<h>`, `closure_apply:<h>`, gold with generated text |
 | `structural` | there is one side only: a rule on data, configuration, environment, served model, scope, bookkeeping | `shape:<id>`, `cube:meta`, `scope:*` |
 | `mutation` | a V4 mutant check; its strength is in `detection` | `v4:<op>:<target>` |
 | `unclassified` | no registry rule matched; never counted as authored or recomputed | (a new id family) |
@@ -621,7 +622,7 @@ and do not change.
 
 | Output | Change | When |
 |---|---|---|
-| check ids, check counts, exit-code rules | none | never |
+| check ids, check counts, exit-code rules | none, apart from the new exit 2 for an identifier or Cube member that ends with a line break | never |
 | statuses | none, except V4 statuses and `killed_by` (3.4: a different first item can error twice or reach the item budget first; a different item can be the first to fail) | only with a gold that has generated text (5.2) |
 | doctor, demo, build, reason, cube outputs | none | never |
 | `verify/result.json` | top-level `evidence`; V4 keys `detection`, `facet`, `gold_comparing` | always with V4 |

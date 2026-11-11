@@ -1,5 +1,57 @@
 # Changelog
 
+## [0.22.1] - 2026-11-11
+
+Release notes: [docs/releases/v0.22.1.md](docs/releases/v0.22.1.md).
+
+Documentation corrections and unit tests. No stage, check, option, result format, configuration key or dependency
+changes; the only product-code change is the version constant.
+
+### Changed
+
+- README: the title, the purpose and the intended users open the file. The release notes that preceded the title
+  are in a "Recent changes" section near the end, their text unchanged. SKILL.md starts with the core description;
+  its four release notes are in "Optional offline diagnostics", unchanged.
+- README: the "결과 읽기" and "검증 한계" anchors sit above their own headings.
+- README: the clean demo prints 14 NOT PROVEN lines, not 13; the breakdown now accounts for all of them.
+- README: all 21 slash commands are listed, core pipeline first, each linked to its command document; the stage
+  table points to the appendix table that holds the other four stages.
+- README: one paragraph on what agreement between the generated layers shows, what the independent evidence is
+  (hand-written gold SQL, authored expected rows, the independent closure recomputation), and that existing Cube
+  models, ontologies and SHACL files are not inputs.
+- README: "실패한 실행 읽기" shows a failing build and report, taken from the compatibility goldens, and how to
+  read them.
+- README: the `git archive` command that makes the release zip from the tag, and under it a dated record of the
+  comparison with the published v0.22.0 asset (2026-11-11, git 2.55.0 on Windows, time zone UTC+9:
+  byte-identical). The record is about that one asset and does not change when the command's version changes.
+- README and references/config.md: `SXC_DEBUG` is documented for the stages that read it. The diagnostic stages,
+  `counterexample --constraint-audit` and `expect` with `spec_source` cases print a fixed reason code only.
+- CONTRIBUTING and README: unit tests need `requirements/core.txt` and `requirements/witness.txt`; without
+  z3-solver some tests fail or error instead of skipping (CONTRIBUTING gives the count at v0.22.0).
+- Plugin manifests: the marketplace entry and the Codex short description say "check" instead of "prove"; the
+  Codex long description starts with what the tool is and what a pass means.
+- commands/xc-grain.md, commands/xc-shacl-repair.md, commands/xc-expect.md and references/codex.md name example
+  files from the plugin root, so the examples resolve from a user's project folder; the grain example writes its
+  result to `.sxc-grain` in the working directory.
+
+### Added
+
+- Eight docs and packaging tests pin the above: the command list against `commands/`; manifest and command
+  descriptions without "prove", "guarantee" or an unnegated "proof" or "proven" (the word "certify", which the
+  data-rules help text uses, is not covered); example paths from the plugin root; anchors above their headings;
+  the NOT PROVEN counts in the prose; the failing example against the goldens; the version in the archive
+  command; and the dated record under it, which must name a release with a dated changelog entry and must not be
+  dated before that release.
+- Six unit tests pin fail-closed rules: a result or a stage without any check is `not_run` (exit 1); a relative
+  `PATH` entry is never searched for node, npm or java; an entity table outside `source.schemas` is a
+  configuration error; in verify a gold query without any binding is `not_run` (`no_binding`) and an empty
+  stratum passes only with a `not_proven` line. No database is needed.
+
+The version constant is in a file the engine fingerprint hashes, so the fingerprint changes: rerun operational
+stages after upgrading. No other engine code changed, so they produce the same checks and verdicts as 0.22.0.
+
+[0.22.1]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.22.1
+
 ## [0.22.0] - 2026-11-09
 
 Release notes: [docs/releases/v0.22.0.md](docs/releases/v0.22.0.md).

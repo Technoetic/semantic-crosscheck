@@ -7,19 +7,28 @@ had rows; per facet of a measure, hierarchy or class dimension, whether authored
 tests run verify without a database or Cube (the planning, comparison and Cube functions are patched) and pin the
 facet reasons, the zero-row lists, the new not_proven lines, the full-scope gate and that nothing of the gold text,
 the rows or the parameters reaches the result.
+
+A passing V4 check used to read as "a gold query detects this change", although a V3 check between generated layers
+could have killed the mutant. The V4 suite now runs authored gold items first, and every V4 check with a killer
+records what kind of item detected the mutant (detection), the facet its operator changes and the authored gold
+queries that compare that facet; a kill by a generated or unclassified item gets a not_proven line with a remedy. The
+attribution tests pin the suite order, the F1 guard (a V4 pass is never read as a gold detection unless an authored
+gold item killed the mutant), the F1 trace with the real total test, the mutant split and the coverage annotations.
 """
 
 import argparse
 import contextlib
 import json
 import shutil
+import sqlite3
 import tempfile
 import unittest
+from decimal import Decimal
 from pathlib import Path
 from unittest import mock
 
 import pgfixture
-from semantic_crosscheck import compare, config, cube_gen, evidence, mutate, stage_verify, sweep
+from semantic_crosscheck import compare, config, cube_gen, evidence, mutate, shape_q, stage_verify, sweep
 from semantic_crosscheck.result import Result
 from test_compare_unit import FakeConn, demo_model
 
@@ -409,6 +418,354 @@ class EvidenceObjectTest(VerifyRun):
             self.assertNotIn(secret, text, secret)
         self.assertIn("filter:measures.on_hand", text)
         self.assertIn('"gold_no_rows": ["q02_where_used"]', text)
+
+
+# ---- V4 attribution ----------------------------------------------------------------------------------
+AGG_ON_HAND = "v4:measure_agg_to_max:on_hand"
+AGG_REMEDY = ("a gold query that returns one row per key of measures.on_hand cannot see this change, because the "
+              "measure cube holds one pre-aggregated row per key; add a gold query that aggregates measures.on_hand "
+              "over more than one key")
+FILTER_REMEDY = ("add a gold query, stratum or parameter set whose keys have source rows that the filter of {m} "
+                 "excludes")
+GENERIC_REMEDY = "add a gold query, stratum or parameter set that would detect it"
+N5 = ("{cid}: killed by {item}, a check between generated layers; no replayed gold item detected this change to {ref} "
+      "({readers}); {remedy}")
+N5A = ("{cid}: killed only by {item}, a check between generated layers or of no known kind; accepted by "
+       "verify.accepted_gaps, so this is not proven")
+N6 = ("{cid}: killed by {item}, which no evidence rule classifies; no replayed gold item is shown to have detected this "
+      "change to {ref}")
+
+
+class SuiteOrderTest(VerifyRun):
+    """The V4 suite runs authored gold items (and gold items of unknown kind) first, then gold items whose SQL holds
+    generated text, then every other item; without a generated gold the order is the planned one."""
+
+    def _run_mutants(self, cfg, out, conn, model, suite, closure=None, sampled_items=(), coverage=None):
+        self.suite_ids = [iid for iid, _fn in suite.items]
+        return self.mutants
+
+    @staticmethod
+    def ranks(ids: list, generated=()) -> list:
+        return [2 if not iid.startswith(("v1:", "v2:")) else 1 if iid.split(":")[1] in generated else 0 for iid in ids]
+
+    def test_suite_order_contract(self):
+        self.verify()
+        sorted_ids = self.suite_ids
+        shutil.rmtree(self.out)
+        with mock.patch.object(stage_verify.evidence, "order_suite", lambda items, golds, key=None: list(items)):
+            self.verify()
+        planned = self.suite_ids
+        self.assertEqual(sorted_ids, planned, "without a generated gold the suite runs in the planned order")
+        self.assertEqual(self.ranks(planned), sorted(self.ranks(planned)))
+        self.assertIn("v1:q03_stock", planned)
+        self.assertTrue(any(iid.startswith("v3:") for iid in planned))
+        shutil.rmtree(self.out)
+        self.gold_file("q03_stock", "SELECT t.part_id FROM sxc_demo.stock t WHERE " + ON_HAND)
+        res = self.verify()
+        self.assertEqual(self.gold(res, "q03_stock")["kind"], "generated")
+        ordered = self.suite_ids
+        self.assertEqual(sorted(ordered), sorted(planned), "the same items")
+        ranks = self.ranks(ordered, generated=("q03_stock",))
+        self.assertEqual(ranks, sorted(ranks), "authored gold items, then generated gold items, then v3 items")
+        self.assertEqual(ranks.count(1), len([i for i in planned if i.startswith(("v1:q03_stock", "v2:q03_stock:"))]))
+        self.assertLess(planned.index("v1:q03_stock"), planned.index("v1:q05_firm_window"))
+        self.assertLess(ordered.index("v1:q05_firm_window"), ordered.index("v1:q03_stock"))
+
+    def test_gated_golds_have_a_kind_and_no_suite_item(self):
+        res = self.verify(closure_status="fail")
+        self.assertEqual({g["id"]: g["kind"] for g in res.evidence["gold"]}, {g.id: "authored" for g in self.cfg.gold})
+        self.assertEqual({iid.split(":")[1] for iid in self.suite_ids if iid.startswith(("v1:", "v2:"))},
+                         {"q03_stock", "q05_firm_window"})
+
+    def test_items_of_golds_unknown_to_the_plan_keep_rank_zero(self):
+        model = self.write_stages()
+        v = stage_verify._Verify(self.cfg, self.out, model, ["v4"])
+        v.gold_kinds = {"g": "generated"}
+        v.items = [(iid, iid.split("[")[0], lambda client: "pass")
+                   for iid in ("v1:g", "v1:a", "v2:b:top[0]", "v3:total:x", "v2:g:all[0]")]
+        v.baseline = {iid: "pass" for iid, _cid, _fn in v.items}
+        with mock.patch.object(stage_verify.mutate, "run_mutants", self._run_mutants):
+            v.v4(FakeConn())
+        self.assertEqual(self.suite_ids, ["v1:a", "v2:b:top[0]", "v1:g", "v2:g:all[0]", "v3:total:x"])
+        self.assertEqual([evidence.item_kind(iid, v.gold_kinds) for iid in self.suite_ids],
+                         ["unclassified", "unclassified", "generated", "generated", "generated"])
+        self.assertEqual(evidence.detection("v1:a", v.gold_kinds), "unattributed")
+
+
+class MutantRun(VerifyRun):
+    """_Verify.v4 with the real mutate.run_mutants and mutation_coverage.Suite: witnesses (0 for
+    measure_normalization_drop, else 4) and Cube are stubbed; Cube's client is the name of the served mutant directory,
+    so a suite item can answer per mutant."""
+
+    def attribute(self, answers: dict, operators=("measure_agg_to_max",), closure_cubes: bool = True):
+        self.cfg.verify.mutation_operators = list(operators)
+        model = self.write_stages(closure_cubes=closure_cubes)
+        v = stage_verify._Verify(self.cfg, self.out, model, ["v4"])
+        for g in self.cfg.gold:
+            v.note_gold(g)
+
+        def item(iid):
+            def fn(client):
+                answer = answers[iid]
+                return answer(client) if callable(answer) else answer
+            return iid, iid, fn
+
+        v.items = [item(iid) for iid in answers]
+        v.baseline = dict.fromkeys(answers, "pass")
+
+        @contextlib.contextmanager
+        def serve(cfg, run_dir, log=None):
+            yield Path(run_dir).name
+
+        def witness(conn, cfg, mu):
+            return 0 if mu.operator == "measure_normalization_drop" else 4
+
+        with mock.patch.object(mutate, "witness", witness), mock.patch.object(mutate.cube_run, "serve", serve):
+            v.v4(FakeConn())
+        v.res.evidence = v.evidence_object()
+        return v
+
+    def ledger(self) -> list:
+        return json.loads((self.out / "verify" / "mutation-coverage.json").read_text(encoding="utf-8"))["mutants"]
+
+    @staticmethod
+    def check(v, cid: str):
+        return next(c for c in v.res.checks if c.id == cid)
+
+
+class AttributionTest(MutantRun):
+    def test_v4_pass_is_not_gold_detection(self):
+        """F1 guard: a mutant killed by a v3 item passes, but its detection says no gold item detected it."""
+        v = self.attribute({"v1:q03_stock": "pass", "v3:total:x": "fail"})
+        c = self.check(v, AGG_ON_HAND)
+        self.assertEqual((c.status, c.detail["killed_by"], c.detail["detection"], c.detail["facet"],
+                          c.detail["gold_comparing"]), ("pass", "v3:total:x", "generated_only", "m_on_hand.value",
+                                                        ["q03_stock"]))
+        self.assertEqual(list(c.detail)[:5], ["witness", "killed_by", "detection", "facet", "gold_comparing"])
+        self.assertIn(N5.format(cid=AGG_ON_HAND, item="v3:total:x", ref="measures.on_hand",
+                                readers="gold queries that compare m_on_hand.value: q03_stock", remedy=AGG_REMEDY),
+                      v.res.not_proven)
+        self.assertEqual(len(self.lines(v.res, "v4:measure_agg_to_max:")), 4, "one line per generated-only kill")
+        self.assertEqual(self.check(v, "v4:measure_agg_to_max:firm_open").detail["gold_comparing"], ["q02_where_used"])
+        self.assertEqual(evidence.v4_violations(v.res), [])
+        self.assertEqual((v.res.evidence["mutation"]["killed_generated_only"], c.detail["summary"]["killed"]), (4, 4))
+        for row in self.ledger():
+            self.assertEqual(row["detection"], self.check(v, row["id"]).detail["detection"], row["id"])
+            self.assertEqual([(i["id"], i["kind"]) for i in row["coverage"]["items"]],
+                             [("v1:q03_stock", "authored"), ("v3:total:x", "generated")])
+        self.assertEqual([(i["id"], i["kind"]) for i in c.detail["coverage"]["items"]],
+                         [("v1:q03_stock", "authored"), ("v3:total:x", "generated")])
+
+        v = self.attribute({"v1:q03_stock": "fail", "v3:total:x": "fail"})
+        c = self.check(v, AGG_ON_HAND)
+        self.assertEqual((c.status, c.detail["killed_by"], c.detail["detection"]), ("pass", "v1:q03_stock", "authored"))
+        self.assertEqual(self.lines(v.res, "v4:"), [], "an authored kill gets no line")
+        self.assertEqual(v.res.evidence["mutation"]["killed_authored"], 4)
+        self.assertEqual(evidence.v4_violations(v.res), [])
+
+        v = self.attribute({"v1:q03_stock": "pass", "v3:total:x": "pass", "w9:x": "fail"})
+        c = self.check(v, AGG_ON_HAND)
+        self.assertEqual((c.detail["killed_by"], c.detail["detection"]), ("w9:x", "unattributed"))
+        self.assertIn(N6.format(cid=AGG_ON_HAND, item="w9:x", ref="measures.on_hand"), v.res.not_proven)
+        self.assertEqual([i["kind"] for i in c.detail["coverage"]["items"]], ["authored", "generated", "unclassified"])
+
+        v = self.attribute({"v1:q03_stock": "pass", "v3:total:x": "pass"})
+        c = self.check(v, AGG_ON_HAND)
+        self.assertEqual((c.status, c.detail["killed_by"], c.detail["detection"]), ("fail", "", "none"))
+        self.assertEqual(self.lines(v.res, "v4:"), [])
+        self.assertEqual(v.res.evidence["mutation"]["survived"], 4)
+
+    def test_v4_violations(self):
+        golds = [{"id": "g", "kind": "authored", "generated_text": []},
+                 {"id": "h", "kind": "generated", "generated_text": ["output_schema"]}]
+
+        def result(*details):
+            return {"checks": [{"id": f"v4:measure_agg_to_max:m{i}", "status": "pass", "detail": d}
+                               for i, d in enumerate(details)], "evidence": {"gold": golds}}
+
+        ok = result({"killed_by": "v1:g", "detection": "authored"},
+                    {"killed_by": "v2:h:all[0]", "detection": "generated_only"},
+                    {"killed_by": "v3:total:x:chunk[1]", "detection": "generated_only"},
+                    {"killed_by": "w9:x", "detection": "unattributed"},
+                    {"killed_by": "", "detection": "none"}, {"witness": 1}, {"reason": "suite_error", "item": "v1:g"})
+        self.assertEqual(evidence.v4_violations(ok), [])
+        bad = result({"killed_by": "v3:total:x", "detection": "authored"},
+                     {"killed_by": "v1:h", "detection": "authored"},
+                     {"killed_by": "v1:g"},
+                     {"killed_by": "v1:unknown", "detection": "authored"},
+                     {"killed_by": "v1:g", "detection": "authored"})
+        self.assertEqual(evidence.v4_violations(bad), [f"v4:measure_agg_to_max:m{i}" for i in range(4)])
+        golds[0]["generated_text"] = ["output_schema"]
+        self.assertEqual(evidence.v4_violations(result({"killed_by": "v1:g", "detection": "authored"})),
+                         ["v4:measure_agg_to_max:m0"], "a recorded kind cannot raise a detection")
+        self.assertEqual(evidence.v4_violations({"checks": [{"id": "v4:a:b", "detail": {"killed_by": "v1:g",
+                                                                                         "detection": "authored"}}]}),
+                         ["v4:a:b"], "without recorded gold kinds no gold item is authored")
+
+
+class TotalsClient:
+    """A Cube stand-in that answers {"measures": ["m_<m>.value"]} with the total of the served cube's own SQL."""
+
+    def __init__(self, lite, model: dict):
+        self.lite, self.cubes = lite, {c["name"]: c for c in model["cubes"]}
+
+    def load(self, query):
+        (member,) = query["measures"]
+        v = self.lite.execute(f"SELECT sum(value) FROM ({self.cubes[member.split('.')[0]]['sql']})").fetchone()[0]
+        return [{member: None if v is None else str(Decimal(str(v)))}]
+
+
+class SqlConn:
+    """A pg8000-like run() over SQLite that ignores the transaction statements of db.read_only."""
+
+    def __init__(self, lite):
+        self.lite = lite
+
+    def run(self, sql, **params):
+        if sql.startswith(("BEGIN", "SET LOCAL", "ROLLBACK")):
+            return []
+        return [list(r) for r in self.lite.execute(sql).fetchall()]
+
+
+class F1TraceTest(VerifyRun):
+    def test_f1_trace(self):
+        """The evaluation's trace: the demo without q03_stock (the only gold that reads m_on_hand), dirty stock data
+        and measure_normalization_drop. The real total test kills the mutant; no gold item reads m_on_hand."""
+        self.cfg.gold = [g for g in self.cfg.gold if g.id != "q03_stock"]
+        self.cfg.verify.mutation_operators = ["measure_normalization_drop"]
+        model = self.write_stages()
+        lite = sqlite3.connect(":memory:")
+        self.addCleanup(lite.close)
+        lite.execute("ATTACH DATABASE ':memory:' AS sxc_demo")
+        lite.create_function("btrim", 1, lambda s: None if s is None else s.strip())
+        lite.execute("CREATE TABLE sxc_demo.stock (part_id text, location_id text, qty numeric)")
+        lite.executemany("INSERT INTO sxc_demo.stock VALUES (?, ?, ?)",
+                         [("P1", "MAIN", 10), ("P1", " main", 5), ("P2", "SUB", 3), ("P2", "CONSIGN", 7)])
+        conn = SqlConn(lite)
+        v = stage_verify._Verify(self.cfg, self.out, model, list(stage_verify.PARTS))
+        for g in self.cfg.gold:
+            v.note_gold(g)
+        tests = shape_q.tests(self.cfg, model)
+        total = next(t for t in tests if t["id"] == "total:m_on_hand.value")
+        self.assertEqual(v._test_fn(conn, total)(TotalsClient(lite, model)), "pass", "the model agrees with the SQL")
+        v.items = [(f"v1:{g.id}", f"v1:{g.id}", lambda client: "pass") for g in self.cfg.gold]
+        v.items += [(f"v3:{t['id']}", f"v3:{t['id']}", v._test_fn(conn, t) if t is total else (lambda client: "pass"))
+                    for t in tests]
+        v.baseline = {iid: "pass" for iid, _cid, _fn in v.items}
+
+        @contextlib.contextmanager
+        def serve(cfg, run_dir, log=None):
+            yield TotalsClient(lite, json.loads((Path(run_dir) / "model.json").read_text(encoding="utf-8")))
+
+        with mock.patch.object(mutate, "witness", return_value=2), mock.patch.object(mutate.cube_run, "serve", serve):
+            v.v4(conn)
+        v.facets()
+        v.res.evidence = v.evidence_object()
+        c = next(c for c in v.res.checks if c.id == "v4:measure_normalization_drop:on_hand")
+        self.assertEqual((c.status, c.config_ref, c.detail["killed_by"], c.detail["detection"], c.detail["facet"],
+                          c.detail["gold_comparing"]),
+                         ("pass", "measures.on_hand", "v3:total:m_on_hand.value", "generated_only", "m_on_hand.value", []))
+        executed = [(i["id"], i["status"], i["kind"]) for i in c.detail["coverage"]["items"] if i["status"] != "not_run"]
+        self.assertEqual(executed[-1], ("v3:total:m_on_hand.value", "fail", "generated"))
+        self.assertEqual({st for _iid, st, _kind in executed[:-1]}, {"pass"})
+        self.assertEqual([iid for iid, _st, kind in executed if kind == "authored"],
+                         [f"v1:{g.id}" for g in self.cfg.gold], "every replayed gold item ran and passed first")
+        self.assertIn(N5.format(cid="v4:measure_normalization_drop:on_hand", item="v3:total:m_on_hand.value",
+                                ref="measures.on_hand", readers="no authored gold query compares m_on_hand.value",
+                                remedy=FILTER_REMEDY.format(m="measures.on_hand")), v.res.not_proven)
+        self.assertIn("measures.on_hand: no authored evidence for m_on_hand.value (no_gold_reads), part+m_on_hand "
+                      "(no_gold_reads)" + N4_TAIL, v.res.not_proven)
+        self.assertEqual(evidence.v4_violations(v.res), [])
+
+
+class MutantSplitTest(MutantRun):
+    def test_mutant_split(self):
+        def per_mutant(**statuses):
+            return lambda client: statuses.get(client, "pass")
+
+        self.cfg.verify.accepted_gaps = ["v4:measure_agg_to_max:firm_open_dated"]
+        v = self.attribute({
+            "v1:q03_stock": per_mutant(measure_filter_drop__firm_open="fail", measure_agg_to_max__firm_open="error"),
+            "v3:total:x": per_mutant(measure_filter_drop__firm_open_dated="fail",
+                                     measure_agg_to_max__firm_open_dated="fail"),
+            "w9:x": per_mutant(measure_agg_to_max__on_hand="fail")},
+            operators=("closure_depth_shift", "measure_filter_drop", "measure_normalization_drop",
+                       "measure_agg_to_max"), closure_cubes=False)
+        mutation = v.res.evidence["mutation"]
+        self.assertEqual(mutation, {
+            "operators_selected": 4,
+            "operators_not_selected": ["closure_path_count_one", "closure_qty_single_path", "dated_shift_one_day",
+                                       "closure_join_swap", "closure_end_swap"],
+            "killed_authored": 1, "killed_generated_only": 1, "unattributed": 1, "accepted": 1, "survived": 1,
+            "not_judged": 1, "equivalent": 2, "not_applicable": 1,
+            "generated_only": ["v4:measure_filter_drop:firm_open_dated"]})
+        self.assertEqual(list(mutation), ["operators_selected", "operators_not_selected", *evidence.MUTANT_BUCKETS,
+                                          "generated_only"])
+        ledger = self.ledger()
+        self.assertEqual(sum(mutation[b] for b in evidence.MUTANT_BUCKETS), len(ledger), "every mutant in one bucket")
+        self.assertEqual(sum(1 for c in v.res.checks if c.id.startswith("v4:")), 6, "no check for 3 of the 9")
+        error = self.check(v, "v4:measure_agg_to_max:firm_open")
+        self.assertEqual((error.status, error.detail["reason"]), ("error", "suite_error"))
+        self.assertFalse({"detection", "facet", "gold_comparing"} & set(error.detail), "no killed_by key, no new key")
+        self.assertNotIn("detection", next(row for row in ledger if row["id"] == error.id))
+        self.assertEqual([i["kind"] for i in error.detail["coverage"]["items"]],
+                         ["authored", "generated", "unclassified"])
+        lines = self.lines(v.res, "v4:")
+        self.assertEqual(lines[3:], [
+            N5.format(cid="v4:measure_filter_drop:firm_open_dated", item="v3:total:x", ref="measures.firm_open_dated",
+                      readers="gold queries that compare m_firm_open_dated.value: q05_firm_window",
+                      remedy=FILTER_REMEDY.format(m="measures.firm_open_dated")),
+            N5A.format(cid="v4:measure_agg_to_max:firm_open_dated", item="v3:total:x"),
+            N6.format(cid=AGG_ON_HAND, item="w9:x", ref="measures.on_hand")])
+        self.assertEqual(len(lines), 6, "the lines of run_mutants come first: one not applicable, two equivalent")
+        self.assertEqual(evidence.v4_violations(v.res), [])
+
+    def test_no_operator_selected(self):
+        v = self.attribute({"v1:q03_stock": "pass"}, operators=())
+        self.assertEqual(v.res.evidence["mutation"], {
+            "operators_selected": 0, "operators_not_selected": list(mutate.OPERATORS),
+            **dict.fromkeys(evidence.MUTANT_BUCKETS, 0), "generated_only": []})
+
+    def test_unrun_ledger_items_have_kinds(self):
+        model = self.write_stages()
+        self.cfg.verify.mutation_operators = ["measure_normalization_drop"]
+        v = stage_verify._Verify(self.cfg, self.out, model, ["v4"])
+        v.note_gold(self.cfg.gold[2])
+        v.items = [("v1:q03_stock", "v1:q03_stock", lambda client: "pass"),
+                   ("v3:total:x", "v3:total:x", lambda client: "pass")]
+        v.baseline = {"v1:q03_stock": "fail", "v3:total:x": "error"}
+        v.v4(FakeConn())
+        ledger = self.ledger()
+        self.assertEqual(len(ledger), 2)
+        for row in ledger:
+            self.assertEqual((row["outcome"], [(i["id"], i["kind"]) for i in row["coverage"]["items"]]),
+                             ("not_run", [("v1:q03_stock", "authored"), ("v3:total:x", "generated")]))
+            self.assertNotIn("detection", row)
+        mutation = v.evidence_object()["mutation"]
+        self.assertEqual((mutation["not_judged"], mutation["operators_selected"]), (2, 1))
+
+
+class AttributionHelpersTest(unittest.TestCase):
+    def test_n5_remedy(self):
+        self.assertEqual(evidence.remedy("measure_agg_to_max", "on_hand"), AGG_REMEDY)
+        for op in ("measure_filter_drop", "measure_normalization_drop"):
+            self.assertEqual(evidence.remedy(op, "on_hand"), FILTER_REMEDY.format(m="measures.on_hand"), op)
+        self.assertEqual(evidence.remedy("dated_shift_one_day", "firm_open_dated"),
+                         "add a parameter set whose date range starts or ends on a date with rows of "
+                         "measures.firm_open_dated")
+        for op in ("closure_depth_shift", "closure_path_count_one", "closure_qty_single_path", "closure_join_swap",
+                   "closure_end_swap", "not_an_operator"):
+            self.assertEqual(evidence.remedy(op, "x"), GENERIC_REMEDY, op)
+
+    def test_detection(self):
+        golds = {"a": "authored", "g": "generated"}
+        for killer, want in (("v1:a", "authored"), ("v2:a:top[0]", "authored"), ("v1:g", "generated_only"),
+                             ("v3:total:m_x.value", "generated_only"), ("v3:pair:x:chunk[2]", "generated_only"),
+                             ("v1:z", "unattributed"), ("w9:x", "unattributed"), ("v3w:pair_witness:x", "unattributed"),
+                             ("", "none")):
+            with self.subTest(killer=killer):
+                self.assertEqual(evidence.detection(killer, golds), want)
+        self.assertEqual(evidence.DETECTIONS, ("authored", "generated_only", "unattributed", "none"))
 
 
 if __name__ == "__main__":

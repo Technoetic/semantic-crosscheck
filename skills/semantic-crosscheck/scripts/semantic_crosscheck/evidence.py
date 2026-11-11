@@ -15,7 +15,9 @@ so no pattern here is an id-shaped string; render_table() writes them the way do
 unit test keeps the table in docs/design.md section 8 equal to it.
 
 The only kind a stage records is the kind of a gold query, which applies to `v1:<gold>` and `v2:<gold>:<stratum>`.
-It can lower authored to generated, never raise anything (check_kind). This module imports no engine module.
+It can lower authored to generated, never raise anything (check_kind). V4 suite items take the same kinds
+(item_kind); detection names the kind of the item that killed a mutant, and v4_violations finds a V4 check whose
+detection does not follow from it. This module imports no engine module.
 """
 
 from dataclasses import dataclass
@@ -208,6 +210,72 @@ def order_suite(items, golds: dict, key=lambda item: item[0]) -> list:
     generated gold the planned order (gold items, then v3 items) is unchanged.
     """
     return sorted(items, key=lambda item: suite_rank(key(item), golds))
+
+
+# ---- V4 attribution --------------------------------------------------------------------------------
+# What detected a mutant: the kind of the first suite item that failed against it. Exact for the replayed bindings
+# only, and only because authored gold items run first (order_suite) and the suite stops at the first item that does
+# not pass: generated_only means every replayed authored gold item ran and passed against the mutant.
+DETECTIONS = ("authored", "generated_only", "unattributed", "none")
+_DETECTION = {"authored": "authored", "generated": "generated_only", "unclassified": "unattributed"}
+# Each selected mutant lands in exactly one bucket (the order of the keys in verify's evidence object).
+MUTANT_BUCKETS = ("killed_authored", "killed_generated_only", "unattributed", "accepted", "survived", "not_judged",
+                  "equivalent", "not_applicable")
+_REMEDIES = {
+    "measure_agg_to_max": "a gold query that returns one row per key of {m} cannot see this change, because the measure "
+                          "cube holds one pre-aggregated row per key; add a gold query that aggregates {m} over more "
+                          "than one key",
+    "measure_filter_drop": "add a gold query, stratum or parameter set whose keys have source rows that the filter of "
+                           "{m} excludes",
+    "measure_normalization_drop": "add a gold query, stratum or parameter set whose keys have source rows that the "
+                                  "filter of {m} excludes",
+    "dated_shift_one_day": "add a parameter set whose date range starts or ends on a date with rows of {m}",
+}
+GENERIC_REMEDY = "add a gold query, stratum or parameter set that would detect it"
+
+
+def detection(killed_by, golds: dict) -> str:
+    """The detection of a V4 mutant from its killed_by item: authored, generated_only (a generated item), unattributed
+    (an item of no known kind) or none (no item killed it)."""
+    if not killed_by:
+        return "none"
+    return _DETECTION[item_kind(killed_by, golds)]
+
+
+def remedy(operator: str, target: str) -> str:
+    """What would let a gold query detect a mutant of this operator on this measure (the tail of its not_proven line)."""
+    text = _REMEDIES.get(operator)
+    return text.format(m="measures." + target) if text else GENERIC_REMEDY
+
+
+def v4_violations(result) -> list:
+    """V4 checks whose detection does not follow from their killing item: a missing detection, an authored detection
+    whose killer is not an authored gold item (a v3 item above all), or any other mismatch. The gold kinds come from the
+    result's own evidence object, lowered as report lowers them, so a recorded kind cannot raise a detection.
+
+    result: a Result or its dictionary (a result.json). An empty list means no V4 pass can be read as a gold
+    detection unless an authored gold item failed against the mutant."""
+    data = result.to_dict() if callable(getattr(result, "to_dict", None)) else result
+    data = data if isinstance(data, dict) else {}
+    recorded = data.get("evidence")
+    golds, _overridden = gold_kinds(recorded.get("gold") if isinstance(recorded, dict) else None)
+    out = []
+    for check in data.get("checks") or ():
+        cid = check.get("id") if isinstance(check, dict) else None
+        detail = check.get("detail") if isinstance(check, dict) else None
+        if not isinstance(cid, str) or not isinstance(detail, dict) or "killed_by" not in detail:
+            continue
+        segments = cid.split(":")
+        if len(segments) != 3 or segments[0] != "v4":
+            continue
+        killer, got = detail["killed_by"], detail.get("detection")
+        wrong = got != detection(killer, golds)
+        if got == "authored" and (not isinstance(killer, str) or killer.startswith("v3:")
+                                  or item_kind(killer, golds) != "authored"):
+            wrong = True
+        if wrong:
+            out.append(cid)
+    return out
 
 
 # ---- facets ----------------------------------------------------------------------------------------

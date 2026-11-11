@@ -38,6 +38,16 @@ build's closure:<h> like V1-V3. When items are missing from the suite because a 
 could not be planned or --gold left it out, a surviving mutant is not_run (reason suite_incomplete) rather than
 failed: the missing items might have killed it.
 
+A passing V4 check means a suite item failed against the mutant, not that a gold query did: the suite also holds V3
+items, which compare generated layers. The suite therefore runs authored gold items (and gold items of unknown kind)
+first, then gold items whose SQL contains generated text, then every other item (a stable sort, so without such a gold
+the planned order stays). Each V4 check with killed_by also records detection (authored, generated_only,
+unattributed or none: the kind of the item that killed it; generated_only means every replayed authored gold item
+passed against the mutant), facet (what its operator changes) and gold_comparing (the authored gold queries whose map
+compares that facet). A kill by a generated item or by an item of no known kind gets a not_proven line with a remedy
+for its operator, unless verify.accepted_gaps lists the check. verify/mutation-coverage.json gains the detection of
+each killed or surviving mutant and the kind of each receipt item.
+
 --only and --gold narrow a run without hiding it: every part --only leaves out is a not_run check scope:<part>
 (reason excluded_by_only) and every gold query --gold leaves out a not_run check scope:gold:<id> (reason
 excluded_by_gold), so a narrowed run never passes.
@@ -51,7 +61,9 @@ value is not NULL, 0 or empty (value_rows, kept out of check details); a gold qu
 gets a not_proven line, and every V1/V2 check that compared no row is listed. Only on full-scope runs (every part, no
 --gold) is every facet of a measure, hierarchy and the class column judged: compared with rows holding values by an
 authored gold query, detected by an authored V4 kill, accepted by verify.accepted_gaps, or a gap with its reason, and
-every element with a gap or an accepted gap gets one not_proven line.
+every element with a gap or an accepted gap gets one not_proven line. Its mutation key counts the selected operators
+and puts every selected mutant in one bucket (killed with an authored detection, killed by generated checks only,
+unattributed, accepted, survived, not judged, equivalent, not applicable).
 
 Results hold counts, check ids and positions in the deterministic binding order, never parameter values or rows.
 """
@@ -312,6 +324,7 @@ class _Verify:
         self.gold_found: dict[str, list[str]] = {}       # gold id -> generated_text matches
         self.counts: dict[str, dict] = {}                # gold id -> comparisons per part and value_rows per member
         self.facet_rows: list[dict] | None = None
+        self.ledger: list[dict] = []                     # V4 coverage rows (verify/mutation-coverage.json "mutants")
 
     # ---- planning (database only, before Cube starts) ---------------------------------------------
     def gate(self, members) -> tuple[str, str] | None:
@@ -557,11 +570,13 @@ class _Verify:
                                        "replayed against mutants")
         if not items:
             self.res.add("v4:suite", "not_run", "verify", reason="no_passing_suite_item", suite_items=len(self.items))
-            suite = mutation_coverage.Suite([(iid, fn) for iid, _cid, fn in self.items],
+            suite = mutation_coverage.Suite(evidence.order_suite([(iid, fn) for iid, _cid, fn in self.items],
+                                                                 self.gold_kinds),
                                             max_items=self.cfg.verify.mutant_max_items)
-            mutation_coverage.write(self.out, mutate.unrun_coverage(self.cfg, suite, "no_passing_suite_item"),
-                                    max_items=self.cfg.verify.mutant_max_items, reason="no_passing_suite_item",
-                                    excluded_items=excluded_items)
+            self.ledger = mutate.unrun_coverage(self.cfg, suite, "no_passing_suite_item")
+            self._annotate(self.ledger, [])
+            mutation_coverage.write(self.out, self.ledger, max_items=self.cfg.verify.mutant_max_items,
+                                    reason="no_passing_suite_item", excluded_items=excluded_items)
             return
         pair_tests = {f"v3:{t['id']}": t for t in self.suite_tests}
         expanded = []
@@ -576,15 +591,20 @@ class _Verify:
                    if shape_q.sampled(t) and t.get("replay_keys") is None and f"v3:{t['id']}" in replayed
                    and len(t["sample_keys"]) < t["total_keys"]]
         ledger = []
+        # Authored gold items first, so the first failing item tells whether a gold item detected the mutant.
         checks, not_proven = mutate.run_mutants(
             self.cfg, self.out, conn, self.model,
-            mutation_coverage.Suite(expanded, max_items=self.cfg.verify.mutant_max_items),
+            mutation_coverage.Suite(evidence.order_suite(expanded, self.gold_kinds),
+                                    max_items=self.cfg.verify.mutant_max_items),
             closure=self.closure, sampled_items=sampled, coverage=ledger)
+        self.ledger = ledger
         summaries = next((dict(detail["summary"]) for _cid, _st, _ref, detail in checks
                           if detail and "summary" in detail), None)
         changed = []
         for cid, st, ref, detail in checks:
             detail = dict(detail or {})
+            if "killed_by" in detail:
+                detail = self._attribute(cid, detail)
             if st == "fail" and self.excluded:
                 if summaries is not None:
                     summaries["survived"] -= 1
@@ -600,13 +620,114 @@ class _Verify:
             if summaries is not None and "summary" in check.detail:
                 check.detail["summary"] = dict(summaries)
             self.res.checks.append(check)
+        self._annotate(ledger, changed)
         mutation_coverage.write(self.out, ledger, max_items=self.cfg.verify.mutant_max_items,
                                 excluded_items=excluded_items)
         self.res.not_proven.extend(not_proven)
-        partial = [f"v3:{t['id']}" for t in self.suite_tests if shape_q.sampled(t) and t.get("replay_keys") is None]
+        self.res.not_proven.extend(self._kill_lines(changed))
+        partial =[f"v3:{t['id']}" for t in self.suite_tests if shape_q.sampled(t) and t.get("replay_keys") is None]
         if partial:
             self.res.not_proven.append(f"v4: the suite's pair tests compare a sample of their keys ({', '.join(partial)}), "
                                        "so a mutant that changes only other keys can survive them")
+
+    # ---- V4 attribution --------------------------------------------------------------------------
+    def _facet_of(self, cid: str) -> str:
+        """The facet a V4 mutant check changes ("" for an id that names no known operator)."""
+        parts = cid.split(":")
+        return evidence.operator_facet(self.cfg, parts[1], parts[2]) if len(parts) == 3 else ""
+
+    def _attribute(self, cid: str, detail: dict) -> dict:
+        """A V4 detail with a killed_by key gains, right after it, detection (the kind of the killing item), facet (what
+        the operator changes) and gold_comparing (the authored gold queries of this run whose map compares that
+        facet). A detail without killed_by stays as it is."""
+        facet = self._facet_of(cid)
+        f = next((x for x in evidence.facets(self.cfg, self.model) if x.id == facet), None)
+        comparing = [g.id for _i, g in self.golds
+                     if f is not None and self.gold_kinds.get(g.id) == "authored" and f.compared(set(g.map.values()))]
+        out = {}
+        for key, value in detail.items():
+            if key in ("detection", "facet", "gold_comparing"):
+                continue
+            out[key] = value
+            if key == "killed_by":
+                out.update(detection=evidence.detection(value, self.gold_kinds), facet=facet, gold_comparing=comparing)
+        return out
+
+    def _annotate(self, ledger: list, checks: list):
+        """verify/mutation-coverage.json: each mutant row with killed_by gains the detection of its check, and each
+        receipt item (in the rows and in the V4 check details) gains its kind."""
+        detections = {c.id: c.detail["detection"] for c in checks if "detection" in c.detail}
+        receipts = [row.get("coverage") for row in ledger] + [c.detail.get("coverage") for c in checks]
+        for receipt in receipts:
+            for item in (receipt or {}).get("items", []) if isinstance(receipt, dict) else []:
+                item["kind"] = evidence.item_kind(item.get("id"), self.gold_kinds)
+        for row in ledger:
+            if "killed_by" in row:
+                row["detection"] = detections.get(row["id"], evidence.detection(row["killed_by"], self.gold_kinds))
+
+    def _kill_lines(self, checks: list) -> list[str]:
+        """not_proven lines of the V4 mutants that only a generated item (N5) or an item of no known kind (N6) killed;
+        a kill listed in verify.accepted_gaps gets the accepted line (N5a) instead."""
+        accepted = set(self.cfg.verify.accepted_gaps)
+        lines = []
+        for c in checks:
+            d = c.detail
+            if d.get("detection") not in ("generated_only", "unattributed"):
+                continue
+            item = d["killed_by"]
+            if c.id in accepted:
+                lines.append(f"{c.id}: killed only by {item}, a check between generated layers or of no known kind; "
+                             "accepted by verify.accepted_gaps, so this is not proven")
+            elif self.mode != "disclose":
+                continue
+            elif d["detection"] == "generated_only":
+                parts = c.id.split(":") + ["", ""]
+                lines.append(f"{c.id}: killed by {item}, a check between generated layers; no replayed gold item "
+                             f"detected this change to {c.config_ref} ({self._readers(d)}); "
+                             f"{evidence.remedy(parts[1], parts[2])}")
+            else:
+                lines.append(f"{c.id}: killed by {item}, which no evidence rule classifies; no replayed gold item is "
+                             f"shown to have detected this change to {c.config_ref}")
+        return lines
+
+    @staticmethod
+    def _readers(d: dict) -> str:
+        facet = d.get("facet") or "the changed element"
+        if d.get("gold_comparing"):
+            return f"gold queries that compare {facet}: {_cut(d['gold_comparing'])}"
+        return f"no authored gold query compares {facet}"
+
+    def _bucket(self, c: Check, accepted: set) -> str:
+        """The bucket of a mutant that has a V4 check (first that applies)."""
+        if c.status in ("not_run", "error"):
+            return "not_judged"
+        killer, found = c.detail.get("killed_by", ""), c.detail.get("detection")
+        if not killer:
+            return "survived" if c.status == "fail" else "unattributed"
+        if found in ("generated_only", "unattributed") and c.id in accepted:
+            return "accepted"
+        return {"authored": "killed_authored", "generated_only": "killed_generated_only"}.get(found, "unattributed")
+
+    def mutation_split(self) -> dict:
+        """The selected operators and every selected mutant in one bucket, counted from the coverage ledger rows (a
+        mutant without a check: equivalent, not_applicable, or not judged) and the V4 checks."""
+        selected = mutate.selected(self.cfg)
+        accepted = set(self.cfg.verify.accepted_gaps)
+        checks = {c.id: c for c in self.res.checks if c.id.startswith("v4:") and len(c.id.split(":")) == 3}
+        outcomes = {row["id"]: row.get("outcome") for row in self.ledger}
+        split = dict.fromkeys(evidence.MUTANT_BUCKETS, 0)
+        generated_only = []
+        for cid in dict.fromkeys([row["id"] for row in self.ledger] + list(checks)):
+            if cid in checks:
+                bucket = self._bucket(checks[cid], accepted)
+            else:
+                bucket = outcomes[cid] if outcomes.get(cid) in ("equivalent", "not_applicable") else "not_judged"
+            split[bucket] += 1
+            if bucket == "killed_generated_only":
+                generated_only.append(cid)
+        return {"operators_selected": len(selected),
+                "operators_not_selected": [op for op in mutate.OPERATORS if op not in selected], **split,
+                "generated_only": generated_only}
 
     # ---- evidence --------------------------------------------------------------------------------
     def _ran(self, gid: str) -> tuple[int, int]:
@@ -745,7 +866,8 @@ class _Verify:
                 "scope": "full" if self.full else "narrowed", "gold": gold,
                 "facets": self.facet_rows if self.full else None, "facets_reason": "" if self.full else "narrowed",
                 "zero_row_checks": zero, "empty_stratum_zero_row_checks": empty,
-                "gold_no_rows": [x["id"] for x in gold if x["comparisons"] and not x["nonempty_comparisons"]]}
+                "gold_no_rows": [x["id"] for x in gold if x["comparisons"] and not x["nonempty_comparisons"]],
+                "mutation": self.mutation_split()}
 
 
 # ---- next action -------------------------------------------------------------------------------------

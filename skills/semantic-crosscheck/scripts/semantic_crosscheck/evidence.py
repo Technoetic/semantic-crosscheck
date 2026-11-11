@@ -17,7 +17,10 @@ unit test keeps the table in docs/design.md section 8 equal to it.
 The only kind a stage records is the kind of a gold query, which applies to `v1:<gold>` and `v2:<gold>:<stratum>`.
 It can lower authored to generated, never raise anything (check_kind). V4 suite items take the same kinds
 (item_kind); detection names the kind of the item that killed a mutant, and v4_violations finds a V4 check whose
-detection does not follow from it. This module imports no engine module.
+detection does not follow from it. summarise() is the `evidence` key of report.json: every check of an included stage
+counted once under its kind, and what verify's evidence object recorded about mutants, facets, zero rows and gold
+text, read only when it has the expected shape (observation); render_md() and console_lines() write the report.md
+section and the `  EVIDENCE  ` console lines from it. This module imports no engine module.
 """
 
 from dataclasses import dataclass
@@ -410,6 +413,260 @@ def accepted_names(cfg) -> set[str]:
     names |= {f.id for f in facets(cfg)}
     names |= {"v4:" + op + ":" + target for op, target in operator_targets(cfg)}
     return names
+
+
+# ---- report ----------------------------------------------------------------------------------------
+# report sorts every check of an included stage under its kind and repeats what verify's evidence object recorded. It
+# reads only the keys below, checks their types and copies counts, ids, facet ids and reason codes only; an evidence
+# object that is missing or does not have this shape counts as not recorded (V1/V2 then count as unclassified).
+REPORT_KINDS = ("authored", "recomputed", "generated", "structural", "mutation")
+FACET_STATUSES = ("compared", "detected", "accepted", "gap")
+MAX_LISTED = 10
+_STATUSES = ("pass", "fail", "error", "not_run")
+_ID_LISTS = ("zero_row_checks", "empty_stratum_zero_row_checks", "gold_no_rows")
+_SIDES = {
+    "authored": "gold SQL a person wrote (no verbatim generated text found) against the served model; {zero} of them "
+                "compared no row; v1 repeats the first binding of v2",
+    "recomputed": "a recomputation from source rows by code that imports no generator",
+    "generated": "two layers generated from crosscheck.toml (also by a second engine), or one generated layer with "
+                 "itself",
+    "structural": "one side only: a rule on the data, the configuration, the environment, the served model",
+    "mutation": "broken copies of the model; pass = killed{split}",
+    "unclassified": "no evidence rule names these checks; never counted as authored or recomputed",
+}
+_INTRO = (
+    "Every check of an included stage counts once, under the kind of evidence it is (docs/design.md, section 8,\n"
+    "\"Evidence kinds\"). Only authored and recomputed checks compare generated layers with something the "
+    "generators did\nnot produce. \"Authored\" says who wrote one side, not that it is right. Compared with rows is "
+    "not detection: only an\nauthored mutant kill shows that a change of a facet is seen. Paraphrased copies of "
+    "generated SQL are not "
+    "detected.\nAuthored expected rows (`expect`) are not read by report.")
+_NOT_JUDGED = {
+    "not_recorded": "not judged (the verify result has no evidence section)",
+    "narrowed": "not judged (narrowed verify run)",
+    "v4_not_run": "not judged (V4 was left out of this narrowed verify run)",
+}
+
+
+def _count(v) -> bool:
+    return type(v) is int and v >= 0
+
+
+def _strings(v) -> bool:
+    return isinstance(v, list) and all(isinstance(x, str) for x in v)
+
+
+def _facet_row(row) -> bool:
+    return (isinstance(row, dict) and isinstance(row.get("facet"), str) and row.get("status") in FACET_STATUSES
+            and isinstance(row.get("reason"), str))
+
+
+def _mutation(m) -> dict | None:
+    if not isinstance(m, dict) or not _count(m.get("operators_selected")) \
+            or not _strings(m.get("operators_not_selected")) or not _strings(m.get("generated_only")) \
+            or not all(_count(m.get(b)) for b in MUTANT_BUCKETS):
+        return None
+    return {"operators_selected": m["operators_selected"], "operators_not_selected": list(m["operators_not_selected"]),
+            **{b: m[b] for b in MUTANT_BUCKETS}, "generated_only": list(m["generated_only"])}
+
+
+def observation(recorded) -> dict | None:
+    """The parts of verify's evidence object report reads, or None when it is missing or malformed (another schema or
+    rule version, a key missing or of the wrong type, facets on a narrowed run or none on a full one). Keys report
+    does not read are never copied."""
+    if not isinstance(recorded, dict) or type(recorded.get("schema_version")) is not int \
+            or recorded["schema_version"] != 1 or type(recorded.get("rule_version")) is not int \
+            or recorded["rule_version"] != RULE_VERSION:
+        return None
+    mode, scope, gold = recorded.get("mode"), recorded.get("scope"), recorded.get("gold")
+    facets, reason = recorded.get("facets"), recorded.get("facets_reason")
+    mutation = _mutation(recorded.get("mutation"))
+    if mode not in ("disclose", "require") or not isinstance(gold, list) or mutation is None \
+            or not all(_strings(recorded.get(k)) for k in _ID_LISTS):
+        return None
+    if scope == "full":
+        if not isinstance(facets, list) or not all(_facet_row(r) for r in facets) or reason != "":
+            return None
+    elif scope != "narrowed" or facets is not None or reason != "narrowed":
+        return None
+    return {"mode": mode, "scope": scope, "gold": gold, "facets": facets, "facets_reason": reason,
+            **{k: list(recorded[k]) for k in _ID_LISTS}, "mutation": mutation}
+
+
+def _is_v4_mutant(cid) -> bool:
+    segments = cid.split(":") if isinstance(cid, str) else []
+    return len(segments) == 3 and segments[0] == "v4" and all(segments)
+
+
+def summarise(included: dict, excluded: list, verify_checks: list, recorded) -> dict:
+    """The `evidence` key of report.json.
+
+    included: stage -> its checks, for the stages that count (in pipeline order); excluded: [{"stage", "why"}] for the
+    stages left out (stale, missing, not_counted); verify_checks: the checks of the verify result; recorded: its
+    `evidence` value. Every check of an included stage counts once under check_kind (gold kinds only from a readable
+    evidence object of an included verify, so they can only lower v1/v2). What verify recorded about mutants, facets,
+    zero rows and gold text is repeated only when verify is included and its evidence is readable; otherwise the
+    mutation split holds only not_judged (every V4 mutant check) and facets is None, with the reason why."""
+    obs = observation(recorded)
+    seen =obs if "verify" in included else None
+    golds, overridden = gold_kinds(seen["gold"]) if seen else ({}, 0)
+    tally = {k: {"counts": dict.fromkeys(_STATUSES, 0), "ids": {}} for k in KINDS}
+    for stage, checks in included.items():
+        for c in checks:
+            cid = c.get("id") if isinstance(c, dict) else None
+            status = c.get("status") if isinstance(c, dict) else None
+            kind = check_kind(stage, cid, golds) if isinstance(cid, str) else "unclassified"
+            tally[kind]["counts"][status if status in _STATUSES else "error"] += 1
+            tally[kind]["ids"].setdefault(stage, []).append(str(cid))
+    authored = set(tally["authored"]["ids"].get("verify", []))
+    zero = {k: [i for i in seen[k] if i in authored] if seen else [] for k in _ID_LISTS[:2]}
+    kinds = {}
+    for k in KINDS:
+        if k == "unclassified" and not any(tally[k]["counts"].values()):
+            continue
+        entry = dict(tally[k]["counts"])
+        if k == "authored":
+            entry["zero_row"] = len(zero["zero_row_checks"]) + len(zero["empty_stratum_zero_row_checks"])
+        entry["ids"] = tally[k]["ids"]
+        kinds[k] = entry
+    not_judged = "not_recorded" if obs is None else "not_included" if seen is None else ""
+    if not_judged:
+        mutation, mutation_reason = {"not_judged": sum(_is_v4_mutant(c.get("id")) for c in verify_checks
+                                                       if isinstance(c, dict))}, not_judged
+        facets, facets_reason = None, not_judged
+    else:
+        v4_left_out = any(isinstance(c, dict) and c.get("id") == "scope:v4" for c in verify_checks)
+        mutation, mutation_reason = ({"not_judged": 0}, "v4_not_run") if v4_left_out else (seen["mutation"], "")
+        facets, facets_reason = None, seen["facets_reason"]
+        if seen["facets"] is not None:
+            rows = seen["facets"]
+            facets = {"total": len(rows), "compared": sum(r["status"] == "compared" for r in rows),
+                      "detected": sum(r["status"] == "detected" for r in rows),
+                      "accepted": [r["facet"] for r in rows if r["status"] == "accepted"],
+                      "gaps": [{"facet": r["facet"], "reason": r["reason"]} for r in rows if r["status"] == "gap"]}
+    return {
+        "schema_version": 1, "rule_version": RULE_VERSION,
+        "included_stages": list(included), "excluded_stages": [dict(x) for x in excluded],
+        "observation_recorded": obs is not None, "mode": obs["mode"] if obs else None,
+        "kinds": kinds, "overridden": overridden,
+        "mutation": mutation, "mutation_reason": mutation_reason,
+        "facets": facets, "facets_reason": facets_reason,
+        "zero_row_checks": list(seen["zero_row_checks"]) if seen else [],
+        "empty_stratum_zero_row_checks": list(seen["empty_stratum_zero_row_checks"]) if seen else [],
+        "gold_no_rows": list(seen["gold_no_rows"]) if seen else [],
+        "gold_generated_text": [g for g, k in golds.items() if k == "generated"],
+    }
+
+
+def _cut(ids: list) -> str:
+    """Ids for a line: at most MAX_LISTED, then how many more."""
+    text = ", ".join(ids[:MAX_LISTED])
+    return text + (f", and {len(ids) - MAX_LISTED} more" if len(ids) > MAX_LISTED else "")
+
+
+def _md(text) -> str:
+    return str(text).replace("|", "\\|").replace("\r", " ").replace("\n", " ")
+
+
+def _not_judged(ev: dict, reason: str) -> str:
+    if reason == "not_included":
+        why = next((x.get("why") for x in ev["excluded_stages"] if x.get("stage") == "verify"), "")
+        return f"not judged (verify is not included: {why})"
+    return _NOT_JUDGED[reason]
+
+
+def _zero_ids(ev: dict) -> tuple[list, list]:
+    """The authored checks of the two zero-row lists (the ids counted in kinds.authored.zero_row)."""
+    authored = set(ev["kinds"]["authored"]["ids"].get("verify", []))
+    return ([i for i in ev["zero_row_checks"] if i in authored],
+            [i for i in ev["empty_stratum_zero_row_checks"] if i in authored])
+
+
+def _mutant_head(m: dict) -> str:
+    ops = m["operators_not_selected"]
+    return (f"{m['operators_selected']} of {len(MUTATION_OPERATORS)} operators selected"
+            + (f"; not selected: {_cut(ops)}" if ops else ""))
+
+
+def _mutant_parts(m: dict, authored: str, equivalent: str) -> list[str]:
+    ids = m["generated_only"]
+    return [f"{m['killed_authored']} killed with {authored}",
+            f"{m['killed_generated_only']} killed by generated checks only" + (f" ({_cut(ids)})" if ids else ""),
+            f"{m['unattributed']} unattributed", f"{m['accepted']} accepted", f"{m['survived']} survived",
+            f"{m['not_judged']} not judged", f"{m['equivalent']} {equivalent}", f"{m['not_applicable']} not applicable"]
+
+
+def _facet_parts(f: dict) -> tuple[str, str, list]:
+    head = (f"{f['compared']} of {f['total']} compared with rows holding values by authored gold SQL",
+            f"{f['detected']} more detected by an authored mutant kill")
+    gaps = _cut([f"{g['facet']} ({g['reason']})" for g in f["gaps"]]) or "none"
+    return head, gaps, f["accepted"]
+
+
+def render_md(ev: dict) -> list[str]:
+    """The `## Evidence` section of report.md (placed before `## Not proven`), from summarise()."""
+    lines = ["## Evidence", "", *_INTRO.split("\n"), "",
+             "| Kind | What the two sides are | Pass | Fail | Error | Not run |", "|---|---|---:|---:|---:|---:|"]
+    m = ev["mutation"]
+    split = (f": {m['killed_authored']} with an authored detection, {m['killed_generated_only']} by generated checks "
+             "only") if not ev["mutation_reason"] else ""
+    for k, entry in ev["kinds"].items():
+        side = _SIDES[k].format(zero=entry.get("zero_row", 0), split=split)
+        lines.append(f"| {k} | {side} | {entry['pass']} | {entry['fail']} | {entry['error']} | {entry['not_run']} |")
+    lines.append("")
+    if ev["mutation_reason"]:
+        lines.append(f"- Mutants: {_not_judged(ev, ev['mutation_reason'])}.")
+    else:
+        lines.append(f"- Mutants ({_md(_mutant_head(m))}): "
+                     + "; ".join(_md(p) for p in _mutant_parts(m, "an authored detection", "equivalent on this data"))
+                     + ".")
+    if ev["facets"] is None:
+        lines.append(f"- Facets: {_not_judged(ev, ev['facets_reason'])}.")
+    else:
+        head, gaps, accepted = _facet_parts(ev["facets"])
+        lines.append(f"- Facets: {'; '.join(head)}; no authored evidence: {_md(gaps)}; accepted: "
+                     f"{_md(_cut(accepted)) or 'none'}.")
+    zero, empty = _zero_ids(ev)
+    lines.append(f"- Authored checks that compared no row: {len(zero)}" + (f" ({_md(_cut(zero))})" if zero else "")
+                 + f"; in strata named `empty`: {len(empty)}" + (f" ({_md(_cut(empty))})" if empty else "")
+                 + f". Gold queries that compared no row: {_md(_cut(ev['gold_no_rows'])) or 'none'}.")
+    lines.append(f"- Gold SQL with generated text: {_md(_cut(ev['gold_generated_text'])) or 'none'}.")
+    excluded = ", ".join(f"{x['stage']} ({x['why']})" for x in ev["excluded_stages"])
+    lines.append(f"- Stages not included: {_md(excluded) or 'none'}.")
+    return lines + [""]
+
+
+def console_lines(ev: dict) -> list[str]:
+    """The report console lines printed as `  EVIDENCE  <line>` after the NOT PROVEN lines (not with --quiet)."""
+    kinds = ev["kinds"]
+    zero, empty = _zero_ids(ev)
+    parts = []
+    for k, entry in kinds.items():
+        n = entry["pass"] + entry["fail"] + entry["error"] + entry["not_run"]
+        parts.append(f"{k} {entry['pass']}/{n}" + (f" ({len(zero)}+{len(empty)} compared no row)" if k == "authored"
+                                                   else ""))
+    lines = ["checks by kind (pass of all): " + ", ".join(parts)]
+    m = ev["mutation"]
+    if ev["mutation_reason"]:
+        lines.append(f"mutants: {_not_judged(ev, ev['mutation_reason'])}")
+    else:
+        lines.append(f"mutants ({_mutant_head(m)}): "
+                     + ", ".join(_mutant_parts(m, "authored detection", "equivalent")))
+    if ev["facets"] is None:
+        lines.append(f"facets: {_not_judged(ev, ev['facets_reason'])}")
+    else:
+        head, gaps, accepted = _facet_parts(ev["facets"])
+        lines.append(f"facets: {', '.join(head)}; no authored evidence: {gaps}"
+                     + (f"; accepted: {_cut(accepted)}" if accepted else ""))
+    lines.append(f"zero rows: {len(zero)} authored check(s) compared no row" + (f" ({_cut(zero)})" if zero else "")
+                 + (f", {len(empty)} more in strata named empty" if empty else "")
+                 + f"; gold queries that compared no row: {_cut(ev['gold_no_rows']) or 'none'}"
+                 + f"; gold SQL with generated text: {_cut(ev['gold_generated_text']) or 'none'}")
+    if ev["excluded_stages"]:
+        lines.append("not included: " + ", ".join(f"{x['stage']} ({x['why']})" for x in ev["excluded_stages"]))
+    if not ev["observation_recorded"]:
+        lines.append("observation not recorded: the verify result has no readable evidence section")
+    return lines
 
 
 # ---- documentation ---------------------------------------------------------------------------------

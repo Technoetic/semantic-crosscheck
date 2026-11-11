@@ -305,6 +305,8 @@ def _summary(res: Result, path, quiet: bool) -> str:
                              + (f"  {_brief(c.detail)}" if c.detail else ""))
         for n in res.not_proven:
             lines.append(f"  NOT PROVEN  {n}")
+        for n in getattr(res, "_evidence_lines", ()):
+            lines.append(f"  EVIDENCE  {n}")
         if res.next_safe_action:
             lines.append(f"  next: {res.next_safe_action}")
     text = "\n".join(lines)

@@ -19,6 +19,10 @@ never ran, or ran before the data it checked was reloaded, would answer that que
     decisive result (not_run, or stale) is listed as not proven and does not count.
   - The report lists the checks that did not pass with the crosscheck.toml entry to fix, every not_proven line and
     every next_safe_action, and names the trusted code: `sql_violation` predicates and gold SQL run as written.
+  - With a verify result, it also says what kind of evidence each check of an included stage is (evidence.py:
+    authored, recomputed, generated, structural, mutation) and repeats what verify recorded about mutant detection,
+    facets without authored evidence and comparisons without rows: report.json `evidence`, a `## Evidence` section
+    and `  EVIDENCE  ` console lines. This is disclosure only and never changes a status.
 The overall status can therefore only be pass when every required stage ran, is current and passed.
 
 An optional [semantic_preflight] table also requires explicitly selected local
@@ -36,7 +40,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from . import config, contract_evidence, cube_run, provenance, runtime_provenance
+from . import config, contract_evidence, cube_run, evidence as kinds, provenance, runtime_provenance
 from .result import STATUSES, Result, inputs_fingerprint, load_result
 from .result_contract import ResultContractError, invalid_result, validate_result
 
@@ -270,6 +274,31 @@ def _add_stage_checks(res: Result, results: dict, statuses: dict, required: list
         res.add(f"stage:{stage}", counted[stage], str(first_bad.get("config_ref", "")), **detail)
 
 
+def _evidence(results: dict, counted: dict, required: list[str], stale: dict) -> dict:
+    """The `evidence` key of report.json (only with a verify result): the checks of every included stage by evidence
+    kind, and what verify recorded about mutants, facets, zero rows and gold text. A stage is included when it has a
+    result that counts towards the verdict and is not stale; a stale stage, a required stage without a result and an
+    optional stage that does not count are listed as excluded."""
+    included, excluded = {}, []
+    for stage in _stage_order(required):
+        if stage not in results:
+            if stage in required:
+                excluded.append({"stage": stage, "why": "missing"})
+        elif stage in stale:
+            excluded.append({"stage": stage, "why": "stale"})
+        elif counted.get(stage) is None:
+            excluded.append({"stage": stage, "why": "not_counted"})
+        else:
+            included[stage] = _checks(results[stage])
+    verify = results["verify"]
+    try:
+        validate_result(verify)
+        recorded = verify.get("evidence")
+    except ResultContractError:
+        recorded = None
+    return kinds.summarise(included, excluded, _checks(verify), recorded)
+
+
 def _next_action(results: dict, counted: dict, required: list[str], stale: dict) -> str:
     """The first thing to do, in pipeline order: fix a stage that is current and did not pass, or (re)run the stages
     that are stale or missing."""
@@ -371,6 +400,9 @@ def render_md(summary: dict) -> str:
     if not failing:
         lines.append("None.")
 
+    if "evidence" in summary:
+        lines += [""] + kinds.render_md(summary["evidence"])[:-1]
+
     lines += ["", "## Not proven", ""]
     gaps = [f"{stage}: {n}" for stage, s in summary["stages"].items() for n in s["not_proven"]]
     gaps += [f"report: {n}" for n in summary["not_proven"]]
@@ -444,7 +476,7 @@ def run(cfg, args, out: Path) -> Result:
                    for stage, r in results.items()}
         _add_stage_checks(res, results, statuses, required, stale, counted)
         res.next_safe_action = _next_action(results, counted, required, stale)
-        return {
+        summary = {
             "status": res.status,
             "generated_at": time.strftime(_TIME),
             "config": cfg.path.name if cfg is not None else "",
@@ -460,6 +492,13 @@ def run(cfg, args, out: Path) -> Result:
             "runtime_evidence": current_runtime,
             "next_safe_action": res.next_safe_action,
         }
+        # Only with a verify result, so a run without verify (the compatibility goldens) is unchanged. The console
+        # lines are a dynamic attribute, like _contract_evidence: Result serialises only its dataclass fields.
+        res._evidence_lines = []
+        if "verify" in results:
+            summary["evidence"] = _evidence(results, counted, required, stale)
+            res._evidence_lines = kinds.console_lines(summary["evidence"])
+        return summary
 
     def changed():
         if evidence is None:

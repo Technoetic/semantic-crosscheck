@@ -16,10 +16,12 @@ against the demo data and a served model:
                                    generated layers kills the on_hand mutant, so it passes with N5, and measures.on_hand
                                    gets N4 (F1)
 
-Every test that runs V4 calls evidence.v4_violations. Where the design expects a number from an integration run, the
-tests assert what must hold whatever the number is: the mutant buckets add up to the mutants, every generated-only
-kill has an N5 line (require mode: a fail) and no authored detection, every facet without authored evidence is named,
-the zero-row lists follow from the checks, report's counts equal verify's lists, lines hold ids only. Each test prints
+Every test that runs V4 calls evidence.v4_violations. Every test asserts what must hold whatever the numbers are: the
+mutant buckets add up to the mutants, every generated-only kill has an N5 line (require mode: a fail) and no authored
+detection, every facet without authored evidence is named, the zero-row lists follow from the checks, report's counts
+equal verify's lists, lines hold ids only. The values of the clean demo measured in the first CI integration run
+(design plan 8.2: kinds, mutant split, facets, zero-row lists, N4 and N5 lines, the require-mode result) are pinned
+on top of that, in assert_clean_demo and test_require_mode_on_the_clean_demo. Each test prints
 its measured values (ids and counts only) between "==== SXC MEASURED <test> ====" and "==== END SXC MEASURED <test>
 ====" lines, before its assertions, so that they can be read from the CI log and pinned. test_docs_quickstart applies
 the same checks to the clean and dirty demo it runs through the command line.
@@ -48,6 +50,34 @@ OUTCOME = {"pass": "killed", "fail": "survived", "not_run": "not_run", "error": 
 N5_MIDDLE = ", a check between generated layers; no replayed gold item detected this change to "
 NOT_RUN_GAPS = ("gold_not_run", "not_in_model")
 AGG_TO_MAX = ["v4:measure_agg_to_max:firm_open", "v4:measure_agg_to_max:on_hand", "v4:measure_agg_to_max:consigned"]
+# The clean demo as measured in the first CI integration run (the "==== SXC MEASURED" blocks of
+# test_docs_quickstart.QuickStartRunTest.test_readme_quick_start and ScenarioTest.test_require_mode_on_the_clean_demo).
+CLEAN_KINDS = {"authored": {"pass": 17, "fail": 0, "error": 0, "not_run": 0, "zero_row": 2},
+               "recomputed": {"pass": 1, "fail": 0, "error": 0, "not_run": 0},
+               "generated": {"pass": 26, "fail": 0, "error": 0, "not_run": 0},
+               "structural": {"pass": 40, "fail": 0, "error": 0, "not_run": 0},
+               "mutation": {"pass": 12, "fail": 0, "error": 0, "not_run": 0}}
+CLEAN_MUTATION = {"operators_selected": 9, "operators_not_selected": [], "killed_authored": 9,
+                  "killed_generated_only": 3, "unattributed": 0, "accepted": 0, "survived": 0, "not_judged": 0,
+                  "equivalent": 2, "not_applicable": 0, "generated_only": AGG_TO_MAX}
+CLEAN_EQUIVALENT = ["v4:measure_normalization_drop:on_hand", "v4:measure_normalization_drop:consigned"]
+CLEAN_FACETS = [("m_firm_open.value", "compared", ""), ("has_component_closure+m_firm_open", "compared", ""),
+                ("part+m_firm_open", "gap", "no_gold_reads"), ("m_firm_open_dated.value", "compared", ""),
+                ("m_firm_open_dated.ts", "detected", ""), ("m_on_hand.value", "compared", ""),
+                ("part+m_on_hand", "compared", ""), ("m_consigned.value", "compared", ""),
+                ("part+m_consigned", "compared", ""), ("has_component_closure.qty", "compared", ""),
+                ("has_component_closure.path_count", "compared", ""),
+                ("has_component_closure.min_depth", "compared", ""),
+                ("has_component_closure.max_depth", "compared", ""), ("has_component_closure.pairs", "compared", ""),
+                ("has_component_ancestor.*", "compared", ""), ("has_component_descendant.*", "compared", ""),
+                ("part.part_class", "compared", "")]
+CLEAN_N4 = ["measures.firm_open: no authored evidence for part+m_firm_open (no_gold_reads)" + unit.N4_TAIL]
+REQUIRE_GOLD_EVIDENCE = {"gold_evidence:measures.firm_open": ("fail", "no_gold_reads"),
+                         "gold_evidence:measures.firm_open_dated": ("pass", None),
+                         "gold_evidence:measures.on_hand": ("pass", None),
+                         "gold_evidence:measures.consigned": ("pass", None),
+                         "gold_evidence:hierarchies.has_component": ("pass", None),
+                         "gold_evidence:ontology.class_column": ("pass", None)}
 BARE = "q06_closure_bare_name"
 BARE_GOLD = f"""
 [[gold]]
@@ -354,7 +384,9 @@ def assert_report_evidence(tc: unittest.TestCase, report_ev: dict, results: dict
 def assert_clean_demo(tc: unittest.TestCase, verify: dict, report_ev: dict | None = None) -> None:
     """What is known about the clean demo by reading the code and the demo (design 3.3, 4.2, 11): the five gold
     queries are authored, part+m_firm_open has no gold reader, the three per-key measure_agg_to_max mutants are killed
-    by generated checks only, and the two zero-row strata; disclose mode changes no status."""
+    by generated checks only, and the two zero-row strata; disclose mode changes no status. On top of that, the values
+    measured in the first CI integration run (design plan 8.2): the mutant split, every facet's status, both zero-row
+    lists, the N4 and N5 lines and, with report's evidence, the checks by kind."""
     ev = verify["evidence"]
     tc.assertEqual((ev["mode"], ev["scope"]), ("disclose", "full"))
     tc.assertEqual({g["id"]: (g["kind"], g["generated_text"]) for g in ev["gold"]},
@@ -366,11 +398,27 @@ def assert_clean_demo(tc: unittest.TestCase, verify: dict, report_ev: dict | Non
     tc.assertIn("v2:q02_where_used:top", ev["zero_row_checks"])
     tc.assertEqual(ev["gold_no_rows"], [], "every demo gold query compares rows in some binding")
     tc.assertEqual([c["id"] for c in verify["checks"] if c["status"] != "pass"], [])
+    # measured
+    tc.assertEqual(ev["mutation"], CLEAN_MUTATION)
+    tc.assertEqual([(r["facet"], r["status"], r["reason"]) for r in ev["facets"]], CLEAN_FACETS)
+    tc.assertEqual((ev["zero_row_checks"], ev["empty_stratum_zero_row_checks"]),
+                   (["v2:q02_where_used:top"], ["v2:q01_explosion:empty"]))
+    lines = verify["not_proven"]
+    tc.assertEqual([line for line in lines if line.endswith(" equivalent on this data")],
+                   [f"{cid} equivalent on this data" for cid in CLEAN_EQUIVALENT])
+    tc.assertEqual([line.split(": killed by ", 1)[0] for line in lines if N5_MIDDLE in line], AGG_TO_MAX)
+    tc.assertEqual([line for line in lines if line.endswith(unit.N4_TAIL)], CLEAN_N4)
     if report_ev is not None:
         tc.assertEqual((report_ev["mutation_reason"], report_ev["facets_reason"], report_ev["overridden"]), ("", "", 0))
         tc.assertNotIn("unclassified", report_ev["kinds"])
         tc.assertEqual(report_ev["gold_generated_text"], [])
         tc.assertEqual(report_ev["excluded_stages"], [], "the quick start runs every stage in order")
+        # measured
+        tc.assertEqual({k: {s: v for s, v in entry.items() if s != "ids"} for k, entry in report_ev["kinds"].items()},
+                       CLEAN_KINDS)
+        tc.assertEqual(report_ev["mutation"], CLEAN_MUTATION)
+        tc.assertEqual(report_ev["facets"], {"total": 17, "compared": 15, "detected": 1, "accepted": [],
+                                             "gaps": [{"facet": "part+m_firm_open", "reason": "no_gold_reads"}]})
 
 
 # ---- scenarios -------------------------------------------------------------------------------------------
@@ -524,6 +572,15 @@ class ScenarioTest(DemoStages):
                           and c["id"] not in rewritten and c["id"] not in gold_evidence], [],
                          "only rewritten kills, zero-row v1 checks and gold_evidence checks leave pass")
         self.assertEqual(result["status"], "fail")
+        # measured
+        self.assertEqual({cid: (c["status"], c["detail"].get("reason")) for cid, c in gold_evidence.items()},
+                         REQUIRE_GOLD_EVIDENCE)
+        self.assertEqual([c["id"] for c in result["checks"] if c["status"] != "pass"],
+                         AGG_TO_MAX + ["gold_evidence:measures.firm_open"])
+        self.assertEqual((sum(c["status"] == "pass" for c in result["checks"]), len(result["checks"])), (49, 53))
+        self.assertEqual(ev["mutation"], CLEAN_MUTATION, "a rewritten fail stays in its detection bucket")
+        self.assertEqual(result["not_proven"], [f"{cid} equivalent on this data" for cid in CLEAN_EQUIVALENT],
+                         "require mode writes no N4 or N5 line")
 
 
 @unittest.skipUnless(READY, SKIP)

@@ -1,5 +1,103 @@
 # Changelog
 
+## [0.23.0] - 2026-11-12
+
+Release notes: [docs/releases/v0.23.0.md](docs/releases/v0.23.0.md).
+
+What a pass means. Every check now has an evidence kind, a passing V4 mutant check says what kind of item detected
+the mutant, the parts of measures and hierarchies without authored evidence are named, and a gold query that compared
+no row is disclosed. By default this is disclosure: check ids, check counts and exit-code rules do not change, and
+statuses change only in the one case under "Changed".
+
+### Added
+
+- Evidence kinds (`evidence.py`, docs/design.md section 8, "Evidence kinds"): `authored` (one side is a gold SQL file
+  a person wrote, with no generated text in it), `recomputed` (recomputed from source rows by code that imports no
+  generator; today only `v3:closure_oracle:<h>`), `generated` (both sides generated from `crosscheck.toml`: every
+  other `v3:*` check, and also the OWL closure check `v5:closure:<h>`), `structural` (one side), `mutation` (V4) and
+  `unclassified` (no rule names the check; never counted as authored or recomputed). A unit test keeps the table in
+  docs/design.md equal to the registry.
+- verify: a top-level `evidence` key in `verify/result.json` (only verify writes it): per gold query its kind, the
+  generated text found in it, the members it compares and those it uses only in filters, its comparisons, those with
+  rows, and per compared member the matched rows whose gold value is not NULL, 0 or empty (`value_rows`); on
+  full-scope runs every facet of a measure, hierarchy and `ontology.class_column` with its status (`compared`,
+  `detected`, `accepted`, `gap`) and reason (`not_in_model`, `no_values`, `no_rows_compared`, `gold_not_run`,
+  `generated_text`, `filter_only`, `no_gold_reads`); the V1/V2 checks that compared no row; the gold queries whose
+  every comparison had zero rows; and the mutant split (`operators_selected`, `operators_not_selected`,
+  `killed_authored`, `killed_generated_only`, `unattributed`, `accepted`, `survived`, `not_judged`, `equivalent`,
+  `not_applicable`, `generated_only`).
+- verify: each V4 check with `killed_by` gains `detection` (`authored`, `generated_only`, `unattributed`, `none`),
+  `facet` and `gold_comparing`. `verify/mutation-coverage.json` (still `schema_version` 1) gains `detection` on rows
+  with `killed_by` and `kind` on every receipt item.
+- verify: not_proven lines for gold SQL that names the output schema, names a generated relation (`<h>_closure`,
+  `<h>_cycles`, `v_shape_<id>`, `v_rule_<id>`, `v_rules_subjects`) or contains a generated measure filter clause
+  verbatim; for a gold query whose every comparison that ran had zero rows on both sides; for an element whose facets
+  have no authored evidence (one line per element, with reasons and the gold queries concerned); for a V4 kill that
+  only a check between generated layers made, with a remedy for its operator (for `measure_agg_to_max`: a gold query
+  that aggregates the measure over more than one key); for a kill by an item of no known kind; and for gaps and kills
+  accepted by `verify.accepted_gaps`.
+- report: with a verify result, a `report.json` `evidence` key (with `mutation_reason`: `not_recorded`,
+  `not_included`, `v4_not_run`), a `## Evidence` section in `report.md` before `## Not proven`, and
+  `  EVIDENCE  ` console lines after the NOT PROVEN lines (not with `--quiet`): checks by kind, the mutant split, the
+  facets without authored evidence, zero-row comparisons, gold SQL with generated text, stages not included. A verify
+  result without a readable `evidence` object (for example one written by an earlier release) is shown as "observation not
+  recorded", and its V1/V2 checks count as unclassified.
+- Configuration (`[verify]`, both part of the configuration hash): `gold_observation` (`"disclose"`, the default, or
+  `"require"`) and `accepted_gaps` (a list of elements, facet ids or `v4:<operator>:<target>` ids of this
+  configuration; anything else is exit 2).
+- Opt-in require mode (`gold_observation = "require"`): a V4 kill whose `detection` is `generated_only` or
+  `unattributed` and that `accepted_gaps` does not list is `fail` with that `reason` (`killed_by` kept), or `not_run`
+  (`suite_incomplete`) when suite items were left out; on full-scope runs one check `gold_evidence:<element>` per
+  measure, hierarchy and `ontology.class_column` (pass, `not_run` when every gap is `gold_not_run` or
+  `not_in_model`, else fail with the first gap's reason); a passing `v1:<gold>` of a gold query whose every
+  comparison had zero rows becomes `not_run` (`no_rows_compared`), while an `error` or `fail` stays; a not_proven
+  line names the operators `verify.mutation_operators` leaves out, and every `gold_evidence:<element>` detail lists
+  them. Only ever a pass becomes a fail or `not_run`.
+- Unit tests (no database) for these rules, among them `v4_pass_is_not_gold_detection` and the helper
+  `evidence.v4_violations`, which fail if a V4 pass can again be read as a gold detection, and
+  `tests/test_docs_evidence.py`, which holds README, SKILL.md, docs/design.md and the command documents to the
+  registry and the line texts.
+
+### Changed
+
+- A passing `v4:<operator>:<target>` no longer reads as "the gold query detects this". It means that a replayed suite
+  item failed against the mutant; the suite also holds V3 items, which compare generated layers. Read `detection`:
+  only `authored` means a gold item failed. README, SKILL.md, docs/design.md, the command documents and SECURITY.md
+  say so.
+- V4 suite order: the items of gold queries whose SQL contains generated text now run after the items of authored
+  gold queries (a stable sort). Without such a gold query the order, every V4 status and every `killed_by` are as in
+  0.22.1. With one, `killed_by` and V4 statuses can change in the default mode too: another item can be the first to
+  fail, or an item that errors twice or the `verify.mutant_max_items` budget can be met first.
+- The next action of a surviving V4 mutant reads "no replayed suite item detects this kind of error" instead of "no
+  gold query observes this kind of error". The `shape_q.measure_total_sql` docstring no longer calls the V3 total SQL
+  independent of the Cube model: it uses the same `cube_gen.where_sql`.
+- verify prints more NOT PROVEN lines for most configurations, so scripts that count them see more; report gets no
+  new NOT PROVEN line. Console parsers should ignore lines that start with `  EVIDENCE  `.
+
+### Upgrading
+
+- Engine code changed, so the engine fingerprint changed: every earlier build, reason, cube and verify result is
+  stale (`inputs_changed`). Rerun the whole pipeline after upgrading.
+- No configuration needs editing; the default mode changes no status apart from the suite-order case above. Build,
+  reason and cube outputs, check ids and reports without a verify result are unchanged apart from the engine
+  fingerprint (the compatibility goldens hold this).
+- No new runtime dependency.
+
+### Not solved
+
+- Gold SQL that is wrong in the same way as `crosscheck.toml` still agrees: authored says who wrote a side, not that
+  it is right. Paraphrased copies of generated SQL, generated SQL read through a view the user made, and dynamic SQL
+  are not detected.
+- Attribution names the first detecting item and its kind only (the suite stops there), and it is exact only for the
+  replayed bindings. Facets cover measures, hierarchies, the joins of the generated model and the class column, not
+  other entity dimensions; facets without an operator can be compared but never detected. Compared with rows that
+  hold values is not "a wrong value would be seen".
+- Other vacuous passes (`shacl:<id>` with no keys, `v5:closure:<h>` with no pairs, an unfiltered V3 pair test over
+  zero keys) are not disclosed. Measures still have no independent recomputation. `expect`, `data-rules` and the
+  diagnostics stay outside report.
+
+[0.23.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.23.0
+
 ## [0.22.1] - 2026-11-11
 
 Release notes: [docs/releases/v0.22.1.md](docs/releases/v0.22.1.md).

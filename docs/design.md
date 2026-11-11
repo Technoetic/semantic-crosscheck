@@ -107,6 +107,10 @@ exit 3, so one run lists everything to fix.
   only in SQL, a vacuous defined class, a sampled or chunked pair test, a join path additivity does not apply to, a
   component that is not installed). It does not
   change the status; `report` shows every line.
+- Since 0.23.0 a verify result also has a top-level `evidence` object (section 8, "Evidence kinds"). It is not a
+  field of `Result`: `Result.to_dict` adds it only when a stage set it, and only verify does, so no other stage's
+  result changes. It holds counts, check ids, gold ids, Cube member names, facet ids and small enums, never SQL text
+  or row values.
 - `res.next_safe_action` is one sentence the agent can follow.
 - `started_at` and `finished_at` are local times with UTC offset at one-second resolution; `report` uses them
   to find stale results.
@@ -382,14 +386,14 @@ configuration ids; `<member>` is a Cube member (`cube.member`); `<stratum>` is a
 | cube | `cube:model` | the model was generated (a generator error is exit 2 instead) | none |
 | cube | `cube:gold_members:<gold>` | every member the gold entry names exists in the model and is public | `fail` (`missing`, `hidden`, `malformed` counts) |
 | cube | `cube:meta` | Cube's `/meta` lists exactly the public members of the model | `fail` (`missing`, `extra`); `error` (HTTP status, connection error, unexpected response). Every outcome records `cube_version` and `sql_planner` of the adapter that answered |
-| verify | `v1:<gold>` | the first binding matches exactly | `fail`; `error` (gold or Cube side: error type, SQLSTATE, HTTP status, `cube` `timeout`/`row_limit`/`invalid_response`/`query_error`; `members_not_in_model`; `bindings_failed`); `not_run` (`closure_not_passed`, `no_binding`) |
+| verify | `v1:<gold>` | the first binding matches exactly (both sides empty passes with `empty = true` and is listed in the `evidence` zero-row lists) | `fail`; `error` (gold or Cube side: error type, SQLSTATE, HTTP status, `cube` `timeout`/`row_limit`/`invalid_response`/`query_error`; `members_not_in_model`; `bindings_failed`); `not_run` (`closure_not_passed`, `no_binding`; with `verify.gold_observation = "require"` also `no_rows_compared`: a passing check of a gold query whose every comparison that ran had zero rows on both sides; an `error` or `fail` stays) |
 | verify | `v2:<gold>:<stratum>` | every binding of the stratum matches exactly; an empty stratum passes (`empty_stratum`) and is listed in `not_proven` | `fail`; `error` (binding errors counted by type under `errors` and by SQLSTATE under `sqlstates`, without `side`, HTTP status or `cube`; a gold query that could not be planned gives the plan problem as in `v1:<gold>`: `members_not_in_model`, or `bindings_failed` with its error type and any SQLSTATE); `not_run` (`closure_not_passed`) |
 | verify | `v3:total:<member>` | the Cube total equals SQL computed from the configuration (or the closure table) | `fail`; `error`; `not_run` (`closure_not_passed`) |
 | verify | `v3:additive:<member>:<member>` | the groups of the measure by the ontology class column of a cube joined through many_to_one / one_to_one steps only, the NULL group included, add up to its total, and the NULL group equals independent SQL over the measure source (`null_group_equal`: an anti-join, or the matched rows without a class when Cube roots the query at the dimension's cube) | as `v3:total:<member>`; a join path with a one_to_many or unknown step gets no check, only a `not_proven` line (not applicable) |
 | verify | `v3:pair:<member>+<member>` | the two measures queried together equal the same measures queried alone, per key | as `v3:total:<member>`; since 0.9.0 also `not_run` (`keys_not_answered`): a chunked test whose Cube answers left out keys it asked for |
 | verify | `v3w:pair_witness:<member>+<member>` | since 0.11.0, opt-in (`verify.existence_witness`), for a sampled or chunked `v3:pair:<member>+<member>` test: every asked key the together answer holds but an alone answer leaves out has no row satisfying the measure's `cube_gen.where_sql` in two PostgreSQL reads that bracket Cube's queries, and its together value is NULL (`absent_no_facts`); passes with nothing absent when every key was answered | `fail` (`absent_with_facts`: a row in both reads, for the closure `qty` a closure row; `witness_value_mismatch`: no row but a non-empty together value); `not_run` (`witness_incomplete`: a key missing from the together answer, a failed cast or statement, a change between the two reads; `pair_error`: the witnessed pair test is an `error` after its key read). The pair test's own status, detail and V4 role are unchanged, also when the witness fails; an unfiltered pair test (or one whose key read failed) gets no witness, not even when it errors |
 | verify | `v3:closure_oracle:<h>` | raw edges independently recomputed in Python match every stored closure pair's exact quantity, logical path count and minimum/maximum depth in one read-only REPEATABLE READ snapshot | `fail` on differences, error-mode cycles or an exceeded configured depth; `error` on query failure or an internal oracle defect (`scc_removal_left_cycle`); `not_run` for a failed build gate, unsupported keys/quantities or exceeded resource bounds. In `on_cycle = report` mode the oracle removes the edges inside strongly connected components itself and records `cycle_handling`, `dropped_cycle_edges` and `cycle_nodes` (informational, never compared with build's statistics); a pass that removed edges is listed in `not_proven` |
-| verify | `v4:<operator>:<target>` | the mutant was killed: a suite item failed against it (`killed_by`) | `fail` (it survived); `error` (`suite_error`, `startup`, `cube`, `write`, `model_mismatch`, `witness`); `not_run` (`closure_not_passed`, `suite_incomplete`). Equivalent and not applicable mutants get no check, only a `not_proven` line |
+| verify | `v4:<operator>:<target>` | the mutant was killed: a replayed suite item failed against it (`killed_by`). The item can be a gold item or a V3 item; `detection` says which kind (`authored` only when a gold item a person wrote failed). With `verify.gold_observation = "require"` only an `authored` kill passes, or a kill `verify.accepted_gaps` lists | `fail` (it survived; in require mode also a kill whose `detection` is `generated_only` or `unattributed`, with that `reason` and `killed_by` kept); `error` (`suite_error`, `startup`, `cube`, `write`, `model_mismatch`, `witness`); `not_run` (`closure_not_passed`, `suite_incomplete`: a survivor of a suite with items left out, and in require mode also such a kill). Equivalent and not applicable mutants get no check, only a `not_proven` line |
 | verify | `v4:suite` | never passes | `not_run` (`no_passing_suite_item`): no suite item passes on the unmutated model |
 | verify | `scope:v1`, `scope:v2`, `scope:v3`, `scope:v4`, `scope:gold:<gold>` | never pass | `not_run` (`excluded_by_only`, `excluded_by_gold`): the part or gold query a narrowed run left out |
 | verify | `gold_evidence:<element>` | opt-in (`verify.gold_observation = "require"`), full-scope runs only, one per measure, hierarchy and `ontology.class_column` (`<element>` is `measures.<m>`, `hierarchies.<h>` or `ontology.class_column`): no facet of the element is a gap (each is compared with rows holding values by an authored gold query, detected by an authored V4 kill, or accepted by `verify.accepted_gaps`); the detail counts `facets`, `with_evidence`, `accepted`, `gaps` and names `operators_not_selected` | `fail` with the reason of the first gap that is not `gold_not_run` or `not_in_model` (`no_values`, `no_rows_compared`, `generated_text`, `filter_only`, `no_gold_reads`); `not_run` when every gap is `gold_not_run` or `not_in_model` (reason: the first of them), or the element has no facet in the model (`not_in_model`) |
@@ -566,6 +570,16 @@ in `build` is `not_run`. Detail keys: `gold_rows`, `cube_rows`, `matched_rows`, 
 `extra_in_cube`, `duplicate_keys_gold`, `duplicate_keys_cube`, `mismatched_columns`, `empty`,
 `declared_null_as_zero` (V2 adds `bindings`, `failed_bindings`, `error_bindings`, `empty_bindings`,
 `rows_compared` and the positions of failed bindings).
+
+Since 0.23.0 `compare_rows` also counts `value_rows`: per mapped gold column, the matched rows whose gold value has a
+value (not NULL, a number other than 0, a non-empty string; every boolean counts, `False` included). It is a count
+only, kept out of the V1 and V2 check details and summed per gold query into verify's `evidence` object, because a
+Cube NULL counts as 0 under `zero_if_null` and gold SQL often writes `coalesce(..., 0)`: rows can be compared while
+no value of a measure was seen. A V1 check with `empty = true`, and a V2 check whose bindings were all empty
+(`empty_bindings == bindings`) or whose stratum was empty, compared no row; the `evidence` object lists them
+(`zero_row_checks`, or `empty_stratum_zero_row_checks` for a stratum named `empty`). A gold query whose every
+comparison that ran had zero rows on both sides gets the not_proven line `gold:<g>: every comparison that ran (<n>)
+had zero rows on both sides; ...` (section 8, "Evidence kinds"), whatever its statuses.
 
 **Malformed Cube answers.** `CubeClient.load` accepts an answer only in Cube's load envelope, a JSON object whose
 `data` is a list of row objects, and raises `CubeResponseError` for any other HTTP 2xx answer without an `error`
@@ -778,6 +792,59 @@ of the suite is still a pass. A closure operator whose closure cube is not in th
 replaying a sampled V3 pair test (fewer keys compared than exist) also holds `sample_blind_possible = true` and
 `sampled_items` (those V3 check ids): the mutant may change only keys outside the samples. The marker changes no
 status.
+
+**What killed a mutant** (since 0.23.0). A pass means that a suite item failed against the mutant, and the suite
+holds V3 items, which compare generated layers, so a pass alone is not a gold detection. Before the suite is built,
+its items are sorted (stably) by the kind of their gold query: rank 0 the items of authored gold queries and of gold
+queries whose kind is unknown, rank 1 the items of gold queries whose SQL contains generated text (section 8,
+"Evidence kinds"), rank 2 every other item. Without such a gold query this is the planned order, so the same items
+run in the same order as before. With one, its items run after the authored ones, so `killed_by` and the V4 status
+can change for that configuration: another item can be the first to fail, or an item error or the item budget can
+be met first. Every V4 detail with a `killed_by` key gains, right after it:
+
+- `detection`: the kind of the `killed_by` item. `authored` (an item of an authored gold query), `generated_only` (a
+  V3 item or an item of a gold query with generated text), `unattributed` (an item of no known kind) or `none`
+  (nothing killed it). Because authored items run first and the suite stops at the first item that does not pass,
+  `generated_only` means that every replayed authored item ran and passed against the mutant. It is exact for the
+  replayed bindings only (the first binding in V1, the first `verify.mutant_bindings` per stratum in V2), and later
+  items are not run, so only the first detecting item and its kind are known;
+- `facet`: what the operator changes (the facet table below), and `gold_comparing`: the authored gold queries of this
+  run whose `map` compares that facet.
+
+A detail without a `killed_by` key (an error, a gated mutant) gains no key. A kill whose detection is
+`generated_only` gets the not_proven line N5 with a remedy for its operator, one whose detection is `unattributed`
+the line N6; a kill that `verify.accepted_gaps` lists gets N5a instead (the lines are in section 8, "Evidence
+kinds"). `verify/mutation-coverage.json` keeps `schema_version` 1 and gains `detection` on every row that has a
+`killed_by` key and `kind` on every receipt item ([mutation coverage](mutation-coverage.md)). The mutant split of the
+`evidence` object puts every selected mutant in exactly one bucket, the first that applies: `not_judged` (a V4 check
+`not_run` or `error`, or a coverage row without a check that is neither equivalent nor not applicable), `survived`
+(no killer, check `fail`), `accepted` (a `generated_only` or `unattributed` kill `verify.accepted_gaps` lists),
+`killed_authored`, `killed_generated_only`, `unattributed` (also a pass without a `killed_by` key); a mutant without a
+check is `equivalent` or `not_applicable` from its coverage row. It also records `operators_selected` (of the 9) and
+`operators_not_selected`; `verify.mutation_operators = []` therefore shows "0 of 9 operators selected", never a
+clean split.
+
+**Require mode** (`verify.gold_observation = "require"`, opt-in; the default `"disclose"` changes no status apart from
+the suite order above). In the V4 loop, after the attribution, a `pass` check whose detection is `generated_only` or
+`unattributed` and whose id `verify.accepted_gaps` does not list becomes `fail` with `reason` set to the detection, or,
+when suite items were left out (the `suite_incomplete` condition), `not_run` with `reason=suite_incomplete` and
+`excluded`, the line N5b and its own next action (the survivor next action is not used: the mutant was killed).
+`killed_by`, `detection`, `facet` and `gold_comparing` stay, so a require-mode `fail` can carry a non-empty
+`killed_by`: read `detection`. The run's `summary` moves the mutant from `killed` to `survived` (fail) or `not_run`
+(not_run), and its coverage row gets that `outcome` and `reason` (and `excluded`); the mutant split keeps a rewritten
+fail in its detection bucket and a rewritten not_run in `not_judged`. An `error` is never rewritten, and no rewrite
+makes a status less severe. Require mode also writes N7 when `verify.mutation_operators` leaves operators out (also
+on narrowed runs; the line is about the configuration).
+
+| Operator | Facet it changes (`facet`) |
+|---|---|
+| `measure_filter_drop`, `measure_normalization_drop`, `measure_agg_to_max` | `m_<m>.value` |
+| `dated_shift_one_day` | `m_<m>.ts` |
+| `closure_join_swap` | `<h>_closure+m_<m>` |
+| `closure_qty_single_path` | `<h>_closure.qty` |
+| `closure_path_count_one` | `<h>_closure.path_count` |
+| `closure_depth_shift` | `<h>_closure.min_depth` |
+| `closure_end_swap` | `<h>_descendant.*` |
 
 `closure_join_swap` counts which measure row each end of a pair joins, not the two values: Cube aggregates a
 measure reached through the closure's `many_to_one` join over the distinct primary keys of the measure cube in each
@@ -1032,6 +1099,10 @@ never touches the database.
   `next_safe_action`. An unreadable `result.json` becomes a synthetic `result_file` error for that stage.
   `report.md` renders the same: a status table, missing or stale stages, the checks that did not pass, every
   not-proven line, every stage's next action and the trusted code (`sql_violation` shapes and gold SQL files).
+- **Evidence** (since 0.23.0, only when a verify result is among the results): `report.json` gains `evidence` (its
+  last key), `report.md` a `## Evidence` section before `## Not proven`, and the console `  EVIDENCE  ` lines after
+  the NOT PROVEN lines. They change no verdict; see "Evidence kinds" below. A report without a verify result is
+  unchanged apart from the engine fingerprint (the compatibility goldens hold this).
 - Inputs: `sxc.py` records `result.inputs_fingerprint(cfg)` (SHA-256 of `crosscheck.toml` and of the gold SQL
   files) in every result, taken before the stage runs. `report` marks build, reason and cube stale when the
   configuration changed since they ran, and verify when the configuration or a gold file changed
@@ -1085,6 +1156,184 @@ The only kind a stage records is the kind of a gold query in the verify result, 
 `v2:<gold>:<stratum>` only. It can lower authored to generated, never raise a kind: a gold entry recorded as
 authored with generated text, or with any value other than authored or generated, counts as generated and is
 counted as overridden. Without a gold entry these checks count as unclassified.
+
+#### Generated text in gold SQL
+
+At plan time verify reads each gold file once (the file the input fingerprint hashes) and matches its text; the text
+is never stored. Comments (`--` to the end of the line, `/* */`, nested as PostgreSQL nests them) are removed outside
+single-quoted literals and double-quoted identifiers, each comment becomes one space, and whitespace runs collapse to
+one space. No other normalisation. Then, in this order:
+
+1. `output_schema`: the output schema as a qualifier, `(?<![A-Za-z0-9_"])"?<schema>"?\s*\.`, case-insensitive.
+   Reading generated tables or views is never independent.
+2. `relation:<name>`: the bare name of a generated relation as an identifier, `(?<![A-Za-z0-9_."])"?<name>"?(?![A-Za-z0-9_])`,
+   case-insensitive: `<h>_closure` and `<h>_cycles` of every hierarchy, `v_shape_<id>` of every shape,
+   `v_rules_subjects`, and any `v_rule_` followed by 1 to 56 characters of `[a-z0-9_]` (verify does not read the rule
+   file, so rule views are matched by their prefix and reported lowercased). Gold SQL runs with the connection's own
+   `search_path`, so a gold query can read a generated table without naming the schema. A source table or CTE with
+   the same name is found too; that only lowers a kind.
+3. `filter:measures.<m>`: a clause of `cube_gen.where_clauses(m)` other than the first (the grain clause
+   `t."<by>" IS NOT NULL` is too common), whitespace-collapsed, occurs in the text. `cube_gen.where_sql(m)` is these
+   clauses joined with `AND`.
+
+Any match makes the kind of the gold query `generated` (`gold[].kind` and `generated_text` in the evidence object):
+its `v1:<gold>` and `v2:<gold>:<stratum>` checks count as generated, its items run after the authored items in V4
+(section 7), and its comparisons and kills give no facet authored evidence. Statuses do not change. Not found:
+paraphrased copies (a hand-written `upper(btrim(s.location_id)) IN ('MAIN', 'SUB')` does not match the generated
+`upper(btrim(t."location_id")) IN ('MAIN', 'SUB')`), generated SQL reached through a view the user made, and
+dynamic SQL. A gold file that cannot be read is not flagged; its comparisons error as before. A unit test holds the
+five demo gold queries free of every match.
+
+#### Hard cases
+
+| Case | Kind | Why |
+|---|---|---|
+| Gold SQL copied from generated SQL (a verbatim filter clause, the output schema or a generated relation's name) | `generated`, the whole gold query; its facets and kills give no authored evidence | the rule above |
+| Gold SQL copied but paraphrased | `authored` | not detectable; every authored count reads "a person wrote one side" |
+| `v3:total:<member>` of a measure | `generated` | its SQL side calls `cube_gen.where_sql`, the same call that builds the Cube measure's WHERE |
+| `v3:total:<member>` of a closure member | `generated` | both sides read the closure table build wrote |
+| `v3:additive:<member>:<member>`, `v3:pair:<member>+<member>`, `v3w:pair_witness:<member>+<member>` | `generated` | Cube against Cube, or against SQL built with `cube_gen.where_sql` |
+| Expected rows of `expect` | not counted | report never reads the expect result |
+| `v3:closure_oracle:<h>` | `recomputed`, but no facet evidence | it never reads Cube and is not replayed against mutants |
+| `v5:closure:<h>` | `generated` | a second engine, but its OWL side comes from the ontology generator and its SQL side is the generated closure table: a swapped `parent`/`child` in the configuration reaches both the same way |
+| `closure_apply:<h>` | `generated` | the same builder in the same transaction |
+| `v5:witness:<name>` | `structural` | a synthetic graph the engine wrote: it tests templates, not this data |
+| A V4 kill by an authored item that sees the change only through a join | `mutation`, `detection = authored` | the gold rows differed from Cube's |
+| A V2 stratum whose bindings were all empty, a V1 binding with no row | `authored`, listed in `zero_row_checks` (`empty_stratum_zero_row_checks` for a stratum named `empty`) | the kind says who wrote the side; the list says nothing was compared |
+| `v1:<gold>` and `v2:<gold>:<stratum>` of a gold query without parameters | both `authored`, one comparison | V1 replays the first binding and V2 the same single binding (`all`); the report.md table says "v1 repeats the first binding of v2" |
+| Optional diagnostics, `data-rules`, `expect` | not counted | they are not report stages |
+
+#### Gold accounting and facets
+
+Per gold query verify records `compares` (the Cube members of its `map`, the only members `compare_rows` compares),
+`uses_only` (members used only in filters, time dimensions or segments), `comparisons` (V1 and V2 comparisons that ran
+without error), `nonempty_comparisons` (those with a row on either side) and `value_rows` (per compared member, see
+section 7, V1/V2 compare). The kind of every planned gold query is stored before planning can stop (a gated gold query
+has a kind too); items of a gold query unknown to the plan have kind `unclassified` and keep rank 0 in the V4 order.
+
+A facet is a part of a measure, hierarchy or class column that a gold query can compare. The facets come from the
+configuration and, for the class column, from the entity cubes of the served model; the generated model has no other
+joins.
+
+| Element | Facet | Compared by a gold query whose `map` holds | Mutated by |
+|---|---|---|---|
+| `measures.<m>` | `m_<m>.value` | it | `measure_filter_drop`, `measure_normalization_drop`, `measure_agg_to_max` |
+| `measures.<m>` with `date_column` | `m_<m>.ts` | it | `dated_shift_one_day` |
+| `measures.<m>` with `closure_join` (one hierarchy) | `<h>_closure+m_<m>` | a member of `<h>_closure` and `m_<m>.value` | `closure_join_swap` |
+| `measures.<m>` with a node, no `date_column`, a single-column node key | `<node>+m_<m>` | a member of the node cube and `m_<m>.value` | none |
+| `ontology.class_column` (when set) | `<entity>.<class_column>` for every entity cube of the model that has the column | it | none |
+| `hierarchies.<h>` | `<h>_closure.qty`, `<h>_closure.path_count`, `<h>_closure.min_depth` | it | `closure_qty_single_path`, `closure_path_count_one`, `closure_depth_shift` |
+| `hierarchies.<h>` | `<h>_closure.max_depth`, `<h>_closure.pairs` | it | none |
+| `hierarchies.<h>` | `<h>_ancestor.*`, `<h>_descendant.*` | any member of that cube | none; `closure_end_swap` for the descendant cube |
+
+The status of a facet is the first that applies: `compared` (an authored gold query compares it, had a comparison
+with rows and counted `value_rows` above 0 for a member of the facet, for a join facet `m_<m>.value`; this means
+compared with rows that hold a value, not that a wrong value would be seen), `detected` (a V4 check on the facet has
+`detection = authored`; only this shows that a change was seen), `accepted` (the facet or its element is listed in
+`verify.accepted_gaps`), else `gap` with the first reason that applies: `not_in_model` (a cube of the facet is not in
+the model, for example a closure cube skipped at cube time), `no_values` (authored gold queries compared rows, every
+gold value of the facet was NULL, 0 or empty), `no_rows_compared` (they ran, every comparison was empty),
+`gold_not_run` (none of them ran: gated, a plan problem, no binding, every comparison errored), `generated_text` (only
+gold queries with generated text compare it, or use it), `filter_only` (authored gold queries use it only in filters,
+time dimensions or segments), `no_gold_reads` (no gold query uses it). A gap line names the golds behind its reason:
+the authored ones that compare the facet for `no_values`, `no_rows_compared` and `gold_not_run`, the generated ones
+for `generated_text`, the authored filter users for `filter_only`, none otherwise. Facets are judged only on
+full-scope runs (every part of `--only` and every configured gold query planned; a `--gold` naming all of them is full
+scope). A narrowed run records `facets` null and `facets_reason` "narrowed", writes no facet line and never shows
+"0 of 0".
+
+#### The verify evidence object
+
+`verify/result.json` gains the top-level key `evidence` (only verify writes it): `schema_version` 1, `rule_version`
+(of the registry), `mode` (`disclose` or `require`), `scope` (`full` or `narrowed`), `gold` (one entry per selected
+gold query of the run: `id`, `kind`, `generated_text`, `compares`, `uses_only`, `comparisons`, `nonempty_comparisons`,
+`value_rows`), `facets` (one row per facet: `element`, `facet`, `status`, `reason`, `compared_by`, `uses_only_by`,
+`detected_by`; null on a narrowed run), `facets_reason` ("" or "narrowed"), `zero_row_checks`,
+`empty_stratum_zero_row_checks`, `gold_no_rows` (gold ids with at least one comparison and none with rows) and
+`mutation` (`operators_selected`, `operators_not_selected`, the eight buckets, `generated_only`: the ids of the
+`killed_generated_only` bucket). On a run without V4 the buckets are all 0; report does not show such a split as clean.
+Lists hold ids only; lists in lines are cut at 10 ids with `, and <n> more`.
+
+#### Codes
+
+| Where | Codes |
+|---|---|
+| V4 `detection` | `authored`, `generated_only`, `unattributed`, `none` |
+| facet `status` | `compared`, `detected`, `accepted`, `gap` |
+| facet `reason`, `gold_evidence` `reason` | `not_in_model`, `no_values`, `no_rows_compared`, `gold_not_run`, `generated_text`, `filter_only`, `no_gold_reads` |
+| mutant split buckets | `killed_authored`, `killed_generated_only`, `unattributed`, `accepted`, `survived`, `not_judged`, `equivalent`, `not_applicable` |
+| V4 `reason` (require mode) | `generated_only`, `unattributed`, `suite_incomplete` |
+| `v1:<gold>` `reason` (require mode) | `no_rows_compared` |
+| report.json `mutation_reason` | `not_recorded`, `not_included`, `v4_not_run` (empty when the split is shown) |
+| report.json `facets_reason` | `not_recorded`, `not_included`, `narrowed` (empty when facets are shown) |
+
+#### Not proven lines
+
+verify writes these lines (exact texts; `{...}` is filled in, lists are cut at 10). Order: the gold lines (per gold
+query: N1, R, N2, N3) after the V3 lines and before V4's; N5, N5a, N5b and N6 right after V4's own lines and before
+the sampled-pair line; then N7; the facet lines N4 and N4a last, before the unbound-evidence lines.
+
+| Line | When | Text |
+|---|---|---|
+| N1 | the gold SQL names the output schema | `gold:{g}: the gold SQL names the output schema {schema}; v1:{g} and v2:{g}:* count as generated evidence, not authored` |
+| R | the gold SQL names a generated relation | `gold:{g}: the gold SQL names the generated relation {names}; v1:{g} and v2:{g}:* count as generated evidence, not authored` |
+| N2 | the gold SQL contains a generated filter clause | `gold:{g}: the gold SQL contains the generated filter of {refs} verbatim; v1:{g} and v2:{g}:* count as generated evidence, not authored` |
+| N3 | every comparison of the gold query that ran ({n} of them) had zero rows on both sides; {ids} is `v1:{g}`, `v2:{g}:*` or both, for the parts that ran | `gold:{g}: every comparison that ran ({n}) had zero rows on both sides; {ids} pass without comparing any row; add a binding, stratum or parameter set with rows` |
+| N4 | disclose mode, full scope: an element with a facet gap; each gap reads `{facet} ({reason}: {golds})`, without `: {golds}` when none is named | `{element}: no authored evidence for {gaps}; only checks between generated layers cover these facets; add a gold query, stratum or parameter set that compares them, or list them in verify.accepted_gaps` |
+| N4a | both modes, full scope: an element with accepted facets | `{element}: no authored evidence for {facets}; accepted by verify.accepted_gaps, so this is not proven` |
+| N5 | disclose mode: a `generated_only` kill not listed in `verify.accepted_gaps` | `{cid}: killed by {item}, a check between generated layers; no replayed gold item detected this change to {config_ref} ({readers}); {remedy}` |
+| N5a | both modes: a `generated_only` or `unattributed` kill listed in `verify.accepted_gaps` | `{cid}: killed only by {item}, a check between generated layers or of no known kind; accepted by verify.accepted_gaps, so this is not proven` |
+| N5b | require mode: such a kill, not listed, with suite items left out (`not_run`, `suite_incomplete`) | `{cid}: killed only by {killer}; gold items were left out ({excluded}), which might have detected it; not judged` |
+| N6 | disclose mode: an `unattributed` kill not listed | `{cid}: killed by {item}, which no evidence rule classifies; no replayed gold item is shown to have detected this change to {config_ref}` |
+| N7 | require mode: `verify.mutation_operators` leaves operators out (also on narrowed runs) | `verify.mutation_operators leaves out {ops}; require mode judges only the selected operators, so changes of those kinds are not proven to be detected` |
+
+`{readers}` is `gold queries that compare {facet}: {ids}` or `no authored gold query compares {facet}` (`{facet}` is
+"the changed element" for an operator without a facet). `{killer}` is `{item}, a check between generated layers` for a
+`generated_only` kill and `{item}, which no evidence rule classifies` for an `unattributed` one. `{remedy}` depends on
+the operator (`{m}` is `measures.<m>`):
+
+| Operator | Remedy |
+|---|---|
+| `measure_agg_to_max` | `a gold query that returns one row per key of {m} cannot see this change, because the measure cube holds one pre-aggregated row per key; add a gold query that aggregates {m} over more than one key` |
+| `measure_filter_drop`, `measure_normalization_drop` | `add a gold query, stratum or parameter set whose keys have source rows that the filter of {m} excludes` |
+| `dated_shift_one_day` | `add a parameter set whose date range starts or ends on a date with rows of {m}` |
+| any other | `add a gold query, stratum or parameter set that would detect it` |
+
+Next actions (`next_safe_action`) for the checks require mode adds or rewrites, and the survivor text both modes use:
+
+| Check | Text |
+|---|---|
+| `v4:<operator>:<target>` `fail` (`generated_only`; for `unattributed` the middle reads `no replayed gold item is shown to have detected it ({readers})`) | `{cid}: only {killer}, detected the mutant; no replayed gold item did ({readers}); {remedy}, or list {cid} in verify.accepted_gaps, then rerun verify (do not drop the operator)` |
+| `v4:<operator>:<target>` `not_run` (`suite_incomplete`) after a kill | `{cid}: killed only by {killer}, while gold items were left out ({excluded}): make every gold query and closure run (full verify, passing builds), then rerun verify` |
+| `gold_evidence:<element>` `fail` | `{cid}: no authored evidence for {facets}; add a gold query that maps them and compares rows, or list them in verify.accepted_gaps, then rerun verify` |
+| `gold_evidence:<element>` `fail` (`no_values`) | `{cid}: no authored evidence for {facets}: compared rows held no value of them (NULL, 0 or empty); add a binding or parameter set whose rows hold values, then rerun verify` |
+| `gold_evidence:<element>` `not_run` | `{cid}: the gold queries that compare {facets} did not run, or the model lacks their cube; fix their errors or gates (rerun build and cube for a missing closure cube), then rerun verify` |
+| `v1:<gold>` `not_run` (`no_rows_compared`) | `{cid}: every comparison of this gold query had zero rows on both sides; check its parameters, strata and the data, then rerun verify` |
+| `v4:<operator>:<target>` `fail`, survived (both modes) | `{cid} survived: no replayed suite item detects this kind of error in {config_ref}; add a gold query, a mapped column or a stratum that would, then rerun verify (do not drop the operator)` |
+
+#### Configuration
+
+`[verify] gold_observation`: `"disclose"` (default) or `"require"`; any other value is exit 2. `[verify]
+accepted_gaps`: a list of strings, default `[]`; each is an element (`measures.<m>`, `hierarchies.<h>`,
+`ontology.class_column` when it is set), a facet id of the table above (class facets are accepted for every
+configured entity, since configuration validation has no model), or a V4 check id `v4:<operator>:<target>` of an
+operator on a target it applies to; anything else is exit 2 naming the entry's position. Both keys live in
+`crosscheck.toml`, so changing them changes the configuration hash and makes earlier results stale. In require mode,
+on full-scope runs, every measure, hierarchy and `ontology.class_column` (when set) gets one `gold_evidence:<element>`
+check after every other check (section 6): `pass` when no facet is a gap; `not_run` when every gap is `gold_not_run` or
+`not_in_model` (the reason is the first of them), and an element without any facet in the model is `not_run`
+`not_in_model`; otherwise `fail` with the reason of the first other gap in facet order. Its detail holds `reason` (not
+on a pass), `facets`, `with_evidence` (compared and detected), `accepted`, `gaps` and `operators_not_selected`, so a
+passing check shows which operators were dropped.
+
+#### In report
+
+With a verify result among the results it reads, report adds the `evidence` key to `report.json`, the
+`## Evidence` section to `report.md` (before `## Not proven`) and `  EVIDENCE  ` console lines (after the NOT PROVEN
+lines, before `next:`, not with `--quiet`); `report/result.json` gains no key and no report verdict changes. The
+fields and the exact texts are in [report evidence](contract-report.md#evidence-kinds-in-the-report). Kinds come from
+this registry; the only recorded kind report reads is `gold[].kind`, lowered as above. Every check of an included stage
+(a stage that counts towards the verdict and is not stale) counts once.
 
 ### Synthetic counterexamples and data provenance
 
@@ -1207,6 +1456,15 @@ or the checks it exercises without being reported). See `commands/xc-demo.md` fo
   import independence) and `tests/test_data_rules_compat.py` (goldens captured on v0.21.1 for a configuration
   without `[data_rules]`). `tests/test_data_rules_pg.py` runs the example fixture on PostgreSQL 17, including SQL
   mutants that must make `rule_xcheck:<id>` fail; the strict CI integration job allows no skip.
+- Evidence kinds (since 0.23.0, no database): `tests/test_evidence.py` (every registry row, no default row, the
+  catalogue complete, the table of section 8 equal to the registry, downgrade only, the module-level imports of the
+  recomputed row), `tests/test_gold_text.py` (generated-text matching, `where_clauses`, `value_rows`),
+  `tests/test_verify_evidence.py` (gold accounting, facets and their reasons, zero rows, the suite order, the V4
+  attribution guard `v4_pass_is_not_gold_detection`, a trace of a generated-only kill, the mutant split),
+  `tests/test_require_mode.py` (every require-mode rewrite, and disclose outputs pinned by digest),
+  `tests/test_config.py` (the two keys), `tests/test_report_evidence.py` (report section, lines and keys, the
+  compatibility goldens without them) and `tests/test_docs_evidence.py` (the line texts, codes and tables of these
+  documents against the code).
 
 
 ## Opt-in structured and finite-domain counterexample search

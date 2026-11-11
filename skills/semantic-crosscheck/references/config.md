@@ -272,7 +272,19 @@ otherwise a shared mistake goes unnoticed.
 | `expect` | list of tables | `[]` | Literal expected-row cases, as `[[gold.expect]]` (below). Only the `expect` stage runs them; every stage validates them, and editing one changes `crosscheck.toml`, so `report` treats earlier operational results as stale until they are rerun. |
 
 Without `params` and `param_sets` a gold query has one binding, `all`. An empty stratum is reported as
-not proven, not as a failure.
+not proven, not as a failure. Since 0.23.0 a binding whose gold and Cube rows are both empty also passes, but
+`verify/result.json` lists every V1/V2 check that compared no row (`zero_row_checks`; those of a stratum named
+`empty`, which many gold queries answer with no row by design, in `empty_stratum_zero_row_checks`), and a gold query
+whose every comparison that ran had zero rows on both sides gets a not proven line: add a binding, stratum or
+parameter set with rows. With `verify.gold_observation = "require"` its passing `v1:<gold>` is `not_run`
+(`no_rows_compared`).
+
+Since 0.23.0 verify reads each gold SQL file for text copied from the generated layers: the output schema used as a
+qualifier, the bare name of a generated relation (`<h>_closure`, `<h>_cycles`, `v_shape_<id>`, `v_rule_<id>`,
+`v_rules_subjects`) or a measure's generated filter clause verbatim. A gold query with such text counts as
+generated evidence, not authored: its `v1`/`v2` checks are counted as generated, its items run after the authored
+gold items in V4, and a not proven line names what matched. Write gold SQL from the business definition against the
+source tables; a paraphrased copy is not detected, and it is still not independent.
 
 ### `[[gold.expect]]`
 

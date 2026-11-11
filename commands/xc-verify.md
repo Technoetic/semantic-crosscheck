@@ -64,6 +64,22 @@ python "${CLAUDE_PLUGIN_ROOT}/skills/semantic-crosscheck/scripts/sxc.py" verify 
   `reason=suite_error`). A witness query first counts the rows the mutation would change on the current
   data; a witness of 0 means the mutant is equivalent here and goes to not proven. V4 is the slowest
   part.
+- Since 0.23.0 the suite runs the items of authored gold queries first, then the items of gold queries whose SQL
+  contains generated text, then V3, and each V4 check with `killed_by` also records `detection`, `facet` and
+  `gold_comparing`. A passing `v4:<operator>:<target>` means a replayed suite item failed against the mutant, and
+  that item can be a V3 check between generated layers: only `detection = authored` means a gold item detected
+  it. Never call a `generated_only` kill a gold detection; verify writes a NOT PROVEN line for it with what would
+  help (a remedy per operator).
+- Since 0.23.0 `verify/result.json` also holds an `evidence` object (statuses unchanged in the default mode): per
+  gold query its kind and generated text, the members it compares, its comparisons and those with rows; on
+  full-scope runs (every part, every gold query) every facet of a measure, hierarchy and the class column with its
+  authored evidence or the reason there is none; the V1/V2 checks that compared no row; and the mutant split. NOT
+  PROVEN lines name gold SQL that contains generated text (the output schema, a generated relation, a measure filter
+  clause verbatim), gold queries whose every comparison had zero rows on both sides, and elements whose facets have
+  no authored evidence. `[verify] gold_observation = "require"` (opt-in) turns these into statuses; `[verify]
+  accepted_gaps` names known gaps. See the
+  [configuration reference](../skills/semantic-crosscheck/references/config.md) and
+  [design, "Evidence kinds"](../docs/design.md#evidence-kinds).
 - `--only` and `--gold` leave a `not_run` check for every part (`scope:v1` ... `scope:v4`) and every gold
   query (`scope:gold:<id>`) they skip, so a narrowed run exits 1.
 - `verify.mutation_operators` is checked before anything runs: an unknown operator is exit 2, also with
@@ -89,8 +105,10 @@ disclosed as having no nonempty coverage.
 Exit code 0: every check passed (`v1:<gold>`, `v2:<gold>:<stratum>`, `v3:total:<member>`,
 `v3:additive:<member>:<member>`, `v3:pair:<member>+<member>`, `v4:<operator>:<target>`) and none was left
 out. A pass means only what these checks prove on this data. Always show the NOT PROVEN lines (empty
-strata, equivalent mutants, sampled or chunked pair tests, join paths additivity does not apply to) next to the
-verdict.
+strata, equivalent mutants, sampled or chunked pair tests, join paths additivity does not apply to, kills by checks
+between generated layers only, facets without authored evidence, gold queries that compared no row, gold SQL with
+generated text) next to the verdict. A full verify that passes still says nothing about which mutants a gold query
+detected: read `detection` in the V4 details, or the `  EVIDENCE  ` lines of [/xc-report](xc-report.md).
 
 ## Failures
 
@@ -126,8 +144,8 @@ that generated the model. Fix `crosscheck.toml` or the gold SQL file, never the 
   (`witness_changed`) left open. `not_run` (`pair_error`): the witnessed pair test itself is an `error`.
   A pass means only that every key Cube left out of an alone answer has no qualifying row under the same
   filters, not that the data is complete; keys an alone answer holds are not witnessed.
-- `v4:<operator>:<target>` fails: a mutant that changes results on this data survived, so the gold suite
-  cannot see that kind of error. Add a gold query, a mapped column or a stratum that would observe it,
+- `v4:<operator>:<target>` fails: a mutant that changes results on this data survived, so no replayed suite
+  item detects that kind of error. Add a gold query, a mapped column or a stratum that would observe it,
   then rerun. Do not drop the operator from `verify.mutation_operators` to hide a survivor. When the
   detail says `sample_blind_possible`, the suite's sampled pair tests (`sampled_items`) compared only
   part of their keys, so the mutant may change only keys outside the sample: a gold query over those
@@ -142,6 +160,15 @@ that generated the model. Fix `crosscheck.toml` or the gold SQL file, never the 
   items left out (a gated closure, a gold query that could not be planned, or `--gold`); those items
   might have killed it. Make every gold query and closure run, then rerun the full verify.
 - `v4:suite` `not_run`: no suite item passes on the unmutated model; fix the V1 to V3 failures first.
+- Only with `verify.gold_observation = "require"`: `v4:<operator>:<target>` fails with `reason=generated_only` (or
+  `unattributed`) when only a check between generated layers (or an item of no known kind) killed the mutant;
+  `killed_by` still names that item. Add the gold query, stratum or parameter set the `next:` line describes, or,
+  for a known and accepted gap, list the check id in `verify.accepted_gaps`; never drop the operator. With suite
+  items left out such a kill is `not_run` (`suite_incomplete`): make every gold query and closure run first.
+  `gold_evidence:<element>` fails with the reason of the first facet without authored evidence (`no_values`,
+  `no_rows_compared`, `generated_text`, `filter_only`, `no_gold_reads`) or is `not_run` (`gold_not_run`,
+  `not_in_model`); `v1:<gold>` is `not_run` (`no_rows_compared`) when every comparison of that gold query had zero
+  rows on both sides. A NOT PROVEN line names the operators `verify.mutation_operators` leaves out.
 - `error` on V1 to V3: the detail names the error type, SQLSTATE or HTTP status (a V2 stratum check counts
   the errors of its bindings by type under `errors` and by SQLSTATE under `sqlstates`, so for them its
   `next:` line names no Cube or SQLSTATE cause); for V1 and V3, and for a V2 check whose gold query could

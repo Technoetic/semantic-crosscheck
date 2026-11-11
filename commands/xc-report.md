@@ -60,7 +60,15 @@ stages it depends on and passed.
    call those parts verified.
 4. Name the gold SQL files and `sql_violation` predicates as trusted SQL: they are the reference the
    harness compares against, not something it verified.
-5. Use counts and ids only. Never paste row values (keys, names, quantities) into the report, a
+5. With a verify result, show the `  EVIDENCE  ` lines (since 0.23.0; also the `## Evidence` section of
+   `report.md` and the `evidence` key of `report.json`): the checks by evidence kind, the mutant split, the facets
+   without authored evidence and the comparisons with zero rows. Say how many passing checks only compare layers
+   generated from the same `crosscheck.toml` (`generated`) and how many compare them with hand-written gold SQL
+   (`authored`) or an independent recomputation (`recomputed`). Never call a mutant "killed by generated checks
+   only" (`generated_only`) a gold detection: only `detection = authored` means a gold item failed against it. If
+   the lines say "not judged" or "observation not recorded", say so; do not fill in numbers. The lines change no
+   verdict.
+6. Use counts and ids only. Never paste row values (keys, names, quantities) into the report, a
    message, an issue or a commit.
 
 ## Failures

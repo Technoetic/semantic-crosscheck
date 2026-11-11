@@ -65,14 +65,20 @@ def columns(conn, table: str) -> list[tuple[str, str]]:
     return [(r[0], r[1]) for r in rows]
 
 
-def where_sql(m, alias: str = "t") -> str:
-    """WHERE clause of a measure: exact filters, normalised filters, non-null grain."""
+def where_clauses(m, alias: str = "t") -> list[str]:
+    """The clauses of a measure's WHERE clause, in order: non-null grain, exact filters, normalised filters. A filter
+    value may itself contain ' AND ', so callers that need single clauses use this list, never a split of where_sql."""
     parts = [f"{alias}.{ident.quote(m.by)} IS NOT NULL"]
     for col, vals in m.filter.items():
         parts.append(f"{alias}.{ident.quote(col)} IN ({', '.join(_lit(v) for v in vals)})")
     for col, vals in m.filter_normalized.items():
         parts.append(f"upper(btrim({alias}.{ident.quote(col)})) IN ({', '.join(_lit(v) for v in vals)})")
-    return " AND ".join(parts)
+    return parts
+
+
+def where_sql(m, alias: str = "t") -> str:
+    """WHERE clause of a measure: exact filters, normalised filters, non-null grain."""
+    return " AND ".join(where_clauses(m, alias))
 
 
 def _pk_dims(key: list, coltypes: dict) -> tuple[list, set]:

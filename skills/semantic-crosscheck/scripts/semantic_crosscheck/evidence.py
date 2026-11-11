@@ -210,6 +210,140 @@ def order_suite(items, golds: dict, key=lambda item: item[0]) -> list:
     return sorted(items, key=lambda item: suite_rank(key(item), golds))
 
 
+# ---- facets ----------------------------------------------------------------------------------------
+# A facet is a part of a measure, hierarchy or class dimension that a gold query can compare. Its id names the
+# generated Cube member it stands for, a whole cube (`<cube>.*`) or a join (`<cube>+<measure cube>`); the names follow
+# naming.py (a unit test keeps them equal). The generated model holds no other joins: entity cubes have none of their
+# own, a node entity joins its measures and the closure joins its ends and the measures declared with closure_join.
+MUTATION_OPERATORS = ("closure_depth_shift", "closure_path_count_one", "closure_qty_single_path", "measure_filter_drop",
+                      "measure_normalization_drop", "measure_agg_to_max", "dated_shift_one_day", "closure_join_swap",
+                      "closure_end_swap")
+FACET_REASONS = ("not_in_model", "no_values", "no_rows_compared", "gold_not_run", "generated_text", "filter_only",
+                 "no_gold_reads")
+CLASS_ELEMENT = "ontology.class_column"
+_HIERARCHY_OPERATORS = {"closure_qty_single_path": "qty", "closure_path_count_one": "path_count",
+                        "closure_depth_shift": "min_depth"}
+_MEASURE_OPERATORS = {   # operator -> (applies to the measure, facet member of the measure cube)
+    "measure_filter_drop": (lambda m: bool(m.filter), "value"),
+    "measure_normalization_drop": (lambda m: bool(m.filter_normalized), "value"),
+    "measure_agg_to_max": (lambda m: m.agg in ("sum", "count"), "value"),
+    "dated_shift_one_day": (lambda m: bool(m.date_column), "ts"),
+    "closure_join_swap": (lambda m: bool(m.closure_join), ""),
+}
+
+
+@dataclass(frozen=True)
+class Facet:
+    """kind member: compared when `member` is compared; cube: any member of `cube`; join: a member of `cube` together
+    with `member` (the measure value). `cubes` must all be in the model, otherwise the facet's reason is not_in_model.
+    Rows count as holding values through `member` (member, join) or any compared member of `cube` (cube)."""
+    element: str
+    id: str
+    kind: str
+    cube: str
+    member: str
+    cubes: tuple
+
+    def compared(self, members) -> bool:
+        cubes = {m.split(".", 1)[0] for m in members}
+        if self.kind == "member":
+            return self.member in members
+        if self.kind == "cube":
+            return self.cube in cubes
+        return self.cube in cubes and self.member in members
+
+    def value_members(self, members) -> list:
+        """The members whose value_rows tell whether compared rows held a value of this facet."""
+        if self.kind == "cube":
+            return sorted(m for m in members if m.split(".", 1)[0] == self.cube)
+        return [self.member] if self.member in members else []
+
+
+def _measure_cube(m: str) -> str:
+    return f"m_{m}"
+
+
+def _closure(h: str) -> str:
+    return f"{h}_closure"
+
+
+def _only_hierarchy(cfg) -> str:
+    return next(iter(cfg.hierarchies)) if len(cfg.hierarchies) == 1 else ""
+
+
+def facets(cfg, model: dict | None = None) -> list[Facet]:
+    """Every facet of the configuration, by element: measures, hierarchies, then ontology.class_column.
+
+    The class facets are `<entity>.<class_column>` for every entity cube of the model whose dimensions hold the class
+    column; without a model (configuration validation) for every entity."""
+    out = []
+    for m in cfg.measures.values():
+        el, mc = f"measures.{m.name}", _measure_cube(m.name)
+        value = f"{mc}.value"
+        out.append(Facet(el, value, "member", mc, value, (mc,)))
+        if m.date_column:
+            out.append(Facet(el, f"{mc}.ts", "member", mc, f"{mc}.ts", (mc,)))
+        h = _only_hierarchy(cfg)
+        if m.closure_join and h:
+            c = _closure(h)
+            out.append(Facet(el, f"{c}+{mc}", "join", c, value, (c, mc)))
+        node = cfg.entities.get(m.node) if m.node else None
+        if node is not None and not m.date_column and len(node.key) == 1:
+            out.append(Facet(el, f"{m.node}+{mc}", "join", m.node, value, (m.node, mc)))
+    for h in cfg.hierarchies:
+        el, c = f"hierarchies.{h}", _closure(h)
+        for name in ("qty", "path_count", "min_depth", "max_depth", "pairs"):
+            out.append(Facet(el, f"{c}.{name}", "member", c, f"{c}.{name}", (c,)))
+        for end in (f"{h}_ancestor", f"{h}_descendant"):
+            out.append(Facet(el, f"{end}.*", "cube", end, "", (end,)))
+    column = cfg.ontology.class_column
+    if column:
+        dims = None
+        if model is not None:
+            dims = {c.get("name"): {d.get("name") for d in c.get("dimensions", [])} for c in model.get("cubes", [])}
+        for e in cfg.entities:
+            if dims is None or column in dims.get(e, set()):
+                out.append(Facet(CLASS_ELEMENT, f"{e}.{column}", "member", e, f"{e}.{column}", (e,)))
+    return out
+
+
+def operator_targets(cfg) -> list[tuple[str, str]]:
+    """(operator, target) of every V4 mutant the configuration has when every operator is selected, in the order of
+    mutate's plan: hierarchy operators target each hierarchy, measure operators each measure they apply to."""
+    out = []
+    for op in MUTATION_OPERATORS:
+        if op in _MEASURE_OPERATORS:
+            applies = _MEASURE_OPERATORS[op][0]
+            out.extend((op, m.name) for m in cfg.measures.values() if applies(m))
+        else:
+            out.extend((op, h) for h in cfg.hierarchies)
+    return out
+
+
+def operator_facet(cfg, operator: str, target: str) -> str:
+    """The facet a V4 mutant changes, or "" for an unknown operator."""
+    if operator in _HIERARCHY_OPERATORS:
+        return f"{_closure(target)}.{_HIERARCHY_OPERATORS[operator]}"
+    if operator == "closure_end_swap":
+        return f"{target}_descendant.*"
+    if operator == "closure_join_swap":
+        return f"{_closure(_only_hierarchy(cfg))}+{_measure_cube(target)}"
+    if operator in _MEASURE_OPERATORS:
+        return f"{_measure_cube(target)}.{_MEASURE_OPERATORS[operator][1]}"
+    return ""
+
+
+def accepted_names(cfg) -> set[str]:
+    """What verify.accepted_gaps may name: elements (measures.<m>, hierarchies.<h>, ontology.class_column when set),
+    facets of the configuration, and V4 check ids of a known operator on a target it applies to."""
+    names = {f"measures.{m}" for m in cfg.measures} | {f"hierarchies.{h}" for h in cfg.hierarchies}
+    if cfg.ontology.class_column:
+        names.add(CLASS_ELEMENT)
+    names |= {f.id for f in facets(cfg)}
+    names |= {"v4:" + op + ":" + target for op, target in operator_targets(cfg)}
+    return names
+
+
 # ---- documentation ---------------------------------------------------------------------------------
 def pattern_text(pattern: tuple) -> str:
     return ":".join(pattern)

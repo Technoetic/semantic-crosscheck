@@ -66,9 +66,14 @@ class Result:
         return {"pass": EXIT_PASS, "fail": EXIT_FAIL, "not_run": EXIT_FAIL}.get(self.status, EXIT_FAIL)
 
     def to_dict(self) -> dict:
+        """The result file's content. `evidence` (what verify observed about its gold queries) is not a field: it is
+        written only when a stage set it, so the files of every other stage stay as they were."""
         d = asdict(self)
         d["schema_version"] = SCHEMA_VERSION
         d["status"] = self.status
+        evidence = getattr(self, "evidence", None)
+        if evidence is not None:
+            d["evidence"] = evidence
         return d
 
     def write(self, out_dir: str | Path) -> Path:

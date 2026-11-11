@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
 from pathlib import Path, PureWindowsPath
 
-from . import ident
+from . import evidence, ident
 from .result import EXIT_CONFIG, StageError
 
 AGGS = ("sum", "count", "min", "max")
@@ -229,6 +229,7 @@ class Verify:
     pair_key_budget: int = PAIR_KEY_CAP   # keys a V3 pair test may compare in full, in chunks of PAIR_KEY_CAP
     shacl_pairs: bool = False      # opt-in: compare sql_violation t.<a> <op> t.<b> with SHACL property pairs
     existence_witness: bool = False       # opt-in v3w:pair_witness checks of sampled and chunked pair tests
+    accepted_gaps: list = field(default_factory=list)   # elements, facets or V4 check ids with known gaps (evidence)
 
 
 @dataclass
@@ -737,4 +738,18 @@ def _parse(text: str, p: Path) -> Config:
                 ident.check(pname)
         gg.expect = _expect_cases(ref, gg, expects)
         cfg.gold.append(gg)
+    _accepted_gaps(cfg)
     return cfg
+
+
+def _accepted_gaps(cfg: Config):
+    """verify.accepted_gaps names elements, facets or V4 checks of this configuration (evidence.accepted_names). The
+    message gives the position of a bad entry, never the entry."""
+    gaps = cfg.verify.accepted_gaps
+    if not isinstance(gaps, list) or not all(isinstance(g, str) for g in gaps):
+        _err("verify.accepted_gaps", "must be a list of strings")
+    known = evidence.accepted_names(cfg)
+    for i, g in enumerate(gaps):
+        if g not in known:
+            _err(f"verify.accepted_gaps[{i}]", "names no measure, hierarchy, ontology.class_column, facet or V4 check "
+                                               "(operator and target) of this configuration")

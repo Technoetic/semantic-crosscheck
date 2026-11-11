@@ -23,6 +23,7 @@ never kept.
 import http.client
 import json
 import re
+from decimal import Decimal
 
 from . import canon, db
 from .cube_client import CubeError, CubeResponseError
@@ -146,11 +147,26 @@ def _index(rows: list[dict], key: list, types: dict) -> tuple[dict, int]:
     return idx, len(dups)
 
 
+def has_value(v) -> bool:
+    """Whether a gold value holds something: not NULL, not numerically 0, not an empty string (a boolean is a value)."""
+    if v is None:
+        return False
+    if isinstance(v, bool):
+        return True
+    if isinstance(v, (int, float, Decimal)):
+        return v != 0
+    if isinstance(v, str):
+        return v != ""
+    return True
+
+
 def compare_rows(gold, g_rows: list[dict], c_rows: list[dict], types: dict | None = None) -> dict:
     """Strict comparison of gold rows with Cube rows (already renamed to gold columns). Counts only.
 
     types maps gold columns to the Cube member type of their member (gold_kinds); a column without one, or every
-    column when types is None, is compared untyped."""
+    column when types is None, is compared untyped. value_rows counts, per gold column, the matched rows whose gold
+    value holds something (has_value): rows can be compared while no value of a measure was seen, because a Cube NULL
+    counts as 0 under zero_if_null and gold SQL usually coalesces. verify keeps it out of check details."""
     types = types or {}
     cols = list(gold.map)
     zero = [c for c in gold.zero_if_null if c in gold.map]
@@ -166,6 +182,7 @@ def compare_rows(gold, g_rows: list[dict], c_rows: list[dict], types: dict | Non
     g_idx, g_dup = _index(g_rows, gold.key, types)
     c_idx, c_dup = _index(cube, gold.key, types)
     mismatched: dict[str, int] = {}
+    values = dict.fromkeys(cols, 0)
     matched = 0
     for k, g in g_idx.items():
         c = c_idx.get(k)
@@ -175,6 +192,8 @@ def compare_rows(gold, g_rows: list[dict], c_rows: list[dict], types: dict | Non
         for col in cols:
             if not canon.same(g.get(col), c.get(col), types.get(col)):
                 mismatched[col] = mismatched.get(col, 0) + 1
+            if has_value(g.get(col)):
+                values[col] += 1
     missing = sum(1 for k in g_idx if k not in c_idx)
     extra = sum(1 for k in c_idx if k not in g_idx)
     absent = sorted(col for col in cols if g_rows and col not in g_rows[0])
@@ -190,6 +209,7 @@ def compare_rows(gold, g_rows: list[dict], c_rows: list[dict], types: dict | Non
         "mismatched_columns": mismatched,
         "empty": not g_rows and not c_rows,
         "declared_null_as_zero": declared,
+        "value_rows": values,
     }
     if absent:
         out["gold_columns_missing"] = absent

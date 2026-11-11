@@ -42,19 +42,112 @@ failed: the missing items might have killed it.
 (reason excluded_by_only) and every gold query --gold leaves out a not_run check scope:gold:<id> (reason
 excluded_by_gold), so a narrowed run never passes.
 
+Evidence (the `evidence` key of verify/result.json; no other stage writes it; statuses do not change): at plan time
+each gold file is read once and matched for generated text (generated_text: the output schema as a qualifier, the bare
+name of a generated relation, a verbatim measure filter clause); a match makes the gold's kind generated, and a
+not_proven line names what matched. Per gold query verify counts the V1/V2 comparisons that ran, those with a row on
+either side and, per compared member (gold.map, not filters, time dimensions or segments), the matched rows whose gold
+value is not NULL, 0 or empty (value_rows, kept out of check details); a gold query whose every comparison had no row
+gets a not_proven line, and every V1/V2 check that compared no row is listed. Only on full-scope runs (every part, no
+--gold) is every facet of a measure, hierarchy and the class column judged: compared with rows holding values by an
+authored gold query, detected by an authored V4 kill, accepted by verify.accepted_gaps, or a gap with its reason, and
+every element with a gap or an accepted gap gets one not_proven line.
+
 Results hold counts, check ids and positions in the deterministic binding order, never parameter values or rows.
 """
 
 import contextlib
+import re
 from pathlib import Path
 from typing import Callable
 
-from . import closure_oracle, compare, cube_gen, cube_run, db, mutate, mutation_coverage, naming, shape_q, sweep
+from . import (closure_oracle, compare, cube_gen, cube_run, data_rules, db, evidence, mutate, mutation_coverage, naming,
+               shape_q, sweep)
 from .result import EXIT_CONFIG, Check, Result, StageError, check_status, require_stage
 
 PARTS = ("v1", "v2", "v3", "v4")
 MAX_INDEXES = 10
+MAX_LISTED = 10                    # ids named in one evidence line; the rest are counted
+EVIDENCE_SCHEMA = 1
 _SUMS = ("missing_in_cube", "extra_in_cube", "duplicate_keys_gold", "duplicate_keys_cube", "declared_null_as_zero")
+_SPACE = re.compile(r"\s+")
+_RULE_VIEW = re.compile(r'(?<![A-Za-z0-9_."])"?(' + re.escape(data_rules.VIEW_PREFIX)
+                        + r'[a-z0-9_]{1,56})"?(?![A-Za-z0-9_])', re.IGNORECASE)
+
+
+# ---- generated text in gold SQL ------------------------------------------------------------------------
+def gold_text(raw: str) -> str:
+    """Gold SQL as it is matched for generated text: comments (-- to the end of the line, /* */, nested) removed outside
+    quoted literals and identifiers, whitespace runs collapsed to one space. No other normalisation."""
+    out, i, n, quote = [], 0, len(raw), ""
+    while i < n:
+        ch = raw[i]
+        if quote:
+            out.append(ch)
+            quote = "" if ch == quote else quote
+            i += 1
+        elif ch in "'\"":
+            out.append(ch)
+            quote = ch
+            i += 1
+        elif raw.startswith("--", i):
+            end = raw.find("\n", i)
+            i = n if end < 0 else end
+            out.append(" ")
+        elif raw.startswith("/*", i):
+            depth, i = 1, i + 2
+            while i < n and depth:
+                if raw.startswith("/*", i):
+                    depth, i = depth + 1, i + 2
+                elif raw.startswith("*/", i):
+                    depth, i = depth - 1, i + 2
+                else:
+                    i += 1
+            out.append(" ")
+        else:
+            out.append(ch)
+            i += 1
+    return _SPACE.sub(" ", "".join(out))
+
+
+def _relation(name: str) -> re.Pattern:
+    return re.compile(r'(?<![A-Za-z0-9_."])"?' + re.escape(name) + r'"?(?![A-Za-z0-9_])', re.IGNORECASE)
+
+
+def generated_text(cfg, sql: str) -> list[str]:
+    """What of the generated layers a gold SQL text contains verbatim, matched in its gold_text form, in this order:
+
+      output_schema           the output schema as a qualifier ("sxc_out".x, sxc_out . x)
+      relation:<name>         the bare name of a generated relation: <h>_closure and <h>_cycles of every hierarchy,
+                              v_shape_<id> of every shape, any v_rule_<id> and v_rules_subjects (gold SQL runs with the
+                              connection's own search_path, so a gold can read them without naming the schema)
+      filter:measures.<m>     a filter clause of cube_gen.where_clauses(m) after the first (the non-null grain clause
+                              is too common to count)
+
+    Paraphrased copies are not found. A source table or CTE named like a generated relation is also found; that only
+    lowers the kind of the gold query."""
+    text = gold_text(sql)
+    found = []
+    schema = re.compile(r'(?<![A-Za-z0-9_"])"?' + re.escape(cfg.source.output_schema) + r'"?\s*\.', re.IGNORECASE)
+    if schema.search(text):
+        found.append("output_schema")
+    names = [n for h in cfg.hierarchies for n in (naming.closure_table(cfg, h).split(".", 1)[1],
+                                                 naming.cycles_table(cfg, h).split(".", 1)[1])]
+    names += [naming.shape_view(cfg, s.id).split(".", 1)[1] for s in cfg.shapes]
+    found += [f"relation:{n}" for n in names if _relation(n).search(text)]
+    found += [f"relation:{n}" for n in sorted({m.group(1).lower() for m in _RULE_VIEW.finditer(text)})]
+    if _relation(data_rules.SUBJECTS_VIEW).search(text):
+        found.append(f"relation:{data_rules.SUBJECTS_VIEW}")
+    for m in cfg.measures.values():
+        if any(_SPACE.sub(" ", clause) in text for clause in cube_gen.where_clauses(m)[1:]):
+            found.append(f"filter:measures.{m.name}")
+    return list(dict.fromkeys(found))
+
+
+def _cut(ids: list) -> str:
+    """Ids for a line: at most MAX_LISTED, then how many more."""
+    text = ", ".join(ids[:MAX_LISTED])
+    return text + (f", and {len(ids) - MAX_LISTED} more" if len(ids) > MAX_LISTED else "")
 
 
 def run(cfg, args, out: Path) -> Result:
@@ -71,6 +164,7 @@ def run(cfg, args, out: Path) -> Result:
     finally:
         conn.close()
     v.scope()
+    v.res.evidence = v.evidence_object()
     v.res.next_safe_action = _next_action(v.res)
     return v.res
 
@@ -129,7 +223,8 @@ def _by_stratum(bindings: list) -> dict[str, list]:
 
 
 def _detail(r: dict) -> dict:
-    return {k: v for k, v in r.items() if k != "pass"}
+    """A comparison as a check detail: without its verdict and its value_rows (kept for the evidence object)."""
+    return {k: v for k, v in r.items() if k not in ("pass", "value_rows")}
 
 
 def mutation_suite(items: list) -> Callable:
@@ -157,6 +252,7 @@ class _Sweep:
         self.errors: dict[str, int] = {}
         self.sqlstates: dict[str, int] = {}
         self.failed_indexes: list[int] = []
+        self.value_rows: dict[str, int] = {}   # per gold column, summed for the evidence object (not in detail())
 
     def add(self, j: int, r: dict):
         self.bindings += 1
@@ -166,6 +262,8 @@ class _Sweep:
             self.sums[k] += r.get(k, 0)
         for col, n in r.get("mismatched_columns", {}).items():
             self.mismatched[col] = self.mismatched.get(col, 0) + n
+        for col, n in r.get("value_rows", {}).items():
+            self.value_rows[col] = self.value_rows.get(col, 0) + n
         if r["pass"]:
             return
         self.failed += 1
@@ -207,6 +305,13 @@ class _Verify:
         self.suite_tests: list[dict] = []                # V3 tests in the V4 suite
         # why suite items are missing (a survivor of an incomplete suite is not judged)
         self.excluded: set[str] = {"excluded_by_gold"} if len(self.golds) < len(cfg.gold) else set()
+        # evidence: facets are judged only when every part ran over every gold query
+        self.mode = "disclose"
+        self.full = set(only) == set(PARTS) and len(self.golds) == len(cfg.gold)
+        self.gold_kinds: dict[str, str] = {}             # gold id -> authored | generated (stored at plan time)
+        self.gold_found: dict[str, list[str]] = {}       # gold id -> generated_text matches
+        self.counts: dict[str, dict] = {}                # gold id -> comparisons per part and value_rows per member
+        self.facet_rows: list[dict] | None = None
 
     # ---- planning (database only, before Cube starts) ---------------------------------------------
     def gate(self, members) -> tuple[str, str] | None:
@@ -217,7 +322,33 @@ class _Verify:
                 return h, st or "missing"
         return None
 
+    def note_gold(self, g):
+        """Read the gold file once (the file inputs_fingerprint hashes) and store the gold's kind: generated when its
+        text contains generated text, else authored. Only the matches are kept, never the text. A file that cannot be
+        read is not flagged; its comparisons error as before."""
+        try:
+            raw = g.sql_path(self.cfg).read_text(encoding="utf-8-sig")
+        except (OSError, UnicodeError):
+            raw = None
+        found = generated_text(self.cfg, raw) if raw is not None else []
+        self.gold_found[g.id] = found
+        self.gold_kinds[g.id] = "generated" if found else "authored"
+        self.counts[g.id] = {"v1": [0, 0], "v2": [0, 0], "value_rows": dict.fromkeys(sorted(set(g.map.values())), 0)}
+
+    def _count(self, g, part: str, comparisons: int, nonempty: int, value_rows: dict):
+        """Comparisons that ran without error, those with a row on either side, and value_rows per compared member."""
+        c = self.counts.get(g.id)
+        if c is None:
+            return
+        c[part][0] += comparisons
+        c[part][1] += nonempty
+        for col, n in value_rows.items():
+            member = g.map.get(col)
+            if member is not None:
+                c["value_rows"][member] = c["value_rows"].get(member, 0) + n
+
     def plan_gold(self, conn, i: int, g) -> dict:
+        self.note_gold(g)
         members = _members(g)
         plan = {"gold": g, "ref": f"gold[{i}] {g.id}", "bindings": [], "gate": self.gate(members), "problem": None,
                 "types": compare.gold_kinds(g, self.kinds)}
@@ -301,8 +432,10 @@ class _Verify:
                 for iid, _cid, fn in self.items:
                     if iid not in self.baseline:
                         self.baseline[iid] = fn(client)
+        self.gold_evidence()
         if "v4" in self.only:
             self.v4(conn)
+        self.facets()
 
     def closure_oracles(self, conn):
         """Raw-edge expected closures are database checks, so finish their snapshots before Cube starts."""
@@ -364,6 +497,8 @@ class _Verify:
         r = compare.run_binding(conn, client, self.cfg, g, first[1], cache=self.cache, types=plan["types"])
         self.baseline[cid] = compare.status(r)
         self.res.add(cid, compare.status(r), ref, stratum=first[0], **_detail(r))
+        if "error" not in r:
+            self._count(g, "v1", 1, 0 if r.get("empty") else 1, r.get("value_rows", {}))
 
     def v2(self, conn, client, plan: dict):
         g, ref = plan["gold"], plan["ref"]
@@ -385,6 +520,8 @@ class _Verify:
                     self.baseline[f"{cid}[{j}]"] = compare.status(r)
                 agg.add(j, r)
             self.res.add(cid, agg.status(), ref, **agg.detail())
+            ran = agg.bindings - agg.errored
+            self._count(g, "v2", ran, ran - agg.empty, agg.value_rows)
 
     def v3(self, conn, client, t: dict, gate: tuple | None):
         cid = f"v3:{t['id']}"
@@ -470,6 +607,145 @@ class _Verify:
         if partial:
             self.res.not_proven.append(f"v4: the suite's pair tests compare a sample of their keys ({', '.join(partial)}), "
                                        "so a mutant that changes only other keys can survive them")
+
+    # ---- evidence --------------------------------------------------------------------------------
+    def _ran(self, gid: str) -> tuple[int, int]:
+        """(comparisons that ran without error, those with a row on either side) of a gold query, V1 and V2 together."""
+        c = self.counts.get(gid, {"v1": [0, 0], "v2": [0, 0]})
+        return c["v1"][0] + c["v2"][0], c["v1"][1] + c["v2"][1]
+
+    def gold_evidence(self):
+        """not_proven lines of the gold queries: generated text in the gold SQL, and every comparison without a row."""
+        for _i, g in self.golds:
+            found = self.gold_found.get(g.id, [])
+            tail = f"v1:{g.id} and v2:{g.id}:* count as generated evidence, not authored"
+            if "output_schema" in found:
+                self.res.not_proven.append(f"gold:{g.id}: the gold SQL names the output schema "
+                                           f"{self.cfg.source.output_schema}; {tail}")
+            relations = [x.split(":", 1)[1] for x in found if x.startswith("relation:")]
+            if relations:
+                self.res.not_proven.append(f"gold:{g.id}: the gold SQL names the generated relation "
+                                           f"{_cut(relations)}; {tail}")
+            refs = [x.split(":", 1)[1] for x in found if x.startswith("filter:")]
+            if refs:
+                self.res.not_proven.append(f"gold:{g.id}: the gold SQL contains the generated filter of {_cut(refs)} "
+                                           f"verbatim; {tail}")
+            n, nonempty = self._ran(g.id)
+            if n and not nonempty:
+                c = self.counts[g.id]
+                parts = ([f"v1:{g.id}"] if c["v1"][0] else []) + ([f"v2:{g.id}:*"] if c["v2"][0] else [])
+                self.res.not_proven.append(f"gold:{g.id}: every comparison that ran ({n}) had zero rows on both sides; "
+                                           f"{' and '.join(parts)} pass without comparing any row; add a binding, "
+                                           "stratum or parameter set with rows")
+
+    def _detections(self) -> dict[str, list[str]]:
+        """facet -> the V4 checks on it whose mutant an authored gold item detected."""
+        out: dict[str, list[str]] = {}
+        for c in self.res.checks:
+            parts = c.id.split(":")
+            if len(parts) == 3 and parts[0] == "v4" and c.detail.get("detection") == "authored":
+                out.setdefault(evidence.operator_facet(self.cfg, parts[1], parts[2]), []).append(c.id)
+        return out
+
+    def _judge_facet(self, f, compares: dict, uses: dict, detected: dict, cubes: set) -> tuple[dict, list]:
+        """One facet row of the evidence object, and the gold ids its gap line names."""
+        golds = [g.id for _i, g in self.golds]
+        comparing = [gid for gid in golds if f.compared(compares[gid])]
+        using = [gid for gid in golds if gid not in comparing and f.compared(uses[gid])]
+        authored = [gid for gid in comparing if self.gold_kinds.get(gid) == "authored"]
+        ran = [gid for gid in authored if self._ran(gid)[0]]
+        with_rows = [gid for gid in ran if self._ran(gid)[1]]
+        with_values = [gid for gid in with_rows
+                       if any(self.counts[gid]["value_rows"].get(m, 0) > 0 for m in f.value_members(compares[gid]))]
+        accepted = set(self.cfg.verify.accepted_gaps)
+        status, reason, named = "gap", "", []
+        generated = [gid for gid in comparing if gid not in authored]
+        if with_values:
+            status = "compared"
+        elif detected.get(f.id):
+            status = "detected"
+        elif f.id in accepted or f.element in accepted:
+            status = "accepted"
+        elif not set(f.cubes) <= cubes:
+            reason = "not_in_model"
+        elif with_rows:
+            reason, named = "no_values", authored
+        elif ran:
+            reason, named = "no_rows_compared", authored
+        elif authored:
+            reason, named = "gold_not_run", authored
+        elif generated:
+            reason, named = "generated_text", generated
+        elif any(self.gold_kinds.get(gid) == "authored" for gid in using):
+            reason, named = "filter_only", [gid for gid in using if self.gold_kinds.get(gid) == "authored"]
+        elif using:
+            reason, named = "generated_text", using
+        else:
+            reason = "no_gold_reads"
+        row = {"element": f.element, "facet": f.id, "status": status, "reason": reason, "compared_by": comparing,
+               "uses_only_by": using, "detected_by": detected.get(f.id, [])}
+        return row, named
+
+    def facets(self):
+        """Full-scope runs only: every facet of the configuration with its authored evidence or the reason there is
+        none, and one not_proven line per element with a gap (N4) and per element with accepted gaps (N4a)."""
+        if not self.full:
+            return
+        compares = {g.id: set(g.map.values()) for _i, g in self.golds}
+        uses = {g.id: _members(g) for _i, g in self.golds}
+        detected = self._detections()
+        cubes = {c.get("name") for c in self.model.get("cubes", [])}
+        judged = [self._judge_facet(f, compares, uses, detected, cubes) for f in evidence.facets(self.cfg, self.model)]
+        self.facet_rows = [row for row, _named in judged]
+        for element in dict.fromkeys(row["element"] for row in self.facet_rows):
+            gaps = [f"{row['facet']} ({row['reason']}" + (f": {_cut(named)}" if named else "") + ")"
+                    for row, named in judged if row["element"] == element and row["status"] == "gap"]
+            if gaps and self.mode == "disclose":
+                self.res.not_proven.append(f"{element}: no authored evidence for {_cut(gaps)}; only checks between "
+                                           "generated layers cover these facets; add a gold query, stratum or "
+                                           "parameter set that compares them, or list them in verify.accepted_gaps")
+            accepted = [row["facet"] for row in self.facet_rows
+                        if row["element"] == element and row["status"] == "accepted"]
+            if accepted:
+                self.res.not_proven.append(f"{element}: no authored evidence for {_cut(accepted)}; accepted by "
+                                           "verify.accepted_gaps, so this is not proven")
+
+    def _zero_row_checks(self) -> tuple[list[str], list[str]]:
+        """V1 and V2 checks that compared no row (V1 empty; V2 with every binding empty, or an empty stratum), those
+        of a stratum named `empty` (a node with no children, which many gold queries answer with no row) apart."""
+        zero, empty = [], []
+        for c in self.res.checks:
+            parts = c.id.split(":")
+            d = c.detail
+            if parts[0] == "v1" and len(parts) == 2 and d.get("empty") is True:
+                stratum = d.get("stratum", "")
+            elif parts[0] == "v2" and len(parts) == 3 and (
+                    d.get("empty_stratum") or (d.get("bindings", 0) > 0 and d.get("empty_bindings") == d["bindings"])):
+                stratum = parts[2]
+            else:
+                continue
+            (empty if stratum == "empty" else zero).append(c.id)
+        return zero, empty
+
+    def evidence_object(self) -> dict:
+        """The `evidence` key of verify/result.json: counts, ids and Cube member names only, never gold text, rows or
+        parameter values."""
+        gold = []
+        for _i, g in self.golds:
+            if g.id not in self.counts:
+                continue
+            compares = sorted(set(g.map.values()))
+            n, nonempty = self._ran(g.id)
+            gold.append({"id": g.id, "kind": self.gold_kinds[g.id], "generated_text": list(self.gold_found[g.id]),
+                         "compares": compares, "uses_only": sorted(_members(g) - set(compares)), "comparisons": n,
+                         "nonempty_comparisons": nonempty,
+                         "value_rows": dict(sorted(self.counts[g.id]["value_rows"].items()))})
+        zero, empty = self._zero_row_checks()
+        return {"schema_version": EVIDENCE_SCHEMA, "rule_version": evidence.RULE_VERSION, "mode": self.mode,
+                "scope": "full" if self.full else "narrowed", "gold": gold,
+                "facets": self.facet_rows if self.full else None, "facets_reason": "" if self.full else "narrowed",
+                "zero_row_checks": zero, "empty_stratum_zero_row_checks": empty,
+                "gold_no_rows": [x["id"] for x in gold if x["comparisons"] and not x["nonempty_comparisons"]]}
 
 
 # ---- next action -------------------------------------------------------------------------------------

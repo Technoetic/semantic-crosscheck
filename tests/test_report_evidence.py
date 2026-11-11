@@ -25,7 +25,7 @@ import pgfixture
 import sxc
 from semantic_crosscheck import config, evidence, report
 from semantic_crosscheck.result import Result, inputs_fingerprint
-from test_verify_evidence import SECRET_PARAM, SECRET_ROW, SECRET_TEXT, VerifyRun
+from test_verify_evidence import SECRET_PARAM, SECRET_ROW, SECRET_RULE_VIEW, SECRET_TEXT, MutantRun, VerifyRun
 
 DEMO_CONFIG = pgfixture.DEMO_CONFIG
 DEMO_INPUTS = inputs_fingerprint(config.load(DEMO_CONFIG))
@@ -289,7 +289,11 @@ class SectionAndLinesTest(ReportOutputs):
             "gold_no_rows": ["q01_explosion"],
             "mutation": dict(split(survived=1, equivalent=1),
                              operators_selected=7, operators_not_selected=["closure_end_swap", "closure_join_swap"])}
-        write_pipeline(self.tmp, recorded(**changes))
+        # the V4 checks the split above follows from: one survivor (an equivalent mutant has no check)
+        checks = [c for c in VERIFY_CHECKS if not c[0].startswith("v4:")] + [
+            ("v4:suite", "pass", "", {}),
+            (QTY, "fail", "hierarchies.has_component", {"killed_by": "", "detection": "none"})]
+        write_pipeline(self.tmp, recorded(**changes), verify_checks=checks)
         js, _md, lines, console = self.outputs()
         ev = js["evidence"]
         self.assertEqual(ev["kinds"]["authored"]["ids"], {"verify": ["v1:q01_explosion", "v2:q01_explosion:top",
@@ -337,7 +341,12 @@ class SectionAndLinesTest(ReportOutputs):
         """A gold recorded authored with generated text, or with another kind, counts as generated and as overridden."""
         gold = [gold_entry("q01_explosion", "authored", ["relation:has_component_closure"]),
                 gold_entry("q02_where_used", "recomputed")]
-        write_pipeline(self.tmp, recorded(gold=gold))
+        # q01 counts as generated, so the kill by v1:q01_explosion is generated_only (a check that still says
+        # "authored" makes the whole observation unrecorded: SplitFollowsChecksTest)
+        checks = [c if c[0] != QTY else (QTY, "pass", c[2], {"killed_by": "v1:q01_explosion",
+                                                              "detection": "generated_only"}) for c in VERIFY_CHECKS]
+        mutation = split(killed_generated_only=2, generated_only=[QTY, AGG])
+        write_pipeline(self.tmp, recorded(gold=gold, mutation=mutation), verify_checks=checks)
         js, _md, lines, _console = self.outputs()
         kinds = js["evidence"]["kinds"]
         self.assertEqual((kinds["authored"]["pass"], kinds["authored"]["zero_row"], kinds["recomputed"]["pass"]),
@@ -443,7 +452,8 @@ class SummariseTest(unittest.TestCase):
         """The summarise half of 8.1 no_default_row: no rule -> unclassified, whatever the gold kinds say."""
         checks = [{"id": "w9:x", "status": "pass"}, {"id": "v1:g", "status": "pass"}, {"id": "v1:q", "status": "pass"},
                   {"id": "v3w:x", "status": "pass"}, {"id": 7, "status": "pass"}, {"id": "v4:op", "status": "odd"}]
-        obs = recorded(gold=[gold_entry("q")], zero_row_checks=["w9:x", "v1:g"], empty_stratum_zero_row_checks=[])
+        obs = recorded(gold=[gold_entry("q")], zero_row_checks=["w9:x", "v1:g"], empty_stratum_zero_row_checks=[],
+                       mutation=split())
         ev = evidence.summarise({"verify": checks, "counterexample": [{"id": "stage", "status": "pass"}]}, [], checks,
                                 obs)
         kinds = ev["kinds"]
@@ -456,12 +466,153 @@ class SummariseTest(unittest.TestCase):
         self.assertEqual(kinds["generated"]["ids"], {"verify": ["v3w:x"]})
 
 
+FORGED = "x\n  EVIDENCE  facets: 17 of 17 compared"
+
+
+def checks_of(rows) -> list:
+    """Check dictionaries as a verify result.json holds them."""
+    return [{"id": cid, "status": status, "config_ref": ref, "detail": detail} for cid, status, ref, detail in rows]
+
+
+class ObservationValuesTest(unittest.TestCase):
+    """report copies ids, reason codes and operator names from verify's evidence object into report.json, report.md and
+    its console. A value outside its closed set, or an id with a character other than [A-Za-z0-9_.:*+[]-] (a space,
+    a line break), makes the whole observation unrecorded, so nothing of it is printed."""
+    CHECKS = checks_of(VERIFY_CHECKS)
+
+    def ev(self, rec) -> dict:
+        return evidence.summarise({"verify": self.CHECKS}, [], self.CHECKS, rec)
+
+    def test_values_outside_the_closed_sets(self):
+        self.assertTrue(self.ev(recorded())["observation_recorded"])
+        on_hand = "measures.on_hand"
+        bad = {
+            "unknown gap reason": {"facets": [facet_row(on_hand, "m_on_hand.value", "gap", "rows: SECRET-ROW")]},
+            "reason of a facet that is no gap": {"facets": [facet_row(on_hand, "m_on_hand.value", "compared",
+                                                                      "no_values")]},
+            "line break in a reason": {"facets": [facet_row(on_hand, "m_on_hand.value", "gap", FORGED)]},
+            "line break in a facet id": {"facets": [facet_row(on_hand, FORGED, "gap", "no_gold_reads")]},
+            "row value as a facet id": {"facets": [facet_row(on_hand, "P-123456 customer", "compared")]},
+            "line break in a gold id": {"gold": [gold_entry("q01_explosion"), gold_entry("q\n  EVIDENCE  forged")]},
+            "line break in an id list": {"gold_no_rows": ["q\n  NOT PROVEN  forged"]},
+            "row value in an id list": {"zero_row_checks": ["P-123456 customer"]},
+            "unknown operator": {"mutation": dict(recorded()["mutation"], operators_selected=8,
+                                                  operators_not_selected=["SECRET-ROW"])},
+            "operator named twice": {"mutation": dict(recorded()["mutation"], operators_selected=7,
+                                                      operators_not_selected=["closure_end_swap"] * 2)},
+            "operators that do not add up": {"mutation": dict(recorded()["mutation"],
+                                                              operators_not_selected=["closure_end_swap"])},
+            "line break in generated_only": {"mutation": split(killed_authored=1, killed_generated_only=1,
+                                                               generated_only=[AGG + "\n  EVIDENCE  forged"])},
+        }
+        for name, change in bad.items():
+            with self.subTest(name):
+                ev = self.ev(recorded(**change))
+                self.assertFalse(ev["observation_recorded"])
+                self.assertEqual((ev["mutation_reason"], ev["facets_reason"]), ("not_recorded", "not_recorded"))
+                text = evidence.console_lines(ev) + evidence.render_md(ev)
+                self.assertFalse(any("\n" in line or "\r" in line for line in text), text)
+                for secret in ("SECRET", "P-123456", "forged", "17 of 17"):
+                    self.assertNotIn(secret, json.dumps(ev) + "\n".join(text), secret)
+
+    def test_report_console_has_no_forged_line(self):
+        """End to end: a verify result whose facet id carries a line break prints no extra console line."""
+        tmp = Path(tempfile.mkdtemp(prefix="sxc_t_report_values_"))
+        self.addCleanup(shutil.rmtree, tmp, True)
+        write_pipeline(tmp, recorded(facets=[facet_row("measures.on_hand", FORGED, "gap", "no_gold_reads")]))
+        _code, console = run_report(tmp)
+        self.assertNotIn("17 of 17", console)
+        self.assertTrue(all(line.startswith("  EVIDENCE  ") for line in evidence_lines(console)))
+        self.assertIn("observation not recorded", evidence_lines(console)[-1])
+
+
+class SplitFollowsChecksTest(unittest.TestCase):
+    """report shows verify's mutant split only when it follows from the V4 checks of the same result: an authored
+    detection whose killer is no authored gold item (v4_violations), or buckets that do not add up to the V4 mutant
+    checks, make the observation unrecorded, so report.md never prints an authored detection the checks do not show."""
+
+    @staticmethod
+    def ev(rows, mutation, **changes) -> dict:
+        checks = checks_of(rows)
+        return evidence.summarise({"verify": checks}, [], checks, recorded(mutation=mutation, **changes))
+
+    def test_consistent_splits_are_recorded(self):
+        base = [c for c in VERIFY_CHECKS if not c[0].startswith("v4:")] + [("v4:suite", "pass", "", {})]
+        firm = "v4:measure_agg_to_max:firm_open"
+        rows = base + [
+            (QTY, "pass", "", {"killed_by": "v1:q01_explosion", "detection": "authored"}),
+            (AGG, "fail", "", {"killed_by": "v3:total:m_on_hand.value", "detection": "generated_only",
+                               "reason": "generated_only"}),
+            (firm, "pass", "", {"killed_by": "v3:total:m_firm_open.value", "detection": "generated_only"}),
+            ("v4:measure_agg_to_max:consigned", "pass", "", {"killed_by": "w9:x", "detection": "unattributed"}),
+            ("v4:measure_filter_drop:on_hand", "fail", "", {"killed_by": "", "detection": "none"}),
+            ("v4:measure_filter_drop:firm_open", "not_run", "", {"reason": "suite_incomplete"}),
+            ("v4:dated_shift_one_day:firm_open_dated", "error", "", {"reason": "suite_error"})]
+        mutation = split(killed_authored=1, killed_generated_only=1, accepted=1, unattributed=1, survived=1,
+                         not_judged=3, equivalent=2, generated_only=[AGG])
+        ev = self.ev(rows, mutation)
+        self.assertTrue(ev["observation_recorded"])
+        self.assertEqual(ev["mutation"], mutation)
+
+    def test_splits_that_do_not_follow_are_not_recorded(self):
+        rows = [c for c in VERIFY_CHECKS if not c[0].startswith("v4:")]
+        v3_kill = (AGG, "pass", "", {"killed_by": "v3:total:m_on_hand.value", "detection": "authored"})
+        authored = (QTY, "pass", "", {"killed_by": "v1:q01_explosion", "detection": "authored"})
+        generated = (AGG, "pass", "", {"killed_by": "v3:total:m_on_hand.value", "detection": "generated_only"})
+        survivor = (AGG, "fail", "", {"killed_by": "", "detection": "none"})
+        cases = {
+            "a v3 kill recorded as an authored detection": ([v3_kill], split(killed_authored=1)),
+            "authored kills without a V4 check": ([], split(killed_authored=10 ** 12)),
+            "more authored kills than checks": ([authored], split(killed_authored=2)),
+            "a survivor counted as a kill": ([survivor], split(killed_authored=1)),
+            "a kill counted as a survivor": ([authored], split(survived=1)),
+            "generated_only naming an authored kill": ([authored, generated],
+                                                       split(killed_authored=1, killed_generated_only=1,
+                                                             generated_only=[QTY])),
+            "generated_only naming one kill twice": ([authored, generated],
+                                                     split(killed_authored=1, killed_generated_only=2,
+                                                           generated_only=[AGG, AGG])),
+            "fewer not judged than unjudged checks": ([(AGG, "error", "", {"reason": "suite_error"})], split()),
+            "one V4 check twice": ([authored, authored], split(killed_authored=2)),
+        }
+        for name, (v4, mutation) in cases.items():
+            with self.subTest(name):
+                ev = self.ev(rows + v4, mutation)
+                self.assertFalse(ev["observation_recorded"])
+                self.assertEqual(ev["mutation_reason"], "not_recorded")
+                md = "\n".join(evidence.render_md(ev))
+                self.assertNotIn("with an authored detection", md)
+                self.assertIn("- Mutants: not judged (the verify result has no evidence section).", md)
+
+
+class RealSplitIsRecordedTest(MutantRun):
+    """Every split verify writes follows from its own V4 checks: report records it, in both modes, with kills of every
+    kind, an accepted kill and survivors."""
+
+    def test_real_splits_are_recorded(self):
+        answers = {"v1:q03_stock": lambda c: "fail" if c.endswith("firm_open") else "pass",
+                   "v3:total:x": lambda c: "pass" if c.endswith(("consigned", "on_hand")) else "fail",
+                   "w9:x": lambda c: "fail" if c.endswith("consigned") else "pass"}
+        for mode in ("disclose", "require"):
+            with self.subTest(mode=mode):
+                shutil.rmtree(self.out, ignore_errors=True)
+                self.cfg.verify.gold_observation = mode
+                self.cfg.verify.accepted_gaps = ["v4:measure_agg_to_max:firm_open_dated"]
+                v = self.attribute(answers)
+                checks = json.loads(json.dumps(v.res.to_dict()))["checks"]
+                ev = evidence.summarise({"verify": checks}, [], checks, v.res.to_dict()["evidence"])
+                self.assertTrue(ev["observation_recorded"], v.res.to_dict()["evidence"]["mutation"])
+                m = ev["mutation"]
+                self.assertEqual([m[b] for b in ("killed_authored", "unattributed", "accepted", "survived")],
+                                 [1, 1, 1, 1], m)
+
+
 class ReportPrivacyTest(VerifyRun):
     def test_privacy(self):
         """Row values, parameter values and gold text never reach report.json, report.md or the console, not even
         when a hand-edited verify result carries them in keys report does not read."""
-        self.gold_file("q03_stock", f"-- {SECRET_TEXT}\nSELECT '{SECRET_TEXT}' FROM sxc_demo.stock t WHERE "
-                                    "upper(btrim(t.\"location_id\")) IN ('MAIN', 'SUB')")
+        self.gold_file("q03_stock", f"-- {SECRET_TEXT}\nSELECT '{SECRET_TEXT}', '{SECRET_RULE_VIEW}' FROM "
+                                    "sxc_demo.stock t WHERE upper(btrim(t.\"location_id\")) IN ('MAIN', 'SUB')")
         self.bindings["q01_explosion"] = [(s, {"root": f"{SECRET_PARAM}-{s}"}) for s in
                                           ("top", "mid", "deep", "leaf_parent", "empty")]
         self.rows["q01_explosion"] = lambda p: [{"part_id": SECRET_ROW, "part_class": SECRET_ROW, "min_depth": 1,
@@ -495,7 +646,27 @@ class ReportPrivacyTest(VerifyRun):
             for secret in (SECRET_ROW, SECRET_PARAM, SECRET_TEXT, "location_id", "MAIN"):
                 self.assertNotIn(secret, text, f"{name}: {secret}")
             self.assertIsNone(re.search(r"P-\d{6}", text), name)
+            self.assertNotIn("customer_acme", text.lower(), name)
         self.assertNotIn("sxc_demo", texts["report.json evidence"] + texts["console"])
+        self.assertIn("relation:v_rule_*", json.dumps(data["evidence"]["gold"]))
+        # the same secrets in keys report reads: the observation is not recorded and none of them is printed
+        for key, edit in (("facet reason", lambda e: e["facets"][0].update(status="gap", reason=SECRET_ROW)),
+                          ("facet id", lambda e: e["facets"][0].update(facet=f"x\n{SECRET_ROW}")),
+                          ("gold id", lambda e: e["gold"][0].update(id=f"{SECRET_PARAM} P-000001")),
+                          ("id list", lambda e: e["gold_no_rows"].append(SECRET_ROW + " P-000001")),
+                          ("operators", lambda e: e["mutation"]["operators_not_selected"].append(SECRET_TEXT))):
+            with self.subTest(key=key):
+                edited = json.loads(json.dumps(data))
+                edit(edited["evidence"])
+                (out / "verify" / "result.json").write_text(json.dumps(edited), encoding="utf-8")
+                _code, console = run_report(out, config_file=self.tmp / "crosscheck.toml")
+                js = json.loads((out / "report.json").read_text(encoding="utf-8"))
+                self.assertFalse(js["evidence"]["observation_recorded"])
+                for text in (json.dumps(js["evidence"], ensure_ascii=False), console,
+                             (out / "report.md").read_text(encoding="utf-8")):
+                    for secret in (SECRET_ROW, SECRET_PARAM, SECRET_TEXT):
+                        self.assertNotIn(secret, text, secret)
+                    self.assertIsNone(re.search(r"P-\d{6}", text))
 
 
 if __name__ == "__main__":

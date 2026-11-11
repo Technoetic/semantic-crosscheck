@@ -338,7 +338,7 @@ def _filter_values(ref: str, flt: dict, normalized: bool):
 
 
 def _member(ref: str, m) -> str:
-    if not isinstance(m, str) or not _MEMBER.match(m):
+    if not isinstance(m, str) or not _MEMBER.fullmatch(m):
         _err(ref, f"bad Cube member {m!r} (use cube.member)")
     return m
 

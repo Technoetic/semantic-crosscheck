@@ -50,6 +50,7 @@ N4_TAIL = ("; only checks between generated layers cover these facets; add a gol
            "that compares them, or list them in verify.accepted_gaps")
 GENERATED_TAIL = "count as generated evidence, not authored"
 SECRET_ROW, SECRET_PARAM, SECRET_TEXT = "SECRET-ROW-VALUE", "SECRET-PARAM-VALUE", "SECRET-GOLD-TEXT"
+SECRET_RULE_VIEW = "V_RULE_Customer_ACME_4711"   # a literal shaped like a rule view name: matched, never copied
 
 
 class VerifyRun(unittest.TestCase):
@@ -219,6 +220,24 @@ class GoldAccountingTest(VerifyRun):
         self.assertTrue(all(n.startswith(("measures.", "hierarchies.", "ontology.")) for n in lines[-4:]),
                         "facet lines come last")
 
+    def test_generated_text_comes_before_filter_only(self):
+        """A facet that a generated gold compares while an authored gold uses it only in a filter: generated_text,
+        naming the generated gold (3.3 order: a generated gold that compares the facet comes before filter_only)."""
+        self.gold_file("q03_stock", "SELECT t.part_id FROM sxc_demo.stock t WHERE " + ON_HAND)
+        q05 = next(g for g in self.cfg.gold if g.id == "q05_firm_window")
+        q05.cube_query.setdefault("filters", []).append(
+            {"member": "m_on_hand.value", "operator": "gt", "values": ["0"]})
+        res = self.verify()
+        self.assertEqual(self.gold(res, "q03_stock")["kind"], "generated")
+        self.assertEqual(self.gold(res, "q05_firm_window")["kind"], "authored")
+        self.assertEqual(self.facet(res, "m_on_hand.value"),
+                         {"element": "measures.on_hand", "facet": "m_on_hand.value", "status": "gap",
+                          "reason": "generated_text", "compared_by": ["q03_stock"], "uses_only_by": ["q05_firm_window"],
+                          "detected_by": []})
+        self.assertEqual(self.lines(res, "measures.on_hand:"), [
+            "measures.on_hand: no authored evidence for m_on_hand.value (generated_text: q03_stock), part+m_on_hand "
+            "(generated_text: q03_stock)" + N4_TAIL])
+
 
 class FacetTest(VerifyRun):
     def test_facet_set(self):
@@ -246,6 +265,27 @@ class FacetTest(VerifyRun):
             self.assertEqual(self.status(res, fid), ("gap", "not_in_model"), fid)
         self.assertEqual(self.status(res, "part+m_firm_open"), ("gap", "no_gold_reads"))
         self.assertEqual(self.status(res, "part.part_class"), ("compared", ""))
+
+    def test_class_column_without_a_model_cube_is_a_gap(self):
+        """ontology.class_column is set but no entity cube of the model holds the column: one facet *.<column> with
+        reason not_in_model and its N4 line, so the element is named in disclose mode too (and counted by report)."""
+        model = self.write_stages()
+        for cube in model["cubes"]:
+            cube["dimensions"] = [d for d in cube.get("dimensions", []) if d.get("name") != "part_class"]
+        cube_gen.write_model(model, self.out / "cube" / "model")
+        self.assertEqual([(f.element, f.id, f.cubes) for f in evidence.facets(self.cfg, model)][-1],
+                         ("ontology.class_column", "*.part_class", ("*",)))
+        self.assertEqual([f.id for f in evidence.facets(self.cfg, model)][:-1], [f for _e, f in DEMO_FACETS][:-1])
+        res = self.verify()
+        self.assertEqual(self.facet(res, "*.part_class"),
+                         {"element": "ontology.class_column", "facet": "*.part_class", "status": "gap",
+                          "reason": "not_in_model", "compared_by": [], "uses_only_by": [], "detected_by": []})
+        self.assertIn("ontology.class_column: no authored evidence for *.part_class (not_in_model)" + N4_TAIL,
+                      res.not_proven)
+        shutil.rmtree(self.out / "verify", ignore_errors=True)
+        self.cfg.verify.accepted_gaps = ["ontology.class_column"]
+        res = self.verify()
+        self.assertEqual(self.status(res, "*.part_class"), ("accepted", ""))
 
     def test_clean_run_names_the_two_gaps(self):
         res = self.verify()
@@ -406,7 +446,8 @@ class EvidenceObjectTest(VerifyRun):
         self.assertNotIn("value_rows", json.dumps([c.detail for c in res.checks]), "check details stay as they were")
 
     def test_privacy(self):
-        self.gold_file("q03_stock", f"-- {SECRET_TEXT}\nSELECT '{SECRET_TEXT}' FROM sxc_demo.stock t WHERE " + ON_HAND)
+        self.gold_file("q03_stock", f"-- {SECRET_TEXT}\nSELECT '{SECRET_TEXT}', '{SECRET_RULE_VIEW}' FROM "
+                                    "sxc_demo.stock t WHERE " + ON_HAND)
         self.bindings["q01_explosion"] = [(s, {"root": f"{SECRET_PARAM}-{s}"}) for s in
                                           ("top", "mid", "deep", "leaf_parent", "empty")]
         self.rows["q01_explosion"] = lambda p: [{"part_id": SECRET_ROW, "part_class": SECRET_ROW, "min_depth": 1,
@@ -416,6 +457,9 @@ class EvidenceObjectTest(VerifyRun):
         text = json.dumps(res.to_dict(), ensure_ascii=False)
         for secret in (SECRET_ROW, SECRET_PARAM, SECRET_TEXT, "location_id", "sxc_demo", "MAIN"):
             self.assertNotIn(secret, text, secret)
+        self.assertNotIn("customer_acme", text.lower(), "a rule-view name in a literal is never copied")
+        self.assertEqual(self.gold(res, "q03_stock")["generated_text"],
+                         ["relation:v_rule_*", "filter:measures.on_hand"])
         self.assertIn("filter:measures.on_hand", text)
         self.assertIn('"gold_no_rows": ["q02_where_used"]', text)
 
@@ -766,6 +810,15 @@ class AttributionHelpersTest(unittest.TestCase):
             with self.subTest(killer=killer):
                 self.assertEqual(evidence.detection(killer, golds), want)
         self.assertEqual(evidence.DETECTIONS, ("authored", "generated_only", "unattributed", "none"))
+
+    def test_survivor_next_action(self):
+        """4.7: a survivor is a mutant no replayed suite item detected (gold items and V3 items alike)."""
+        res = Result("verify")
+        res.add(AGG_ON_HAND, "fail", "measures.on_hand", witness=4, killed_by="")
+        self.assertEqual(stage_verify._next_action(res),
+                         f"{AGG_ON_HAND} survived: no replayed suite item detects this kind of error in "
+                         "measures.on_hand; add a gold query, a mapped column or a stratum that would, then rerun "
+                         "verify (do not drop the operator)")
 
 
 if __name__ == "__main__":

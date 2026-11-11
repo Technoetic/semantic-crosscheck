@@ -11,7 +11,7 @@ whose message does not repeat the entry.
 import unittest
 
 import pgfixture
-from semantic_crosscheck import config
+from semantic_crosscheck import config, ident
 from semantic_crosscheck.result import EXIT_CONFIG, StageError
 
 DEMO = pgfixture.DEMO_CONFIG.read_bytes()
@@ -83,6 +83,32 @@ class GoldObservationTest(unittest.TestCase):
                 self.assertIn("verify.gold_observation", str(e.exception))
                 self.assertNotIn("SECRET-MODE", str(e.exception))
                 self.assertNotIn("strict", str(e.exception), "the value is not repeated")
+
+
+class TrailingLineBreakTest(unittest.TestCase):
+    """An identifier or Cube member ends at its last character. `$` also matches before a final line break, so
+    `q01\\n` used to pass ident.check and reach result lines (gold:{g}, gold_evidence:<element>, EVIDENCE) as a
+    broken line; it is now a configuration error (exit 2), as any other character outside the pattern is."""
+
+    def test_identifier_and_member(self):
+        for name in ("q01\n", "on_hand\n", "\n"):
+            with self.subTest(name=name), self.assertRaises(ident.IdentError):
+                ident.check(name)
+        self.assertEqual(ident.check("q01"), "q01")
+        with self.assertRaises(StageError):
+            config._member("gold", "part.part_id\n")
+        self.assertEqual(config._member("gold", "part.part_id"), "part.part_id")
+
+    def test_configuration_with_a_line_break_in_an_id(self):
+        escape = chr(92) + "n"   # TOML's escape for a line break inside a basic string
+        for old, new in (('id = "q01_explosion"', 'id = "q01_explosion' + escape + '"'),
+                         ('class_column = "part_class"', 'class_column = "part_class' + escape + '"')):
+            with self.subTest(entry=old):
+                raw = DEMO.replace(old.encode("utf-8"), new.encode("utf-8"), 1)
+                self.assertNotEqual(raw, DEMO)
+                with self.assertRaises(StageError) as e:
+                    config.loads(raw, pgfixture.DEMO_CONFIG)
+                self.assertEqual(e.exception.exit_code, EXIT_CONFIG)
 
 
 if __name__ == "__main__":

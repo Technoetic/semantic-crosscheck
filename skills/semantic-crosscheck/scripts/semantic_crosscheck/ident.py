@@ -11,7 +11,7 @@ class IdentError(ValueError):
 
 def check(name: str) -> str:
     """Return the name if it is a plain lower-case identifier, else raise."""
-    if not isinstance(name, str) or not _IDENT.match(name):
+    if not isinstance(name, str) or not _IDENT.fullmatch(name):
         raise IdentError(f"invalid identifier: {name!r} (use ^[a-z_][a-z0-9_]*$)")
     return name
 

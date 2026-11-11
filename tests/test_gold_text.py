@@ -60,7 +60,22 @@ class GoldTextTest(unittest.TestCase):
         self.assertEqual(self.found("SELECT * FROM has_component_cycles, v_shape_child_exists"),
                          ["relation:has_component_cycles", "relation:v_shape_child_exists"])
         self.assertEqual(self.found("SELECT * FROM v_rule_open_orders JOIN v_rules_subjects USING (k)"),
-                         ["relation:v_rule_open_orders", "relation:v_rules_subjects"])
+                         ["relation:v_rule_*", "relation:v_rules_subjects"])
+        self.assertEqual(self.found("SELECT * FROM v_rule_a, V_RULE_B, \"v_rule_c\""), ["relation:v_rule_*"],
+                         "every rule view is the one fixed item, never the text it matched")
+
+    def test_rule_view_matches_return_no_gold_text(self):
+        """A rule view is matched by its prefix, and the gold SQL may hold such a name in a literal: what matched is
+        never returned (it may be data), and case folding is ASCII only (U+017F is not an s)."""
+        literal = "SELECT part_id FROM sxc_demo.stock WHERE note <> 'V_RULE_Customer_ACME_4711' GROUP BY 1"
+        self.assertEqual(self.found(literal), ["relation:v_rule_*"])
+        self.assertNotIn("acme", " ".join(self.found(literal)).lower())
+        self.assertEqual(self.found("SELECT * FROM v_rule_" + chr(0x17F) + "ecret"), [])
+        self.assertEqual(self.found("SELECT * FROM v_" + chr(0x17F) + "hape_child_exists"), [])
+        self.assertEqual(self.found("SELECT * FROM " + chr(0x17F) + "xc_out.x"), [])
+        for sql in (literal, "SELECT * FROM v_rule_x" + chr(0x17F)):
+            for item in self.found(sql):
+                self.assertTrue(item.isascii(), item)
         self.assertEqual(self.found("SELECT * FROM v_shape_nope"), [], "only shapes of this configuration")
         both = "SELECT * FROM sxc_out.v_shape_qty_positive s, sxc_demo.stock t WHERE " + ON_HAND
         self.assertEqual(self.found(both), ["output_schema", "filter:measures.on_hand"])

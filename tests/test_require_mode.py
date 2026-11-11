@@ -20,7 +20,7 @@ from unittest import mock
 
 import pgfixture
 import sxc
-from semantic_crosscheck import config, evidence, mutate, stage_verify
+from semantic_crosscheck import config, cube_gen, evidence, mutate, stage_verify
 from semantic_crosscheck.result import Result
 from test_compare_unit import FakeConn
 from test_verify_evidence import AGG_ON_HAND, N4_TAIL, N5A, ON_HAND, MutantRun, VerifyRun
@@ -287,6 +287,18 @@ class GoldEvidenceTest(RequireRun):
         hierarchy = next(c for c in self.evidence_checks(res) if c.config_ref == "hierarchies.has_component")
         self.assertEqual((hierarchy.status, hierarchy.detail["reason"], hierarchy.detail["gaps"]),
                          ("not_run", "not_in_model", 7))
+
+    def test_class_column_without_a_model_cube(self):
+        """No entity cube of the model holds the class column: its one facet *.<column> is a not_in_model gap, so
+        gold_evidence:ontology.class_column is not_run (never a pass without anything compared)."""
+        model = self.write_stages()
+        for cube in model["cubes"]:
+            cube["dimensions"] = [d for d in cube.get("dimensions", []) if d.get("name") != "part_class"]
+        cube_gen.write_model(model, self.out / "cube" / "model")
+        res = self.verify()
+        c = next(c for c in self.evidence_checks(res) if c.config_ref == "ontology.class_column")
+        self.assertEqual((c.status, c.detail), ("not_run", {"reason": "not_in_model", "facets": 1, "with_evidence": 0,
+                                                            "accepted": 0, "gaps": 1, "operators_not_selected": []}))
 
     def test_no_values(self):
         self.cfg.verify.accepted_gaps = ["measures.firm_open", "measures.firm_open_dated"]

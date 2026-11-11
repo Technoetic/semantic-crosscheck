@@ -23,6 +23,7 @@ text, read only when it has the expected shape (observation); render_md() and co
 section and the `  EVIDENCE  ` console lines from it. This module imports no engine module.
 """
 
+import re
 from dataclasses import dataclass
 
 KINDS = ("authored", "recomputed", "generated", "structural", "mutation", "unclassified")
@@ -292,6 +293,7 @@ MUTATION_OPERATORS = ("closure_depth_shift", "closure_path_count_one", "closure_
 FACET_REASONS = ("not_in_model", "no_values", "no_rows_compared", "gold_not_run", "generated_text", "filter_only",
                  "no_gold_reads")
 CLASS_ELEMENT = "ontology.class_column"
+ANY_CUBE = "*"   # the cube of the class facet when no entity cube of the model holds the class column
 _HIERARCHY_OPERATORS = {"closure_qty_single_path": "qty", "closure_path_count_one": "path_count",
                         "closure_depth_shift": "min_depth"}
 _MEASURE_OPERATORS = {   # operator -> (applies to the measure, facet member of the measure cube)
@@ -346,7 +348,9 @@ def facets(cfg, model: dict | None = None) -> list[Facet]:
     """Every facet of the configuration, by element: measures, hierarchies, then ontology.class_column.
 
     The class facets are `<entity>.<class_column>` for every entity cube of the model whose dimensions hold the class
-    column; without a model (configuration validation) for every entity."""
+    column; without a model (configuration validation) for every entity. When no entity cube of the model holds it,
+    one facet `*.<class_column>` stands for the class column (its cube `*` is never in a model, so its reason is
+    not_in_model), so a configured class column is never left out of the facets."""
     out = []
     for m in cfg.measures.values():
         el, mc = f"measures.{m.name}", _measure_cube(m.name)
@@ -372,9 +376,12 @@ def facets(cfg, model: dict | None = None) -> list[Facet]:
         dims = None
         if model is not None:
             dims = {c.get("name"): {d.get("name") for d in c.get("dimensions", [])} for c in model.get("cubes", [])}
-        for e in cfg.entities:
-            if dims is None or column in dims.get(e, set()):
-                out.append(Facet(CLASS_ELEMENT, f"{e}.{column}", "member", e, f"{e}.{column}", (e,)))
+        held = [e for e in cfg.entities if dims is None or column in dims.get(e, set())]
+        for e in held:
+            out.append(Facet(CLASS_ELEMENT, f"{e}.{column}", "member", e, f"{e}.{column}", (e,)))
+        if not held:
+            out.append(Facet(CLASS_ELEMENT, f"{ANY_CUBE}.{column}", "member", ANY_CUBE, f"{ANY_CUBE}.{column}",
+                             (ANY_CUBE,)))
     return out
 
 
@@ -417,13 +424,16 @@ def accepted_names(cfg) -> set[str]:
 
 # ---- report ----------------------------------------------------------------------------------------
 # report sorts every check of an included stage under its kind and repeats what verify's evidence object recorded. It
-# reads only the keys below, checks their types and copies counts, ids, facet ids and reason codes only; an evidence
-# object that is missing or does not have this shape counts as not recorded (V1/V2 then count as unclassified).
+# reads only the keys below, checks their types and values and copies counts, ids, facet ids and reason codes only.
+# An evidence object that is missing, does not have this shape, holds a value outside its closed set or an id with a
+# character _ID does not allow (a line break above all), or whose mutation split does not follow from the V4 checks
+# of the same result counts as not recorded (V1/V2 then count as unclassified).
 REPORT_KINDS = ("authored", "recomputed", "generated", "structural", "mutation")
 FACET_STATUSES = ("compared", "detected", "accepted", "gap")
 MAX_LISTED = 10
 _STATUSES = ("pass", "fail", "error", "not_run")
 _ID_LISTS = ("zero_row_checks", "empty_stratum_zero_row_checks", "gold_no_rows")
+_ID = re.compile(r"[A-Za-z0-9_.:*+\[\]-]+")   # check, gold and facet ids: no space, no control character
 _SIDES = {
     "authored": "gold SQL a person wrote (no verbatim generated text found) against the served model; {zero} of them "
                 "compared no row; v1 repeats the first binding of v2",
@@ -456,15 +466,32 @@ def _strings(v) -> bool:
     return isinstance(v, list) and all(isinstance(x, str) for x in v)
 
 
+def _ids(v) -> bool:
+    return _strings(v) and all(_ID.fullmatch(x) for x in v)
+
+
 def _facet_row(row) -> bool:
-    return (isinstance(row, dict) and isinstance(row.get("facet"), str) and row.get("status") in FACET_STATUSES
-            and isinstance(row.get("reason"), str))
+    """A facet row: a plain facet id, a known status, and a reason of the closed set for a gap ("" otherwise)."""
+    if not isinstance(row, dict) or not isinstance(row.get("facet"), str) or not _ID.fullmatch(row["facet"]):
+        return False
+    status, reason = row.get("status"), row.get("reason")
+    return status in FACET_STATUSES and (reason in FACET_REASONS if status == "gap" else reason == "")
+
+
+def _gold_ids(gold: list) -> bool:
+    """Every gold entry report would read (a dictionary with a string id) has a plain id."""
+    return all(_ID.fullmatch(e["id"]) for e in gold if isinstance(e, dict) and isinstance(e.get("id"), str))
 
 
 def _mutation(m) -> dict | None:
     if not isinstance(m, dict) or not _count(m.get("operators_selected")) \
             or not _strings(m.get("operators_not_selected")) or not _strings(m.get("generated_only")) \
             or not all(_count(m.get(b)) for b in MUTANT_BUCKETS):
+        return None
+    left_out = m["operators_not_selected"]
+    if not set(left_out) <= set(MUTATION_OPERATORS) or len(set(left_out)) != len(left_out) \
+            or m["operators_selected"] + len(left_out) != len(MUTATION_OPERATORS) \
+            or not all(_is_v4_mutant(x) and _ID.fullmatch(x) for x in m["generated_only"]):
         return None
     return {"operators_selected": m["operators_selected"], "operators_not_selected": list(m["operators_not_selected"]),
             **{b: m[b] for b in MUTANT_BUCKETS}, "generated_only": list(m["generated_only"])}
@@ -481,8 +508,8 @@ def observation(recorded) -> dict | None:
     mode, scope, gold = recorded.get("mode"), recorded.get("scope"), recorded.get("gold")
     facets, reason = recorded.get("facets"), recorded.get("facets_reason")
     mutation = _mutation(recorded.get("mutation"))
-    if mode not in ("disclose", "require") or not isinstance(gold, list) or mutation is None \
-            or not all(_strings(recorded.get(k)) for k in _ID_LISTS):
+    if mode not in ("disclose", "require") or not isinstance(gold, list) or not _gold_ids(gold) \
+            or mutation is None or not all(_ids(recorded.get(k)) for k in _ID_LISTS):
         return None
     if scope == "full":
         if not isinstance(facets, list) or not all(_facet_row(r) for r in facets) or reason != "":
@@ -498,6 +525,29 @@ def _is_v4_mutant(cid) -> bool:
     return len(segments) == 3 and segments[0] == "v4" and all(segments)
 
 
+def _split_follows(obs: dict, verify_checks: list, recorded) -> bool:
+    """Whether the recorded mutant split follows from the V4 mutant checks of the same verify result: no V4 check
+    whose detection does not follow from its killer (v4_violations), no mutant check id twice, and the buckets that
+    verify derives from the checks alone hold exactly as many mutants as those checks say. accepted, unattributed and
+    killed_generated_only also depend on verify.accepted_gaps, so only their sum and the generated_only ids are
+    checked; not_judged also counts mutants without a check (no passing suite item), so it is a lower bound."""
+    mutants = [c for c in verify_checks if isinstance(c, dict) and _is_v4_mutant(c.get("id"))]
+    checks = {c["id"]: (c.get("status"), c.get("detail") if isinstance(c.get("detail"), dict) else {}) for c in mutants}
+    if len(checks) != len(mutants) or v4_violations({"checks": verify_checks, "evidence": recorded}):
+        return False
+    judged = {cid: d for cid, (st, d) in checks.items() if st not in ("not_run", "error")}
+    authored = sum(1 for d in judged.values() if d.get("killed_by") and d.get("detection") == "authored")
+    survived = sum(1 for cid, d in judged.items() if not d.get("killed_by") and checks[cid][0] == "fail")
+    m = obs["mutation"]
+    generated = m["generated_only"]
+    return (m["killed_authored"] == authored and m["survived"] == survived
+            and m["killed_generated_only"] + m["unattributed"] + m["accepted"] == len(judged) - authored - survived
+            and m["not_judged"] >= len(checks) - len(judged)
+            and len(generated) == m["killed_generated_only"] and len(set(generated)) == len(generated)
+            and all(x in judged and judged[x].get("killed_by") and judged[x].get("detection") == "generated_only"
+                    for x in generated))
+
+
 def summarise(included: dict, excluded: list, verify_checks: list, recorded) -> dict:
     """The `evidence` key of report.json.
 
@@ -508,7 +558,9 @@ def summarise(included: dict, excluded: list, verify_checks: list, recorded) -> 
     zero rows and gold text is repeated only when verify is included and its evidence is readable; otherwise the
     mutation split holds only not_judged (every V4 mutant check) and facets is None, with the reason why."""
     obs = observation(recorded)
-    seen =obs if "verify" in included else None
+    if obs is not None and not _split_follows(obs, verify_checks, recorded):
+        obs = None
+    seen = obs if "verify" in included else None
     golds, overridden = gold_kinds(seen["gold"]) if seen else ({}, 0)
     tally = {k: {"counts": dict.fromkeys(_STATUSES, 0), "ids": {}} for k in KINDS}
     for stage, checks in included.items():

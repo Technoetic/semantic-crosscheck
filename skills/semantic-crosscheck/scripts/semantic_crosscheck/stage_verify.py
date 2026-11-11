@@ -94,8 +94,11 @@ EVIDENCE_SCHEMA = 1
 _SUMS = ("missing_in_cube", "extra_in_cube", "duplicate_keys_gold", "duplicate_keys_cube", "declared_null_as_zero")
 NOT_RUN_REASONS = ("gold_not_run", "not_in_model")   # facet gaps that leave a gold_evidence:<element> check not_run
 _SPACE = re.compile(r"\s+")
-_RULE_VIEW = re.compile(r'(?<![A-Za-z0-9_."])"?(' + re.escape(data_rules.VIEW_PREFIX)
-                        + r'[a-z0-9_]{1,56})"?(?![A-Za-z0-9_])', re.IGNORECASE)
+# Any rule view v_rule_<id>: verify does not read the data-rules file, so the match is reported as one fixed item and
+# never as the text it matched (that text may be the content of a literal). ASCII: [a-z] must not match U+017F.
+_RULE_VIEW = re.compile(r'(?<![A-Za-z0-9_."])"?' + re.escape(data_rules.VIEW_PREFIX)
+                        + r'[a-z0-9_]{1,56}"?(?![A-Za-z0-9_])', re.IGNORECASE | re.ASCII)
+RULE_VIEWS = f"relation:{data_rules.VIEW_PREFIX}*"
 
 
 # ---- generated text in gold SQL ------------------------------------------------------------------------
@@ -134,7 +137,7 @@ def gold_text(raw: str) -> str:
 
 
 def _relation(name: str) -> re.Pattern:
-    return re.compile(r'(?<![A-Za-z0-9_."])"?' + re.escape(name) + r'"?(?![A-Za-z0-9_])', re.IGNORECASE)
+    return re.compile(r'(?<![A-Za-z0-9_."])"?' + re.escape(name) + r'"?(?![A-Za-z0-9_])', re.IGNORECASE | re.ASCII)
 
 
 def generated_text(cfg, sql: str) -> list[str]:
@@ -142,23 +145,27 @@ def generated_text(cfg, sql: str) -> list[str]:
 
       output_schema           the output schema as a qualifier ("sxc_out".x, sxc_out . x)
       relation:<name>         the bare name of a generated relation: <h>_closure and <h>_cycles of every hierarchy,
-                              v_shape_<id> of every shape, any v_rule_<id> and v_rules_subjects (gold SQL runs with the
-                              connection's own search_path, so a gold can read them without naming the schema)
+                              v_shape_<id> of every shape, any v_rule_<id> (one item, relation:v_rule_*, whatever it
+                              matched) and v_rules_subjects (gold SQL runs with the connection's own search_path, so a
+                              gold can read them without naming the schema)
       filter:measures.<m>     a filter clause of cube_gen.where_clauses(m) after the first (the non-null grain clause
                               is too common to count)
 
     Paraphrased copies are not found. A source table or CTE named like a generated relation is also found; that only
-    lowers the kind of the gold query."""
+    lowers the kind of the gold query. Every item is built from the configuration or is fixed text: nothing the gold SQL
+    holds is returned. Case folding is ASCII only, as PostgreSQL folds unquoted identifiers."""
     text = gold_text(sql)
     found = []
-    schema = re.compile(r'(?<![A-Za-z0-9_"])"?' + re.escape(cfg.source.output_schema) + r'"?\s*\.', re.IGNORECASE)
+    schema = re.compile(r'(?<![A-Za-z0-9_"])"?' + re.escape(cfg.source.output_schema) + r'"?\s*\.',
+                        re.IGNORECASE | re.ASCII)
     if schema.search(text):
         found.append("output_schema")
     names = [n for h in cfg.hierarchies for n in (naming.closure_table(cfg, h).split(".", 1)[1],
                                                  naming.cycles_table(cfg, h).split(".", 1)[1])]
     names += [naming.shape_view(cfg, s.id).split(".", 1)[1] for s in cfg.shapes]
     found += [f"relation:{n}" for n in names if _relation(n).search(text)]
-    found += [f"relation:{n}" for n in sorted({m.group(1).lower() for m in _RULE_VIEW.finditer(text)})]
+    if _RULE_VIEW.search(text):
+        found.append(RULE_VIEWS)
     if _relation(data_rules.SUBJECTS_VIEW).search(text):
         found.append(f"relation:{data_rules.SUBJECTS_VIEW}")
     for m in cfg.measures.values():
@@ -1088,8 +1095,8 @@ def _next_action(res: Result) -> str:
     if st == "fail" and first.id.startswith("v4:") and first.detail.get("reason") in ("generated_only", "unattributed"):
         return _kill_action(first)
     if st == "fail" and first.id.startswith("v4:"):
-        return (f"{first.id} survived: no gold query observes this kind of error in {first.config_ref}; add a gold "
-                "query, a mapped column or a stratum that would, then rerun verify (do not drop the operator)")
+        return (f"{first.id} survived: no replayed suite item detects this kind of error in {first.config_ref}; add a "
+                "gold query, a mapped column or a stratum that would, then rerun verify (do not drop the operator)")
     if st == "fail" and first.id.startswith("v3w:"):
         d = first.detail
         return (f"{first.id}: Cube's standalone answers left out keys that have qualifying source rows under "

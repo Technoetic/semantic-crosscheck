@@ -11,16 +11,15 @@ report summarises it in `report.json`, a `report.md` section and `  EVIDENCE  ` 
 result exists. `verify.gold_observation = "require"` turns the disclosures into check statuses.
 **Tech stack:** Python 3.11+, existing PostgreSQL and Cube adapters. No new dependency, no extra query, no extra
 Cube start.
-**Authorization:** The owner approved implementation and publication on 2026-11-11 with the recommended choice of
-every decision in section 12: disclosure by default, verdicts only in the opt-in require mode, and the require mode
-in the same release (0.23.0).
+**Released in:** 0.23.0, with the choices of section 12: disclosure by default, verdicts only in the opt-in require
+mode, and the require mode in the same release.
 
-Conventions. This is the design plan as approved; where the implementation differs, see "Implementation notes"
-below. `E/` = `skills/semantic-crosscheck/scripts/semantic_crosscheck/`. Every statement about today's code
-(v0.22.1, commit `3e76f093`) cites file and line. Claims about demo runs that need PostgreSQL and Cube are marked
-**[integration run]**; they are expectations, not measurements. One static probe was run for this plan, on a copy
-of the engine and the demo configuration (facts in 3.3). Two adversarial reviews followed;
-their findings were checked against the code and repaired in this version (each repair cites the code it rests on).
+Conventions. This is the design plan as implemented; where the implementation differs, see "Implementation notes"
+below. `E/` = `skills/semantic-crosscheck/scripts/semantic_crosscheck/`. Every statement about the code before this
+change (v0.22.1, commit `3e76f093`) cites file and line. Claims about demo runs that need PostgreSQL and Cube were
+expectations when the plan was written; they now give the values measured on the clean demo in one CI integration
+run of the implementation branch, marked **(measured)**. One static probe was run for this plan, on a copy of the
+engine and the demo configuration (facts in 3.3).
 
 ## Global constraints
 
@@ -47,7 +46,7 @@ their findings were checked against the code and repaired in this version (each 
 | Every configured measure gets a `v3:total` test whether or not a gold query reads it | `E/shape_q.py:103-118` |
 | The V3 total's SQL side keeps the configured WHERE; filter mutants rewrite only the Cube SQL | `E/shape_q.py:303-307`; `E/mutate.py:237-249` |
 | `measure_agg_to_max` changes only the Cube measure type, which `v3:total` sees | `E/mutate.py:294-298` |
-| Gold items cannot see `sum -> max` on a cube pre-aggregated per key; the clean demo still passes all 12 V4 checks, so V3 items kill at least 3 of them | `tests/test_mutate.py:654-656`; `README.md:366` |
+| Gold items cannot see `sum -> max` on a cube pre-aggregated per key; the clean demo still passes all 12 V4 checks, so V3 items kill at least 3 of them (measured: exactly the 3 `measure_agg_to_max` kills) | `tests/test_mutate.py:654-656`; `README.md:366` |
 | Nothing checks the prefix of `killed_by`; only survivors are rewritten | `E/stage_verify.py:448-461` |
 | No output lists measures or members no gold query reads. `_members` is used only for gating and `members_not_in_model` | `E/stage_verify.py:100-115`, `:220-231` |
 | Passing checks, and so `killed_by`, never reach `report.md` | `E/report.py:311-313` |
@@ -76,11 +75,11 @@ not_proven line, and no gold query reads `m_on_hand`.
 | V1 records the status and detail, adds nothing to not_proven | `E/stage_verify.py:364-366` |
 | V2 counts `empty_bindings`, `rows_compared` (gold rows); only a stratum with no binding gets a line | `E/stage_verify.py:161-170`, `:376-378` |
 | Intended and documented; the demo's `empty` stratum is empty by construction (8 bindings) | `docs/design.md:562-563`; `E/sweep.py:34`; `tests/test_verify.py:283` |
-| Verifier correction: the fix scope is "no binding of one gold query compared any row", not per binding or stratum | independent review of the first draft |
+| The fix scope is "no binding of one gold query compared any row", not per binding or stratum | per binding or stratum, the demo's `empty` stratum would always be named (above) |
 
 ## 2. Goals and non-goals
 
-Goals (from the brief):
+Goals:
 
 - G1. Every check has one evidence kind a reader can see: authored, recomputed, generated (or structural, mutation).
 - G2. A passing V4 can no longer be read as "the gold SQL observes this element". Each mutant's detection is
@@ -107,8 +106,7 @@ and fail-closed verdicts by default. The chosen design is disclosure by default 
 others it takes a separate `mutation` kind, every status counted per kind, per-gold comparison counts, facet
 reason codes, `  EVIDENCE  ` console lines, `observation_recorded`/`excluded_stages`, downgrade-only kinds,
 `cube_gen.where_clauses`, facets including joins and node cubes, output-schema detection, the opt-in verdict
-mode, the V3 guard and import-closure tests, and remedies in the line texts. Two reviews of the candidates
-named must-fix items; all are applied.
+mode, the V3 guard and import-closure tests, and remedies in the line texts.
 
 ### 3.1 Evidence kinds (closed set)
 
@@ -195,16 +193,18 @@ Facets are judged only on full-scope runs (`--only` all parts, no `--gold`). A n
 show "0 of 0".
 
 Demo facts (static probe on the demo configuration, real `config.load` and `stage_verify._members`, extended by
-reading for the facets added in review): 17 facets. 15 are mapped by an authored gold (the probe listed 11;
+reading for the join and class facets): 17 facets. 15 are mapped by an authored gold (the probe listed 11;
 `has_component_ancestor.*` and the closure join facet follow from the map of `q02_where_used`; `part+m_on_hand`,
 `part+m_consigned` and `part.part_class` from the map of `q03_stock`, `demo/crosscheck.toml:166-178`).
 `part+m_firm_open` is a gap `no_gold_reads` by reading: the node cube `part` joins `m_firm_open` one_to_one
 (`E/cube_gen.py:196-201`; `firm_open` gets node `part` by default, `E/config.py:633-634`), and no demo gold maps a
 `part` member together with `m_firm_open.value` (`q02_where_used` reaches it through the closure join,
-`demo/crosscheck.toml:146-161`). That the 15 compared rows holding values is **[integration run]**.
+`demo/crosscheck.toml:146-161`). **(measured)** On the clean demo 15 facets are `compared` with rows holding
+values and `part+m_firm_open` is the one gap (`no_gold_reads`).
 `m_firm_open_dated.ts` is used only in the `timeDimensions` `dateRange` of `q05_firm_window`, so it is `filter_only` unless `v4:dated_shift_one_day:firm_open_dated` is killed
-by a gold item. With hand-picked bindings it is killed by a `v1:` item (`tests/test_mutate.py:644-650`); with the
-verify sweep bindings this is **[integration run]**. The filter-only members of q01 and q02
+by a gold item. With hand-picked bindings it is killed by a `v1:` item (`tests/test_mutate.py:644-650`).
+**(measured)** With the verify sweep bindings it is killed by the authored item `v2:q05_firm_window:param_sets[1]`, so
+the facet is `detected`. The filter-only members of q01 and q02
 (`has_component_closure.ancestor`, `.descendant`) are compared by the other query, so they leave no gap.
 
 ### 3.4 Mutant attribution
@@ -250,7 +250,7 @@ verify sweep bindings this is **[integration run]**. The filter-only members of 
 | V4 kill listed in `verify.accepted_gaps` | `pass`, line N5a instead of N5/N6 | `pass`, line N5a |
 | facet gaps | one line N4 per element | one check `gold_evidence:<element>` per measure, hierarchy and `ontology.class_column`, full-scope runs only |
 | gold with zero rows | line N3 | line N3, and a `v1:<g>` whose status is `pass` becomes `not_run`, `reason=no_rows_compared`; any other `v1:<g>` status stays (an `error` is never rewritten to `not_run`) |
-| gold with generated text | line N1/N2 | same (kinds change, statuses do not) |
+| gold with generated text | line N1/N2 | same (kinds change; V1/V2 statuses do not; the V4 order changes in both modes, 3.4) |
 | operators not selected | shown in the mutant split | same, plus line N7 |
 
 `killed_by` keeps its meaning in both modes: the first failing suite item. In require mode a `fail` V4 check can
@@ -281,7 +281,7 @@ top-level keys (`E/result_contract.py:1-8`, `:24-58`).
   {"id": "q05_firm_window", "kind": "authored", "generated_text": [],
    "compares": ["m_firm_open_dated.key", "m_firm_open_dated.value"], "uses_only": ["m_firm_open_dated.ts"],
    "comparisons": 7, "nonempty_comparisons": 6,
-   "value_rows": {"m_firm_open_dated.key": 40, "m_firm_open_dated.value": 40}}
+   "value_rows": {"m_firm_open_dated.key": 759, "m_firm_open_dated.value": 743}}
  ],
  "facets": [
   {"element": "measures.firm_open_dated", "facet": "m_firm_open_dated.ts", "status": "detected", "reason": "",
@@ -296,15 +296,15 @@ top-level keys (`E/result_contract.py:1-8`, `:24-58`).
  "gold_no_rows": [],
  "mutation": {"operators_selected": 9, "operators_not_selected": [],
               "killed_authored": 9, "killed_generated_only": 3, "unattributed": 0, "accepted": 0,
-              "survived": 0, "not_judged": 0, "equivalent": 0, "not_applicable": 0,
-              "generated_only": ["v4:measure_agg_to_max:consigned", "v4:measure_agg_to_max:firm_open",
-                                 "v4:measure_agg_to_max:on_hand"]}
+              "survived": 0, "not_judged": 0, "equivalent": 2, "not_applicable": 0,
+              "generated_only": ["v4:measure_agg_to_max:firm_open", "v4:measure_agg_to_max:on_hand",
+                                 "v4:measure_agg_to_max:consigned"]}
 }
 ```
 
-Numbers are illustrative **[integration run]**, including the zero-row lists (by reading the code,
-`v2:q02_where_used:top` is empty on both sides: the `top` stratum binds parts with no parent, `E/sweep.py:28`; the
-gold starts from edges whose child is `:part`, `demo/gold/q02_where_used.sql:7`; the closure has no depth-0 pair,
+**(measured)** The values are those of the clean demo, including the zero-row lists (as read from the code before the
+run, `v2:q02_where_used:top` is empty on both sides: the `top` stratum binds parts with no parent, `E/sweep.py:28`;
+the gold starts from edges whose child is `:part`, `demo/gold/q02_where_used.sql:7`; the closure has no depth-0 pair,
 `E/closure.py:106-107`, and Cube filters on `descendant = :part`, `demo/crosscheck.toml:153`). `scope` is
 `"narrowed"` on narrowed runs; `facets` is then `null` and `facets_reason` is `"narrowed"`.
 The only per-check kind verify records is `gold[].kind`; it applies to `v1:<g>` and `v2:<g>:*` (4.3, 5.1).
@@ -370,8 +370,8 @@ New top-level key `evidence`, only when `verify` is among the results report rea
  "overridden": 0,
  "mutation": {"operators_selected": 9, "operators_not_selected": [],
               "killed_authored": 9, "killed_generated_only": 3, "unattributed": 0, "accepted": 0, "survived": 0,
-              "not_judged": 0, "equivalent": 0, "not_applicable": 0,
-              "generated_only": ["v4:measure_agg_to_max:consigned", "..."]},
+              "not_judged": 0, "equivalent": 2, "not_applicable": 0,
+              "generated_only": ["v4:measure_agg_to_max:firm_open", "..."]},
  "facets": {"total": 17, "compared": 15, "detected": 1, "accepted": [],
             "gaps": [{"facet": "part+m_firm_open", "reason": "no_gold_reads"}]},
  "facets_reason": "",
@@ -400,8 +400,8 @@ with `facets_reason` `"not_recorded"`. Unclassified ids add a key `unclassified`
 ### 4.4 `report.md`
 
 New section `## Evidence`, placed before `## Not proven` (`E/report.py:374`), only with a verify result. Exact text
-(numbers from the clean demo; every number, list and facet result is **[integration run]**, the facet gap
-`part+m_firm_open` is known by reading, 3.3):
+(the numbers, lists and facet results are those of the clean demo, **(measured)** in report.json `evidence` and the
+EVIDENCE console lines of the CI run; the run's report.md file itself was not captured):
 
 ```markdown
 ## Evidence
@@ -420,7 +420,7 @@ Authored expected rows (`expect`) are not read by report.
 | structural | one side only: a rule on the data, the configuration, the environment, the served model | 40 | 0 | 0 | 0 |
 | mutation | broken copies of the model; pass = killed: 9 with an authored detection, 3 by generated checks only | 12 | 0 | 0 | 0 |
 
-- Mutants (9 of 9 operators selected): 9 killed with an authored detection; 3 killed by generated checks only (v4:measure_agg_to_max:firm_open, v4:measure_agg_to_max:on_hand, v4:measure_agg_to_max:consigned); 0 unattributed; 0 accepted; 0 survived; 0 not judged; 0 equivalent on this data; 0 not applicable.
+- Mutants (9 of 9 operators selected): 9 killed with an authored detection; 3 killed by generated checks only (v4:measure_agg_to_max:firm_open, v4:measure_agg_to_max:on_hand, v4:measure_agg_to_max:consigned); 0 unattributed; 0 accepted; 0 survived; 0 not judged; 2 equivalent on this data; 0 not applicable.
 - Facets: 15 of 17 compared with rows holding values by authored gold SQL; 1 more detected by an authored mutant kill; no authored evidence: part+m_firm_open (no_gold_reads); accepted: none.
 - Authored checks that compared no row: 1 (v2:q02_where_used:top); in strata named `empty`: 1 (v2:q01_explosion:empty). Gold queries that compared no row: none.
 - Gold SQL with generated text: none.
@@ -596,7 +596,7 @@ comparisons error as today.
 | `v5:witness:*` | `structural` | engine-authored synthetic graph: tests templates, not this data |
 | V4 kill by an authored item that reads the change only through a join | `mutation`, `detection = authored` | the gold rows differed from Cube's |
 | V2 stratum all empty, V1 binding empty | `authored`, listed in `zero_row_checks` (or `empty_stratum_zero_row_checks` for a stratum named `empty`) | the kind says who wrote the side; the zero-row list says nothing was compared |
-| `v1:<g>` and `v2:<g>:all` of a gold without parameters | both `authored`, one comparison | V1 replays the first binding, V2 replays it again (`E/stage_verify.py:238-244`, `:368-387`; one binding `("all", {})`, `E/sweep.py:69-70`); the report.md table says so |
+| `v1:<g>` and `v2:<g>:all` of a gold without parameters | both `authored`; the same binding is compared twice (`comparisons` counts 2) | V1 replays the first binding, V2 replays it again (`E/stage_verify.py:238-244`, `:368-387`; one binding `("all", {})`, `E/sweep.py:69-70`); the report.md table says so |
 | Optional diagnostics, `data-rules`, `expect` | not counted | outside `PIPELINE` (`E/report.py:43`) |
 
 ## 6. Algorithm per stage, with cost
@@ -625,7 +625,7 @@ and do not change.
 | statuses | none, except V4 statuses and `killed_by` (3.4: a different first item can error twice or reach the item budget first; a different item can be the first to fail) | only with a gold that has generated text (5.2) |
 | doctor, demo, build, reason, cube outputs | none | never |
 | `verify/result.json` | top-level `evidence`; V4 keys `detection`, `facet`, `gold_comparing` | always with V4 |
-| `verify/result.json` `not_proven`, verify console | N1-N6, N4a, N5a lines | when their condition holds (clean demo: at least 3 N5 lines and 1 N4 line for `measures.firm_open`, **[integration run]**) |
+| `verify/result.json` `not_proven`, verify console | N1-N6, N4a, N5a lines | when their condition holds (clean demo, **(measured)**: 3 N5 lines and 1 N4 line for `measures.firm_open`) |
 | V4 suite order | generated golds after authored golds | only with a gold that has generated text |
 | `verify/mutation-coverage.json` | `detection` per row, `kind` per receipt item | always with V4 |
 | `report.json` | `evidence` key | a verify result exists |
@@ -643,10 +643,12 @@ fail-open path in the code contract (0.14.0, `CHANGELOG.md:361-370`). Here the c
 
 ### 7.2 Opt-in require mode
 
-`verify.gold_observation = "require"` on the clean demo **[integration run]**: verify `FAIL`, 3 `fail`
-(`v4:measure_agg_to_max:{firm_open,on_hand,consigned}`, `generated_only`), plus 6 `gold_evidence:*` checks
-(4 measures, 1 hierarchy, `ontology.class_column`), of which `gold_evidence:measures.firm_open` fails
-(`no_gold_reads` for `part+m_firm_open`, known by reading). The demo configuration keeps the default.
+`verify.gold_observation = "require"` on the clean demo **(measured)**: verify `FAIL` with 49 `pass` and 4 `fail`:
+`v4:measure_agg_to_max:{firm_open,on_hand,consigned}` (`generated_only`, `killed_by` kept) and, of the 6
+`gold_evidence:*` checks (4 measures, 1 hierarchy, `ontology.class_column`), `gold_evidence:measures.firm_open`
+(`no_gold_reads` for `part+m_firm_open`); the other five pass. The N4 and N5 lines are not written: in that run (the
+stage called by the integration test, without the runtime and revision lines a command-line run adds) the only
+not_proven lines are those of the two equivalent mutants. The demo configuration keeps the default.
 
 ### 7.3 Compatibility goldens
 
@@ -657,16 +659,18 @@ verify result, and `Result` gains no dataclass field. So every golden stays byte
 
 ### 7.4 Pinned NOT PROVEN counts
 
-Every clean-demo count in this section is **[integration run]**.
+The clean-demo counts in this section were expectations when it was written; the **(measured)** values follow each.
 
 - README "`NOT PROVEN` 14줄" and "나머지 5줄은 reason의 3줄과 verify의 2줄" (`README.md:375`, test
   `tests/test_docs_readme.py:63-75`): become `14 + v` and `5 + v` / `2 + v`, with `v` = new verify lines of the
   clean demo (G N5 lines, G >= 3; 1 N4 line for `measures.firm_open`; plus 1 N4 line for
-  `measures.firm_open_dated` if `m_firm_open_dated.ts` is not detected or a facet is `no_values`). The zero-row
+  `measures.firm_open_dated` if `m_firm_open_dated.ts` is not detected or a facet is `no_values`). **(measured)**
+  `v` = 4 (G = 3; `m_firm_open_dated.ts` is detected and no facet is `no_values`), so 18 lines, 9 of them
+  reason's 3 and verify's 6. The zero-row
   stratum `v2:q02_where_used:top` adds no verify line (its gold has rows in other strata, so no N3); it shows only
   on the EVIDENCE zero-row line. The sentence pattern and
-  the `sum(other) == reason + verify` assertion stay: EVIDENCE lines are not NOT PROVEN lines, and report gets no new
-  NOT PROVEN line.
+  the `sum(other) == reason + verify` assertion stay: EVIDENCE lines are not NOT PROVEN lines, and report's console
+  prints no new NOT PROVEN line of its own (report.md "## Not proven" repeats verify's new lines).
 - README block (`README.md:351-372`): verify gains the `v` lines; report gains the EVIDENCE lines.
   `expected_output()` (`tests/test_docs_quickstart.py:88-99`) reads only `[sxc` and `NOT PROVEN` lines; it is
   extended to read report's `EVIDENCE` lines so the integration test pins them too.
@@ -707,8 +711,8 @@ as current. A hand-copied old verify result has no `evidence`: report says "obse
   query containing generated text (output schema, a generated relation name, a generated filter clause) now counts
   as generated evidence and runs after authored gold items in V4, so for such a configuration `killed_by` and V4
   statuses can change (an item error or the item budget can now be met first).
-- A facet "compared" now needs rows holding values; the clean demo is expected to show one facet with no authored
-  evidence (`part+m_firm_open`; known by reading, **[integration run]**).
+- A facet "compared" now needs rows holding values; the clean demo shows one facet with no authored evidence
+  (`part+m_firm_open`, **(measured)**).
 
 ## 8. Test plan
 
@@ -754,7 +758,9 @@ The test that fails if a V4 pass can again be read as gold detection: `v4_pass_i
 - Clean demo full run: pins A, G, the facet counts and gaps (expected by reading: `part+m_firm_open`
   `no_gold_reads`), the N5 set, both zero-row lists (expected by reading: at least `v2:q01_explosion:empty` and
   `v2:q02_where_used:top`; `tests/test_verify.py:283` pins only the first) and the README block (summary, NOT
-  PROVEN and EVIDENCE lines); `v4_violations == []`; `assert_catalogued` with the new ids.
+  PROVEN and EVIDENCE lines); `v4_violations == []`; `assert_catalogued` with the new ids. **(measured)** The
+  zero-row list is exactly `v2:q02_where_used:top` and the empty-stratum list exactly `v2:q01_explosion:empty`;
+  the pins are in `tests/test_evidence_pg.py` (`assert_clean_demo` and the require-mode scenario).
 - Bare generated name: an extra gold that reads `has_component_closure` without a schema, run by a role whose
   `search_path` includes the output schema -> `relation:has_component_closure`, its checks counted generated.
 - F1: demo without `q03_stock`, dirty data, `mutation_operators = ["measure_normalization_drop"]` -> N5 and N4 for
@@ -784,48 +790,19 @@ The test that fails if a V4 pass can again be read as gold detection: `v4_pass_i
 
 ## 10. Implementation phases
 
-Sizes are rough code / test lines, as estimated before implementation.
+The work was done in six phases, each with its tests written first. P1-P4 and P6 reach G1-G3 without P5; the
+require mode (P5) is the last engine phase, so it could have been left out without changing the others.
 
-| Phase | Files | Code | Tests |
-|---|---|---:|---:|
-| P1 registry | new `E/evidence.py` (rules with prefix-tuple keys, `kind_of`, `item_kind`, order helper, table renderer); design.md section 8 table; `tests/test_evidence.py` | 150 | 200 |
-| P2 verify gold and facets | `E/stage_verify.py`, `E/cube_gen.py` (`where_clauses`), `E/compare.py` (`value_rows`), `E/result.py` (`to_dict`), `E/config.py` (`accepted_gaps`, used by N4a and N5a in both modes); `tests/test_gold_text.py`, `tests/test_verify_evidence.py` | 290 | 380 |
-| P3 V4 attribution | `E/stage_verify.py` (`v4`, mutant split, remedies), facet table in `E/evidence.py`; F1 guard and trace tests | 150 | 270 |
-| P4 report | `E/evidence.py` summarise and render, `E/report.py`, `sxc.py`; `tests/test_report_evidence.py` | 200 | 220 |
-| P5 require mode | `E/config.py` (`gold_observation`), `E/stage_verify.py` (rewrites, N5b, N7, next actions); catalogue row; tests | 140 | 240 |
-| P6 docs, pins, integration | section 9 files; README block from one integration run; `tests/test_docs_*`; `tests/test_verify.py:370` | prose ~320 | 80 |
+| Phase | Files | What was implemented |
+|---|---|---|
+| P1 registry | new `E/evidence.py`; design.md section 8 table; `tests/test_evidence.py` | rules with prefix-tuple keys, `kind_of`, `item_kind`, the order helper and the table renderer; tests for every rule row, no default row, catalogue completeness, docs equality (catalogue spellings), downgrade only, the V3 guard, `v5:closure` generated and recomputed rows outside generators; the `E/shape_q.py:304` docstring corrected |
+| P2 verify gold and facets | `E/stage_verify.py`, `E/cube_gen.py` (`where_clauses`), `E/compare.py` (`value_rows`), `E/result.py` (`to_dict`), `E/config.py` (`accepted_gaps`, used by N4a and N5a in both modes); `tests/test_gold_text.py`, `tests/test_verify_evidence.py` | plan-time matching and stored gold kinds, `value_rows`, per-gold counts, N1-N4a, `evidence` in verify results only; tests for gold text matching (bare relation names included), `where_clauses`, `value_rows`, compares vs uses, zero-row lists, facet set and reasons, full-scope gating, narrowed text, `accepted_gaps` validation and privacy |
+| P3 V4 attribution | `E/stage_verify.py` (`v4`, mutant split, remedies), facet table in `E/evidence.py` | stable sort, `detection`, `facet`, `gold_comparing`, mutant split, N5, N5a, N6, coverage keys; tests for the suite order contract (unknown golds), the F1 guard and trace, the mutant split, N5 remedies, ledger and receipt annotation, unchanged exact dicts |
+| P4 report | `E/evidence.py` summarise and render, `E/report.py`, `sxc.py`; `tests/test_report_evidence.py` | `evidence.summarise`, the report.json key, the report.md section and the EVIDENCE console lines; tests for golden absence, section and lines, excluded and unrecorded results, unclassified checks and privacy |
+| P5 require mode | `E/config.py` (`gold_observation`), `E/stage_verify.py`; catalogue row; `tests/test_require_mode.py` | the key and its validation, `gold_evidence:*`, the V4 rewrites (with N5b) and the pass-only V1 rewrite with summary and ledger, N7, next actions |
+| P6 documents, pins, integration | section 9 files; `tests/test_docs_*`; `tests/test_verify.py:370`; `tests/test_evidence_pg.py` | the documents and `test_docs_evidence.py`, CHANGELOG 0.23.0 with 7.6, the release notes and this plan; the integration scenarios of 8.2; the README block, its prose and the clean-demo pins from one CI integration run |
 
-Total about 930 code lines and 1,390 test lines (about 2,300), plus about 320 lines of prose, then independent
-review and at least one CI run with PostgreSQL and Cube. P1-P4 and P6 reach G1-G3; P5 can
-be dropped or deferred without changing them (decision D2). P6 must follow the integration run.
-
-## Task 1: Registry (P1)
-- [x] Write failing tests for every rule row, no default row, catalogue completeness, docs equality (catalogue spellings), downgrade only, V3 guard, `v5:closure` generated, recomputed rows outside generators.
-- [x] Add `E/evidence.py` (prefix-tuple keys) and the design.md section 8 table rendered from it. Correct `E/shape_q.py:304`. Rerun `tests/test_docs_catalogue.py`.
-
-## Task 2: Verify gold accounting and facets (P2)
-- [x] Tests first for gold text matching (including bare relation names), `where_clauses`, `value_rows`, compares vs uses, zero-row lists, facet set and reasons, full-scope gating, narrowed text, `accepted_gaps` validation, privacy.
-- [x] Implement plan-time matching and stored gold kinds, `value_rows`, per-gold counts, N1-N4a, `evidence` in verify results only.
-
-## Task 3: V4 attribution (P3)
-- [x] Tests first: suite order contract (unknown golds), F1 guard, F1 trace, mutant split, N5 remedies, ledger and receipt annotation, unchanged exact dicts.
-- [x] Stable sort, `detection`, `facet`, `gold_comparing`, mutant split, N5, N5a, N6, coverage keys.
-
-## Task 4: Report (P4)
-- [x] Tests first: golden absence, section and lines, excluded and unrecorded, unclassified, privacy.
-- [x] `evidence.summarise`, report.json key, report.md section, EVIDENCE console lines.
-
-## Task 5: Require mode (P5, optional)
-- [x] `gold_observation` key and validation; `gold_evidence:*`; V4 rewrites (with N5b) and the pass-only V1 rewrite, with summary and ledger; N7; next actions; catalogue row.
-
-## Task 6: Documents, pins and release preparation (P6)
-- [ ] One integration run on the clean demo; pin A, G, facets, README block and prose from it.
-- [x] Section 9 documents, `test_docs_evidence.py`, CHANGELOG 0.23.0 with 7.6, the release notes and this plan.
-  Full unit suite.
-- [ ] Independent review; integration tests (`tests/test_verify.py:370`, `evidence.v4_violations` in every
-  integration run with V4, the README pins).
-
-## Review focus
+## Invariants to keep
 - No new line, key or check appears in a build-only run (goldens byte-identical).
 - `detection` is exact only because of the enforced order; a change to suite planning must keep the order test green.
 - A recorded kind can never raise a check above the registry kind; only `gold[].kind` is ever read.
@@ -837,38 +814,39 @@ be dropped or deferred without changing them (decision D2). P6 must follow the i
 - No gold SQL text, row value or parameter value reaches results, lines or report outputs (`value_rows` is a count).
 
 ## Verification outcome
-Unit tests only so far. Phases 1 to 5 and the documentation phase were each followed by the full unit suite
-(`python -m unittest discover -s tests`, no database), which ended with exit code 0 on one Windows machine. Every
-rule of 8.1 has a unit test that needs no database. The integration tests of 8.2 (PostgreSQL 17, HermiT, Cube)
-have not run yet; they run first in CI. Until then every demo-run number in this plan, and the README pins of
-7.4, remain expectations marked **[integration run]**. Before implementation, the static facet probe of 3.3 and
-the two review probes of 5.1 (the catalogue token matching and the module-level import closure) were run on
-copies of the engine.
+What has run: the full unit suite (`python -m unittest discover -s tests`, no database), after every phase, ending
+with exit code 0 on one Windows machine; every rule of 8.1 has a unit test that needs no database. And one CI run of
+the implementation branch: its unit jobs passed, and its integration job (PostgreSQL 17, HermiT, Cube, Jena) passed
+every test, the new scenarios of 8.2 included, except the comparison of the README quick-start block, which then
+still showed the output of v0.22.1. The README block, its prose and the pins of the clean demo were then set from that
+job's log; that change has passed the unit suite, and its integration run is the next CI run. Every value marked
+**(measured)** in this plan comes from that log. Before implementation, the static facet probe of 3.3 and two probes
+of 5.1 (the catalogue token matching and the module-level import closure) were run on copies of the engine.
 
 ## 11. Risks
 
 | Risk | Mitigation |
 |---|---|
-| A, G and the facet result of the clean demo are unknown without a database | pin from one integration run (P6); tests assert the three known `agg_to_max` kills as a subset until then |
+| A, G and the facet result of the clean demo are unknown without a database | pinned from one CI integration run (P6): 9 authored kills, the 3 `agg_to_max` kills by generated checks only, 15 of 17 facets compared, 1 detected, 1 gap |
 | More not_proven lines in verify for real configurations (one N4 per element with a gap, one N5 per generated-only kill) | one line per element, not per facet; ids capped at 10; `accepted_gaps` for known gaps |
 | `filter_only` on the demo's dated facet looks like noise | the facet is cleared by an authored kill of `dated_shift_one_day`; the reason code says what was done |
 | Generated-text false positive (a hand-written clause that equals the generated text, including `t."col"` quoting; a source table or CTE named like a generated relation) | unlikely; it only lowers a kind; N1/N2 name the match so the user can rename or rewrite |
 | Lines readers learn to skip (the `empty` stratum on every explosion gold, fixed sentences, N5 for `measure_agg_to_max` on per-key golds) | `empty` strata on their own list; fixed sentences once in the section header; N5 remedy per operator; `accepted_gaps` takes `v4:` ids (N5a) |
 | Require mode passed by dropping the operators that fail | operator count and names on the EVIDENCE line and in `gold_evidence:*`; N7 in require mode; the next action says "do not drop the operator" |
 | V4 status change in disclose mode for a configuration whose gold copies generated text | stated in 3.4, 7.1 and the CHANGELOG; only after a gold is newly flagged generated |
-| Whole-gold downgrade under-credits authored joins and keys of a gold that copied one filter | stated; decision D3 offers the per-measure rule |
+| Whole-gold downgrade under-credits authored joins and keys of a gold that copied one filter | stated; the per-measure rule is the alternative of choice D3 |
 | Readers ignore not_proven lines | EVIDENCE lines on the report console list the mutation split, facet gaps and zero rows |
 | Console parsers see a new line type | only with verify present; documented in CHANGELOG |
 | `killed_by` non-empty on a require-mode `fail` confuses a reader | documented; `detection` and `reason` are on the same line |
 | Registry drifts from code | catalogue completeness and docs-equality tests |
 | Suite order changes later | order enforced by sort and pinned by a test |
 
-## 12. Decisions (taken 2026-11-11)
+## 12. Design choices
 
-| # | Decision | Taken | Not taken |
+| # | Question | Chosen | Alternative |
 |---|---|---|---|
 | D1 | Default behaviour in 0.23.0 | disclosure; verdicts opt-in | verdicts by default: unchanged configurations with V3-only kills, zero-row golds or facet gaps exit 1; demo rewrite and frozen golden inputs |
-| D2 | Ship require mode (P5) in 0.23.0 | yes, as the last phase | defer until the integration run shows how many kills are `generated_only` |
+| D2 | Require mode (P5) in 0.23.0 | yes, as the last phase | a later release, once an integration run shows how many kills are `generated_only` |
 | D3 | Gold with a verbatim generated filter clause | whole gold `generated` | per measure (a fourth sort rank, loses exactness for later items), or disclose only |
 | D4 | Facet set | all of 3.3 | only facets an operator mutates |
 | D5 | Filter, time-dimension and segment use | does not count as compared (`filter_only`); an authored kill can still clear the facet | count a `timeDimensions` dateRange as compared for `ts` |
@@ -916,8 +894,8 @@ Where the implementation (0.23.0) differs from this plan, or settles what it lef
   which no evidence rule classifies". The detail of a passing `gold_evidence:<element>` has no `reason`; an element
   without any facet in the model is `not_run` (`not_in_model`). A rewritten kill's summary moves from `killed` to
   `survived` or `not_run`, and its coverage row gets that outcome. N7 is written whenever operators are left out, also
-  on narrowed runs. A rewritten `v1:<gold>` stays a V4 suite item. The survivor next action of 4.7 changed in the
-  documentation phase, after the require-mode tests had pinned the default outputs.
+  on narrowed runs. A rewritten `v1:<gold>` stays a V4 suite item. The survivor next action of 4.7 changed after
+  the require-mode phase, after the require-mode tests had pinned the default outputs.
 - Tests: the 8.1 row `test_verify_evidence.py::require_mode` is `tests/test_require_mode.py`; it also pins the
   default-mode outputs of eight scenarios by digest.
 
@@ -927,12 +905,12 @@ Where the implementation (0.23.0) differs from this plan, or settles what it lef
 |---|---|
 | Verdict changes by default | a default verdict change fails the unchanged demo (`tests/test_mutate.py:654-656` implies 3 `generated_only` checks) and every existing configuration with a V3-only kill, forces a demo rewrite and frozen golden inputs (`capture.py:43`), while the code contract (`docs/design.md:392`) is accurate and the misreading is in documents; it also changes `suite_incomplete` semantics outside the goals and counts `v5:witness` as authored |
 | Disclosure with a static check only | static "names a member" check (a key or filter member suppresses it), no rows tie, no copy detection, V4 kills folded into authored, gaps not on the report console |
-| Evidence classes with full attribution | six console lines, one line per member, attribution modes beyond the goals, `observe:` lines on narrowed runs that break `tests/test_compare_unit.py:563`, `:573`, copied-filter gold kept as authored observer, size stated as 0.9k against about 1.5k |
+| Evidence classes with full attribution | six console lines, one line per member, attribution modes beyond the goals, `observe:` lines on narrowed runs that break `tests/test_compare_unit.py:563`, `:573`, copied-filter gold kept as authored observer |
 | Attribution beyond the first detecting item | `detection` is exact in the first-failing mode at no cost; running the items after the first failure multiplies Cube work |
 | One report NOT PROVEN line instead of `  EVIDENCE  ` lines | it cannot carry the gaps, and it would change the README prose pin (`tests/test_docs_readme.py:72-75`) |
 | Kind `independent` for the recomputation | authored evidence is also independent of the generators; "independent" would blur that |
 | A `not_proven` status | breaks the closed status set (`E/result_contract.py:13`, `:50-52`), `Check.__post_init__` (`E/result.py:29-31`), `sxc._summary` counts (`sxc.py:296-298`) and every reader following SKILL.md |
-| Per-binding or per-stratum zero-row lines | the `empty` stratum is empty by design (`E/sweep.py:34`; 8 bindings, `tests/test_verify.py:283`); verifier correction |
+| Per-binding or per-stratum zero-row lines | the `empty` stratum is empty by design (`E/sweep.py:34`; 8 bindings, `tests/test_verify.py:283`), so such a line would always be written |
 | Counting `_members` (filters, segments) as compared | a filter on a member does not compare its values (`E/compare.py:175-177` compares `gold.map` columns only) |
 | Closure oracle as facet evidence | it never reads Cube and is not replayed against mutants (`E/stage_verify.py:12-13`) |
 | Model diff (`mutate.changed`) to find mutated members | the static operator-to-facet table gives the same facets at no cost |

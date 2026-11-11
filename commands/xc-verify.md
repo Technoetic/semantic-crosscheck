@@ -68,8 +68,9 @@ python "${CLAUDE_PLUGIN_ROOT}/skills/semantic-crosscheck/scripts/sxc.py" verify 
   contains generated text, then V3, and each V4 check with `killed_by` also records `detection`, `facet` and
   `gold_comparing`. A passing `v4:<operator>:<target>` means a replayed suite item failed against the mutant, and
   that item can be a V3 check between generated layers: only `detection = authored` means a gold item detected
-  it. Never call a `generated_only` kill a gold detection; verify writes a NOT PROVEN line for it with what would
-  help (a remedy per operator).
+  it. Never call a `generated_only` kill a gold detection; in the default mode verify writes a NOT PROVEN line for it
+  with what would help (a remedy per operator); in require mode the check fails instead (or is `not_run` when suite
+  items were left out).
 - Since 0.23.0 `verify/result.json` also holds an `evidence` object (statuses unchanged in the default mode): per
   gold query its kind and generated text, the members it compares, its comparisons and those with rows; on
   full-scope runs (every part, every gold query) every facet of a measure, hierarchy and the class column with its

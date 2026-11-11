@@ -6,8 +6,9 @@ Release notes: [docs/releases/v0.23.0.md](docs/releases/v0.23.0.md).
 
 What a pass means. Every check now has an evidence kind, a passing V4 mutant check says what kind of item detected
 the mutant, the parts of measures and hierarchies without authored evidence are named, and a gold query that compared
-no row is disclosed. By default this is disclosure: check ids, check counts and exit-code rules do not change, and
-statuses change only in the one case under "Changed".
+no row is disclosed. By default this is disclosure: check ids, check counts and exit-code rules do not change (apart
+from the new exit 2 for an identifier that ends with a line break, under "Changed"), and statuses change only in the
+one suite-order case under "Changed".
 
 ### Added
 
@@ -33,11 +34,12 @@ statuses change only in the one case under "Changed".
 - verify: not_proven lines for gold SQL that names the output schema, names a generated relation (`<h>_closure`,
   `<h>_cycles`, `v_shape_<id>`, `v_rule_<id>`, `v_rules_subjects`; any rule view is the one item `relation:v_rule_*`,
   never the text that matched; case folds in ASCII only) or contains a generated measure filter clause
-  verbatim; for a gold query whose every comparison that ran had zero rows on both sides; for an element whose facets
-  have no authored evidence (one line per element, with reasons and the gold queries concerned); for a V4 kill that
-  only a check between generated layers made, with a remedy for its operator (for `measure_agg_to_max`: a gold query
-  that aggregates the measure over more than one key); for a kill by an item of no known kind; and for gaps and kills
-  accepted by `verify.accepted_gaps`.
+  verbatim; for a gold query whose every comparison that ran had zero rows on both sides; and for gaps and kills
+  accepted by `verify.accepted_gaps`. In the default mode also for an element whose facets have no authored evidence
+  (one line per element, with reasons and the gold queries concerned), for a V4 kill that only a check between
+  generated layers made, with a remedy for its operator (for `measure_agg_to_max`: a gold query that aggregates the
+  measure over more than one key), and for a kill by an item of no known kind; in require mode the
+  `gold_evidence:<element>` checks and the failing V4 checks with their next actions take the place of these three.
 - report: with a verify result, a `report.json` `evidence` key (with `mutation_reason`: `not_recorded`,
   `not_included`, `v4_not_run`), a `## Evidence` section in `report.md` before `## Not proven`, and
   `  EVIDENCE  ` console lines after the NOT PROVEN lines (not with `--quiet`): checks by kind, the mutant split, the
@@ -77,8 +79,11 @@ statuses change only in the one case under "Changed".
 - The next action of a surviving V4 mutant reads "no replayed suite item detects this kind of error" instead of "no
   gold query observes this kind of error". The `shape_q.measure_total_sql` docstring no longer calls the V3 total SQL
   independent of the Cube model: it uses the same `cube_gen.where_sql`.
-- verify prints more NOT PROVEN lines for most configurations, so scripts that count them see more; report gets no
-  new NOT PROVEN line. Console parsers should ignore lines that start with `  EVIDENCE  `.
+- verify prints more NOT PROVEN lines for most configurations, so scripts that count them see more: on the clean demo
+  verify prints 8 instead of 4 (the three `measure_agg_to_max` kills by generated checks only and the facet
+  `part+m_firm_open` without authored evidence), and the whole quick start 18 instead of 14. report's console prints
+  no new NOT PROVEN line of its own, but `report.md` "## Not proven" and the not_proven count of the `stage:verify`
+  detail include verify's new lines. Console parsers should ignore lines that start with `  EVIDENCE  `.
 - Configuration: an identifier (gold ids, measure and entity names, the class column and the other names checked
   against `^[a-z_][a-z0-9_]{0,62}$`) or a Cube member of `cube_query` or `map` that ends with a line break is now exit 2
   (`invalid identifier: ...`, `bad Cube member ...`); before, the pattern's `$` let it through.

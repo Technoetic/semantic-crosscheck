@@ -812,14 +812,15 @@ be met first. The change goes either way: `error` or `not_run` can become `pass`
 - `facet`: what the operator changes (the facet table below), and `gold_comparing`: the authored gold queries of this
   run whose `map` compares that facet.
 
-A detail without a `killed_by` key (an error, a gated mutant) gains no key. A kill whose detection is
-`generated_only` gets the not_proven line N5 with a remedy for its operator, one whose detection is `unattributed`
-the line N6; a kill that `verify.accepted_gaps` lists gets N5a instead (the lines are in section 8, "Evidence
-kinds"). `verify/mutation-coverage.json` keeps `schema_version` 1 and gains `detection` on every row that has a
-`killed_by` key and `kind` on every receipt item ([mutation coverage](mutation-coverage.md)). The mutant split of the
-`evidence` object puts every selected mutant in exactly one bucket, the first that applies: `not_judged` (a V4 check
-`not_run` or `error`, or a coverage row without a check that is neither equivalent nor not applicable), `survived`
-(no killer, check `fail`), `accepted` (a `generated_only` or `unattributed` kill `verify.accepted_gaps` lists),
+A detail without a `killed_by` key (an error, a gated mutant) gains no key. In the default disclose mode a kill whose
+detection is `generated_only` gets the not_proven line N5 with a remedy for its operator, one whose detection is
+`unattributed` the line N6; in require mode (below) the rewritten status and its next action take their place. A kill
+that `verify.accepted_gaps` lists gets N5a instead, in both modes (the lines are in section 8, "Evidence kinds").
+`verify/mutation-coverage.json` keeps `schema_version` 1 and gains `detection` on every row that has a `killed_by` key
+and `kind` on every receipt item ([mutation coverage](mutation-coverage.md)). The mutant split of the `evidence` object
+puts every selected mutant in exactly one bucket, the first that applies: `not_judged` (a V4 check `not_run` or
+`error`, or a coverage row without a check that is neither equivalent nor not applicable), `survived` (no killer,
+check `fail`), `accepted` (a `generated_only` or `unattributed` kill `verify.accepted_gaps` lists),
 `killed_authored`, `killed_generated_only`, `unattributed` (also a pass without a `killed_by` key); a mutant without a
 check is `equivalent` or `not_applicable` from its coverage row. It also records `operators_selected` (of the 9) and
 `operators_not_selected`; `verify.mutation_operators = []` therefore shows "0 of 9 operators selected", never a
@@ -1174,17 +1175,19 @@ one space. No other normalisation. Then, in this order:
    `relation:v_rule_*`, never the text that matched (it may be the content of a literal). Gold SQL runs with the
    connection's own `search_path`, so a gold query can read a generated table without naming the schema. A source
    table or CTE with the same name is found too; that only lowers a kind.
-
-Case folding in rules 1 and 2 is ASCII only, as PostgreSQL folds unquoted identifiers: a non-ASCII lookalike of a
-letter (U+017F for `s`, U+212A for `k`) does not match, and a non-ASCII letter right after a name does not stop a
-match. Every item is built from the configuration or is fixed text, so nothing the gold SQL holds reaches a result.
 3. `filter:measures.<m>`: a clause of `cube_gen.where_clauses(m)` other than the first (the grain clause
    `t."<by>" IS NOT NULL` is too common), whitespace-collapsed, occurs in the text. `cube_gen.where_sql(m)` is these
    clauses joined with `AND`.
 
+Case folding in rules 1 and 2 is ASCII only, as PostgreSQL folds unquoted identifiers: a non-ASCII lookalike of a
+letter (U+017F for `s`, U+212A for `k`) does not match, and a non-ASCII letter right after a name does not stop a
+match. Rule 3 is an exact, case-sensitive substring match. Every item is built from the configuration or is fixed
+text, so nothing the gold SQL holds reaches a result.
+
 Any match makes the kind of the gold query `generated` (`gold[].kind` and `generated_text` in the evidence object):
 its `v1:<gold>` and `v2:<gold>:<stratum>` checks count as generated, its items run after the authored items in V4
-(section 7), and its comparisons and kills give no facet authored evidence. Statuses do not change. Not found:
+(section 7), and its comparisons and kills give no facet authored evidence. V1 and V2 statuses do not change; V4
+statuses and `killed_by` can change, because the suite order changes (section 7, "What killed a mutant"). Not found:
 paraphrased copies (a hand-written `upper(btrim(s.location_id)) IN ('MAIN', 'SUB')` does not match the generated
 `upper(btrim(t."location_id")) IN ('MAIN', 'SUB')`), generated SQL reached through a view the user made, and
 dynamic SQL. A gold file that cannot be read is not flagged; its comparisons error as before. A unit test holds the
@@ -1206,7 +1209,7 @@ five demo gold queries free of every match.
 | `v5:witness:<name>` | `structural` | a synthetic graph the engine wrote: it tests templates, not this data |
 | A V4 kill by an authored item that sees the change only through a join | `mutation`, `detection = authored` | the gold rows differed from Cube's |
 | A V2 stratum whose bindings were all empty, a V1 binding with no row | `authored`, listed in `zero_row_checks` (`empty_stratum_zero_row_checks` for a stratum named `empty`) | the kind says who wrote the side; the list says nothing was compared |
-| `v1:<gold>` and `v2:<gold>:<stratum>` of a gold query without parameters | both `authored`, one comparison | V1 replays the first binding and V2 the same single binding (`all`); the report.md table says "v1 repeats the first binding of v2" |
+| `v1:<gold>` and `v2:<gold>:<stratum>` of a gold query without parameters | both `authored`; the same binding is compared twice (`comparisons` counts 2) | V1 replays the first binding and V2 the same single binding (`all`); the report.md table says "v1 repeats the first binding of v2" |
 | Optional diagnostics, `data-rules`, `expect` | not counted | they are not report stages |
 
 #### Gold accounting and facets

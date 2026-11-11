@@ -346,7 +346,7 @@ python skills/semantic-crosscheck/scripts/sxc.py report --config demo/crosscheck
 <details>
 <summary><b>✅ 정상 데모의 실제 기대 출력과 NOT PROVEN 펼치기</b></summary>
 
-CLI 출력 원문을 유지했습니다. 아래 검사 수와 `NOT PROVEN` 문장은 문서 통합 테스트에서도 대조합니다. `reason` 출력은 0.10.0부터 구문 사전 검사를 포함합니다.
+CLI 출력 원문을 유지했고 `next:` 줄만 생략했습니다. 아래 검사 수, `NOT PROVEN` 문장과 report의 `EVIDENCE` 줄은 문서 통합 테스트에서도 대조합니다. `reason` 출력은 0.10.0부터 구문 사전 검사를 포함합니다.
 
 ```text
 [sxc demo] PASS  checks: 5 pass, 0 fail, 0 error, 0 not_run  -> .../demo/.sxc/demo/result.json
@@ -366,13 +366,21 @@ CLI 출력 원문을 유지했습니다. 아래 검사 수와 `NOT PROVEN` 문�
 [sxc verify] PASS  checks: 47 pass, 0 fail, 0 error, 0 not_run  -> .../demo/.sxc/verify/result.json
   NOT PROVEN  v4:measure_normalization_drop:on_hand equivalent on this data
   NOT PROVEN  v4:measure_normalization_drop:consigned equivalent on this data
+  NOT PROVEN  v4:measure_agg_to_max:firm_open: killed by v3:total:m_firm_open.value, a check between generated layers; no replayed gold item detected this change to measures.firm_open (gold queries that compare m_firm_open.value: q02_where_used); a gold query that returns one row per key of measures.firm_open cannot see this change, because the measure cube holds one pre-aggregated row per key; add a gold query that aggregates measures.firm_open over more than one key
+  NOT PROVEN  v4:measure_agg_to_max:on_hand: killed by v3:total:m_on_hand.value, a check between generated layers; no replayed gold item detected this change to measures.on_hand (gold queries that compare m_on_hand.value: q03_stock); a gold query that returns one row per key of measures.on_hand cannot see this change, because the measure cube holds one pre-aggregated row per key; add a gold query that aggregates measures.on_hand over more than one key
+  NOT PROVEN  v4:measure_agg_to_max:consigned: killed by v3:total:m_consigned.value, a check between generated layers; no replayed gold item detected this change to measures.consigned (gold queries that compare m_consigned.value: q03_stock); a gold query that returns one row per key of measures.consigned cannot see this change, because the measure cube holds one pre-aggregated row per key; add a gold query that aggregates measures.consigned over more than one key
+  NOT PROVEN  measures.firm_open: no authored evidence for part+m_firm_open (no_gold_reads); only checks between generated layers cover these facets; add a gold query, stratum or parameter set that compares them, or list them in verify.accepted_gaps
   NOT PROVEN  runtime evidence is unbound: actual PostgreSQL, Node, Java, HermiT and selected Cube installation were not bound; local engine/package metadata alone does not establish the executing runtime
   NOT PROVEN  data revision is unbound: no owner-maintained revision was checked; separate database sessions and cached gold answers are not proven to observe one data version
 [sxc report] PASS  checks: 6 pass, 0 fail, 0 error, 0 not_run  -> .../demo/.sxc/report/result.json
   NOT PROVEN  data revision is unbound: no owner-maintained revision was checked; separate database sessions and cached gold answers are not proven to observe one data version
+  EVIDENCE  checks by kind (pass of all): authored 17/17 (1+1 compared no row), recomputed 1/1, generated 26/26, structural 40/40, mutation 12/12
+  EVIDENCE  mutants (9 of 9 operators selected): 9 killed with authored detection, 3 killed by generated checks only (v4:measure_agg_to_max:firm_open, v4:measure_agg_to_max:on_hand, v4:measure_agg_to_max:consigned), 0 unattributed, 0 accepted, 0 survived, 0 not judged, 2 equivalent, 0 not applicable
+  EVIDENCE  facets: 15 of 17 compared with rows holding values by authored gold SQL, 1 more detected by an authored mutant kill; no authored evidence: part+m_firm_open (no_gold_reads)
+  EVIDENCE  zero rows: 1 authored check(s) compared no row (v2:q02_where_used:top), 1 more in strata named empty; gold queries that compared no row: none; gold SQL with generated text: none
 ```
 
-`NOT PROVEN` 14줄은 정상 데모에서도 예상됩니다. 기본 데모에는 revision 조회가 없어 build·reason·cube·verify·report 각각에 데이터 버전 미확인 안내가 나옵니다(5줄). 실제 실행 환경을 결과에 묶는 `runtime_evidence` 설정도 기본값대로 꺼져 있어 build·reason·cube·verify 각각에 실행 환경 미확인 안내가 나옵니다(4줄). 나머지 5줄은 reason의 3줄과 verify의 2줄입니다. reason에서는 생성한 SHACL의 사전 검사가 구문 규칙의 일부만 확인한다는 안내가 나오고, `open_le_total`은 SQL 전용 규칙이며, 부품으로 쓰인 제품의 정의 클래스는 양쪽 모두 비어 있습니다. verify에서는 위치 코드의 공백·대소문자 변형이 없는 데이터라서 정규화를 제거한 두 변이가 원래 결과와 같습니다. `verify`는 변이마다 Cube를 시작하므로 느립니다. 기존 문서화된 측정 환경에서는 약 43초였으며 실행 환경에 따라 달라집니다.
+`NOT PROVEN` 18줄은 정상 데모에서도 나옵니다. 기본 데모에는 revision 조회가 없어 build·reason·cube·verify·report 각각에 데이터 버전 미확인 안내가 나옵니다(5줄). 실제 실행 환경을 결과에 묶는 `runtime_evidence` 설정도 기본값대로 꺼져 있어 build·reason·cube·verify 각각에 실행 환경 미확인 안내가 나옵니다(4줄). 나머지 9줄은 reason의 3줄과 verify의 6줄입니다. reason에서는 생성한 SHACL의 사전 검사가 구문 규칙의 일부만 확인한다는 안내가 나오고, `open_le_total`은 SQL 전용 규칙이며, 부품으로 쓰인 제품의 정의 클래스는 양쪽 모두 비어 있습니다. verify에서는 위치 코드의 공백·대소문자 변형이 없는 데이터라서 정규화를 제거한 두 변이가 원래 결과와 같습니다(2줄). 집계를 `max`로 바꾼 세 변이(`v4:measure_agg_to_max:firm_open`, `v4:measure_agg_to_max:on_hand`, `v4:measure_agg_to_max:consigned`)는 생성 계층끼리의 검사 `v3:total:*`만 검출했습니다(3줄). 지표 cube가 키마다 미리 집계한 한 행을 두므로, 키마다 한 행을 돌려주는 gold 질의로는 이 변화를 볼 수 없습니다. 마지막 1줄은 부품 cube와 `firm_open` 지표의 조인 `part+m_firm_open`을 비교하는 gold 질의가 없어 사람이 쓴 근거가 없다는 안내입니다. 세 검사는 기본 모드에서 통과하며, 이 줄들은 판정을 바꾸지 않습니다. report의 `EVIDENCE` 4줄은 `NOT PROVEN` 줄이 아닙니다. 종류별 검사 수, 변이 분류(사람이 쓴 항목이 검출 9, 생성 계층끼리의 검사만 검출 3, 이 데이터에서 동등 2), facet(17개 중 15개를 값이 있는 행으로 비교, 1개는 사람이 쓴 항목의 변이 검출, 1개는 근거 없음), 0행 비교(`v2:q02_where_used:top`, 이름이 `empty`인 층의 `v2:q01_explosion:empty`)를 보여 줍니다. `verify`는 변이마다 Cube를 시작하므로 느립니다. 기존 문서화된 측정 환경에서는 약 43초였으며 실행 환경에 따라 달라집니다.
 
 </details>
 
@@ -405,7 +413,7 @@ python skills/semantic-crosscheck/scripts/sxc.py report --config demo/crosscheck
 | 미결 수량이 총수량보다 큰 주문 3건 | `shape:open_le_total` (build) | fail, 위반 3건; SQL에서만 검사 |
 | 하위 부품을 가진 원자재 | `owl:consistency` (reason) | fail; V5 검사는 `not_run` |
 | 잘못된 CSV 행 2건 | `demo:copy_on_error` (demo) | pass, `skipped=2` |
-| 위치 코드의 공백·대소문자 변형 | 없음 | q03이 Cube와 같이 정규화해 `v1:q03_stock` 통과; `v4:measure_normalization_drop:on_hand` 변이는 q03이 검출 |
+| 위치 코드의 공백·대소문자 변형 | 없음 | q03이 Cube와 같이 정규화해 `v1:q03_stock` 통과; `v4:measure_normalization_drop:on_hand` 변이는 q03의 V2 항목이 검출(`detection`은 `authored`) |
 | 날짜 범위를 벗어난 확정 주문 2건 | 없음 | q05가 양쪽에서 같은 범위를 적용하므로 `v1:q05_firm_window` 통과 |
 
 정상 데모 뒤에는 이전 폐포 테이블이 남습니다. 순환 때문에 `build`가 새 폐포를 적용하지 않아 이 순서의 `cube`는 0으로 종료하지만, `verify`는 그 폐포를 신뢰하지 않습니다. **이전 정상 폐포가 없는 새 DB에서 dirty부터 시작하면 `cube`도 1로 종료**하며, 폐포 관련 세 gold 질의의 `cube:gold_members` 검사에서 실패합니다.
@@ -584,7 +592,7 @@ flowchart TD
 |---|---|---|
 | `authored` | 한쪽이 사람이 쓴 gold SQL의 행이며, 그 SQL에 생성한 텍스트가 그대로 들어 있지 않음. 누가 썼는지만 말하며 gold SQL이 옳거나 설정과 독립이라는 뜻은 아님 | `v1:<gold>`, `v2:<gold>:<stratum>` |
 | `recomputed` | 한쪽을 생성기 모듈을 가져오지 않는 엔진 코드가 원본 행에서 다시 계산. 생성기 코드와 독립일 뿐 설정 항목과 독립은 아님 | `v3:closure_oracle:<h>` |
-| `generated` | 두 쪽 모두 `crosscheck.toml`에서 생성기로 만들었거나, 한 생성 계층을 자기 자신과 비교. 두 번째 엔진(HermiT)을 써도 입력을 생성기가 만들면 여기에 속함 | `v3:*`, `shacl:<id>`, `v5:closure:<h>`, `closure_apply:<h>` |
+| `generated` | 두 쪽 모두 `crosscheck.toml`에서 생성기로 만들었거나, 한 생성 계층을 자기 자신과 비교. 두 번째 엔진(HermiT)을 써도 입력을 생성기가 만들면 여기에 속함 | `v3:closure_oracle:<h>`를 뺀 `v3:*`, `shacl:<id>`, `v5:closure:<h>`, `closure_apply:<h>` |
 | `structural` | 한쪽뿐: 데이터·설정·환경·제공된 모델에 대한 규칙, 실행 범위의 기록 | `shape:<id>`, `cube:meta`, `scope:v1` |
 | `mutation` | V4 변이 검사. 무엇이 변이를 검출했는지는 `detection`에 따로 기록 | `v4:<operator>:<target>` |
 
@@ -595,7 +603,7 @@ gold SQL에 생성한 텍스트가 그대로 있으면(출력 스키마 이름, 
 | `detection` | 뜻 |
 |---|---|
 | `authored` | 다시 실행한 사람이 쓴 gold 항목이 변형 모델에서 실패함. gold 질의가 이 변화를 검출했다는 표시는 이것뿐 |
-| `generated_only` | 다시 실행한 사람이 쓴 gold 항목은 모두 통과했고, 생성 계층끼리의 검사(V3 항목 또는 생성한 텍스트가 있는 gold 항목)만 실패함. verify가 연산자별 처방을 담은 `not_proven` 줄을 남김 |
+| `generated_only` | 다시 실행한 사람이 쓴 gold 항목은 모두 통과했고, 생성 계층끼리의 검사(V3 항목 또는 생성한 텍스트가 있는 gold 항목)만 실패함. 기본 모드에서는 verify가 연산자별 처방을 담은 `not_proven` 줄을 남기고, `"require"` 모드에서는 그 줄 대신 검사가 `fail`이 되어 다음 할 일을 알림(suite 항목이 빠졌으면 `not_run`과 그 사실을 적은 줄) |
 | `unattributed` | 어떤 근거 규칙도 분류하지 못한 항목이 실패함 |
 | `none` | 실패한 항목이 없음(변이가 살아남음) |
 
@@ -784,7 +792,7 @@ Cube의 기본 오류 로그에는 오류 클래스·코드·대략적인 범주
 | 증명하지 못한 범위 | 이유 |
 |---|---|
 | 빈 층 | 해당 종류의 데이터가 없어 V2 비교 대상 없음 |
-| 0행 비교 | 양쪽 모두 0행인 V1·V2 비교는 통과함. 0.23.0부터 그런 검사를 report의 `EVIDENCE` 0행 줄과 `evidence`에 나열하고, 실행한 모든 비교가 0행인 gold 질의에는 `not_proven` 줄을 남김. 그래도 비교한 행이 있는 바인딩·층·파라미터를 더하는 일은 사용자 몫임 |
+| 0행 비교 | 양쪽 모두 0행인 V1·V2 비교는 통과함. 0.23.0부터 그런 검사를 모두 verify와 report의 `evidence`에, 그중 authored 검사를 report의 `EVIDENCE` 0행 줄에 나열하고, 실행한 모든 비교가 0행인 gold 질의에는 `not_proven` 줄을 남김. 그래도 비교한 행이 있는 바인딩·층·파라미터를 더하는 일은 사용자 몫임 |
 | 동등 변이 | 현재 데이터에서 모델을 바꿔도 결과가 같아 V4로 구분 불가. 증인 0은 모델의 공개 멤버에 대한 어떤 Cube 질의도 답이 같을 때만 나와야 하므로 `closure_join_swap` 증인은 폐포 쌍의 두 끝이 서로 다른 지표 행에 붙는 쌍을 셈(두 값이 같아도 셈). 0.13.0까지는 두 끝의 값만 비교해(`sum`·`count`는 행이 없으면 0) 부품마다 값이 같은 갈래·다이아몬드나 한 끝 0·다른 끝 행 없음을 동등으로 보고 실행하지 않았음. Cube는 폐포의 `many_to_one` 조인으로 닿은 지표를 그룹마다 지표 cube의 서로 다른 기본키로 집계하므로 갈래·다이아몬드는 값이 같아도 그룹별 합계가 달라짐. 한 끝 0·다른 끝 행 없음은 `zero_if_null`이 아니면 V1이 NULL과 0을 구분해 드러나고, 끝을 공유하는 다른 쌍이 없고 두 끝 값이 같은 쌍은 공개 차원인 지표 `key`로만 드러남. 이제는 실행해 살아남으면 V4 실패로 보고함 |
 | SQL에서만 비교한 규칙 | `sql_violation` 제약. 한 shape에 class와 범위가 함께 있는 제약은 `sh:class` 속성 shape와, 같은 열 값을 리터럴로 담은 값 술어(`<entity>.<column>/value`)의 범위 속성 shape 두 개로 SHACL과 비교함(0.5.0까지는 SQL에서만 비교). 같은 열에 서로 다른 RDF 값 유형이 필요한 shapes(class와 범위, 서로 다른 class)는 값 그룹별 데이터 그래프로 나눠 SHACL과 비교함. 0.11.0부터 `verify.shacl_pairs = true`를 켜면 다른 제약 없이 전체가 정확히 `t.<a> <op> t.<b>`(`>`·`>=`·`<`·`<=`)인 `sql_violation`만 `sh:lessThan`·`sh:lessThanOrEquals`로 바꿔 `shacl:pair:<id>`로 따로 비교함. 두 열이 NaN·무한대 없는 기본형 `smallint`·`integer`·`bigint`·`numeric`이고(이 형식 위의 도메인은 `column_type`) 대상 키가 중복되지 않을 때만 비교하며, 아니면 `not_run`. `not_run`인 쌍 검사가 있으면 reason과 report는 통과할 수 없으니 열 형식이나 데이터를 고치거나 `verify.shacl_pairs = false`로 꺼야 함. 주석·형 변환·식·`=`·`<>`는 계속 SQL에서만 비교함. 통과는 이 스냅샷에서 pySHACL과 SQL 뷰가 같은 행을 가리킨다는 뜻이며 규칙의 옳음은 증명하지 않음 |
 | 비어 있는 정의 클래스 | OWL과 SQL 양쪽 모두 멤버가 없어 비교가 공허하게 성립 |

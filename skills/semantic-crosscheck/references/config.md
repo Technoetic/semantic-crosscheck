@@ -272,7 +272,7 @@ otherwise a shared mistake goes unnoticed.
 | `expect` | list of tables | `[]` | Literal expected-row cases, as `[[gold.expect]]` (below). Only the `expect` stage runs them; every stage validates them, and editing one changes `crosscheck.toml`, so `report` treats earlier operational results as stale until they are rerun. |
 
 Without `params` and `param_sets` a gold query has one binding, `all`. An empty stratum is reported as
-not proven, not as a failure. Since 0.23.0 a binding whose gold and Cube rows are both empty also passes, but
+not proven, not as a failure. A binding whose gold and Cube rows are both empty passes; since 0.23.0
 `verify/result.json` lists every V1/V2 check that compared no row (`zero_row_checks`; those of a stratum named
 `empty`, which many gold queries answer with no row by design, in `empty_stratum_zero_row_checks`), and a gold query
 whose every comparison that ran had zero rows on both sides gets a not proven line: add a binding, stratum or

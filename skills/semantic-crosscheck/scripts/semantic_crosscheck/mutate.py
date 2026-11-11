@@ -1,12 +1,14 @@
 """V4 mutation tests: deliberately broken copies of the generated Cube model.
 
-A gold suite that passes proves little until it is shown to fail on a wrong model. Each operator patches
+A suite that passes shows little until it is shown to fail on a wrong model. Each operator patches
 one element of a deep copy of the model (a closure-cube member, the WHERE clause of a measure cube, a
-measure type, a join); a fresh Cube process serves the copy and the suite has to notice. Before Cube starts,
+measure type, a join); a fresh Cube process serves the copy and the suite has to notice. The suite verify hands
+over replays gold items (V1, V2) and V3 items; any failing item kills the mutant, so a kill is not by itself a gold
+detection: verify records which kind of item killed it (detection). Before Cube starts,
 a witness query counts what the mutation changes on the current data, whatever the suite happens to query.
 Witness 0 means the mutant is equivalent on this data: no suite could kill it, so it goes to not_proven instead of
-being run. A mutant with a positive witness that survives fails its check: the gold suite does not observe that
-element, and the check names the configuration entry the element comes from.
+being run. A mutant with a positive witness that survives fails its check: no replayed suite item detects that
+change, and the check names the configuration entry the element comes from.
 
   operator                    patched element                                  witness (current data)
   closure_depth_shift         <h>_closure.min_depth -> (min_depth) + 1          closure rows

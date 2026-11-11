@@ -162,8 +162,17 @@ after it.
 - `not_proven` lines say what passing checks do not show. They do not change the status.
 - A check id `stage` means the stage stopped before its own checks (exit 2 or 3, Ctrl-C or an unexpected
   error); its detail says why.
-- In V4 a passing `v4:<operator>:<target>` means the mutant was killed by a failing suite item
-  (`killed_by`); a failing one means it survived, so the gold suite cannot see that kind of error.
+- In V4 a passing `v4:<operator>:<target>` means the mutant was killed: a replayed suite item failed against it
+  (`killed_by`), and that item can be a V3 check between generated layers. Only `detection = authored` means that a
+  gold item did; `generated_only` means every replayed authored gold item passed against the mutant, so never call
+  such a kill a gold detection. A failing V4 check (default mode) means the mutant survived: no replayed suite item
+  detects that kind of error.
+- Every check has an evidence kind (authored, recomputed, generated, structural, mutation; docs/design.md section 8,
+  "Evidence kinds"). With a verify result, `report` prints `  EVIDENCE  ` lines after the NOT PROVEN lines (checks by
+  kind, the mutant split, facets without authored evidence, zero-row comparisons, gold SQL with generated text): show
+  them with the verdict. They never change it. `verify.gold_observation = "require"` (opt-in) turns those
+  disclosures into statuses (`generated_only`, `unattributed`, `no_rows_compared`, `gold_evidence:<element>`), and
+  a require-mode `fail` V4 check still carries `killed_by`: read `detection`.
 - `report` requires `build`, `cube` and `verify` (and `reason` with an ontology or shapes) to have run
   after the stages they depend on, and passes only when all of them passed.
 - With `source.data_revision_sql_file`, start/end probes and report freshness checks bind evidence

@@ -39,6 +39,19 @@ Each receipt lists safe item ids, `status`, `attempts`, `planned_items`, `execut
 attempted, not that every item passed, that all possible tests were selected, or that a business result
 was proven. `killed_by` identifies the first failing item, including its exact chunk/NULL suffix.
 
+Since 0.23.0 the artifact keeps `schema_version` 1 and gains two keys. Every receipt item, executed or not, has
+`kind`: the evidence kind of the item (`authored` for an item of an authored gold query, `generated` for a V3 item or
+an item of a gold query whose SQL contains generated text, `unclassified` otherwise). Every mutant row with a
+`killed_by` key (a killed or surviving mutant) has `detection`, the value of its V4 check: `authored`,
+`generated_only`, `unattributed` or `none`. Rows without `killed_by` (equivalent, not applicable, gated, errored or
+unrun mutants) get no `detection`, since none is defined for them. The suite runs authored gold items first, so
+`generated_only` means that every replayed authored item passed against the mutant; it does not say which later
+items would also have failed, because they were not run. The artifact stays outside report authority: report never
+reads it, and these item kinds never set the kind of a check. The kinds report counts come from the registry
+([design, section 8](design.md#evidence-kinds)). In `verify.gold_observation = "require"` mode a rewritten kill's row
+gets `outcome` `survived` (a `fail`) or `not_run` (`suite_incomplete`) with its `reason`, and keeps `killed_by` and
+`detection`.
+
 Baseline failures are excluded from mutation replay and disclosed in `not_proven` and the artifact's
 `excluded_items` (safe ids and baseline statuses). If no baseline passes, every selected mutant instance
 still appears as `not_run` without witness SQL or Cube startup. A survivor when

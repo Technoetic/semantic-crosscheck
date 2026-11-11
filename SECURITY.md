@@ -6,7 +6,7 @@ and how to report a vulnerability.
 
 ## Supported versions
 
-Security fixes are made for the latest release (currently 0.22.x). Older releases are not patched.
+Security fixes are made for the latest release (currently 0.23.x). Older releases are not patched.
 
 ## Reporting a vulnerability
 
@@ -48,7 +48,7 @@ disclosure.
 | Supply chain of the Cube adapter | `npm ci --ignore-scripts` from a committed lockfile (npm verifies every tarball's integrity; no package install script runs). The native module is downloaded over https (redirects must stay on https) and accepted only when its size and SHA-256 match `native-sha256.json`; only its single expected file is extracted. On Linux the glibc version is checked before anything is installed. `installed.json` records the hashes of the adapter files, so an install made from other adapter files (an older or modified checkout) is refused until `cube-install` refreshes it. |
 | Supply chain of the Python and CI dependencies | Direct Python dependencies are pinned to exact versions in `requirements/`. GitHub Actions are pinned by full commit SHA and the workflow token is read-only (`contents: read`). |
 | Reasoner side effects | HermiT runs in a private temporary directory that is removed afterwards. The Pellet reasoner bundled with owlready2 (AGPL-3.0) is never invoked. |
-| An agent misreads or overstates a result | Stage status is fail-closed (any error, failure or check not run prevents a pass) and `not_run` is never a pass. A run narrowed with `--only`, `--gold`, `--hierarchy` or `--rule` leaves `not_run` checks for what it skipped, so it cannot pass. A data rule gets a verdict only when its PostgreSQL and Python evaluations agree and its authored examples hold; a disagreement, a tripped gate or a budget leaves it `not_run`, and every agreement carries a `not_proven` line that agreement does not prove the rule right. In V4 only a failing suite item kills a mutant: an item that errors leaves the mutant unjudged, and a survivor of an incomplete suite is `not_run`. `not_proven` lists what a run could not prove. `report` recomputes statuses from the checks, requires `build`, `cube` and `verify` (and `reason` when there is an ontology or shapes) and counts a missing or stale stage as `not_run`. Data read from the database and from results is data, never instructions. |
+| An agent misreads or overstates a result | Stage status is fail-closed (any error, failure or check not run prevents a pass) and `not_run` is never a pass. A run narrowed with `--only`, `--gold`, `--hierarchy` or `--rule` leaves `not_run` checks for what it skipped, so it cannot pass. A data rule gets a verdict only when its PostgreSQL and Python evaluations agree and its authored examples hold; a disagreement, a tripped gate or a budget leaves it `not_run`, and every agreement carries a `not_proven` line that agreement does not prove the rule right. In V4 only a failing suite item kills a mutant: an item that errors leaves the mutant unjudged, and a survivor of an incomplete suite is `not_run`. Since 0.23.0 a kill records `detection`, the kind of the item that failed: a pass whose `detection` is `generated_only` was detected only by a check between layers generated from the same configuration and gets a `not_proven` line, so it cannot be read as a gold query's detection, and report counts every check under its evidence kind (authored, recomputed, generated, structural, mutation) on the `  EVIDENCE  ` lines. A recorded kind can only lower a check's kind, never raise it, and a check no registry rule names is never counted as authored or recomputed. `not_proven` lists what a run could not prove. `report` recomputes statuses from the checks, requires `build`, `cube` and `verify` (and `reason` when there is an ontology or shapes) and counts a missing or stale stage as `not_run`. Data read from the database and from results is data, never instructions. |
 | A secret, an address or a private term is published with the repository | `tools/leak_scan.py` scans for secrets, e-mail addresses outside `tools/leak-allow.txt` and an optional private deny-list kept outside the repository; the git hooks in `.githooks/` run it before every commit and push, and CI scans the working tree and the whole history of a full clone. Findings are reported by location and pattern id, never by the matching text. |
 
 ## TLS
@@ -114,7 +114,7 @@ current directory. Use `verify-full` (or `verify-ca`) whenever the connection le
 ## Maintainer checklist for a public release
 
 - Turn on private vulnerability reporting in the repository settings, so the link above works.
-- Tag the release (`git tag -a v0.22.1`) and push the tag: README's Codex command pins `--ref v0.22.1`, and the
+- Tag the release (`git tag -a v0.23.0`) and push the tag: README's Codex command pins `--ref v0.23.0`, and the
   release archive is made from the tag with `git archive` and published with its SHA256SUMS.
 - Enable the hooks in the publishing clone with `git config core.hooksPath .githooks`, and set
   `SXC_DENYLIST` to the private deny-list (or `none`).

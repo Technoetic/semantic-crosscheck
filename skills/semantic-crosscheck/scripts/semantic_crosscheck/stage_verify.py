@@ -30,7 +30,8 @@ the model): text exactly, numbers as exact decimals, dates and timestamps in UTC
 
 V4 hands mutate.run_mutants a suite that replays V1 (first binding of every gold query), V2 (the first
 verify.mutant_bindings bindings of every stratum) and V3 against a mutant's Cube and stops at the first item that
-does not pass. A failing item kills the mutant (killed_by names the item); an item that still errors after one retry
+does not pass. A failing item kills the mutant (killed_by names the item, a gold item or a V3 item; the detection
+below says which kind); an item that still errors after one retry
 leaves the mutant unjudged (an error check with reason suite_error), because a query that could not run proves
 nothing. Only items that pass against the unmutated model are replayed, so a mutant is never "killed" by a defect
 the model already has; gold rows are computed once and reused for every mutant. The closure operators are gated by

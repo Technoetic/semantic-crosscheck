@@ -120,3 +120,62 @@ SQL meaning, bind plan periods to SQL parameters, prove business truth or certif
 query results. It does not solve the separate cross-engine snapshot problem.
 These limitations remain in the report's `not_proven` disclosures, including
 when every required stage passes.
+
+## Evidence kinds in the report
+
+Since 0.23.0, when a `verify` result is among the results report reads, report also says what kind of evidence
+each check is ([design, section 8, "Evidence kinds"](design.md#evidence-kinds)). This is disclosure only: no check,
+status, exit code or required stage of report changes, `report/result.json` gains no key, and a report without a
+verify result (the compatibility goldens) is unchanged apart from the engine fingerprint.
+
+`report.json` gains `evidence` as its last key:
+
+| Key | Meaning |
+|---|---|
+| `schema_version`, `rule_version` | 1 and the registry version |
+| `included_stages` | the stages whose checks are counted: a result that counts towards the verdict and is not stale, in report's stage order |
+| `excluded_stages` | `{"stage", "why"}` with `why` = `missing` (a required stage without a result), `stale`, or `not_counted`; an optional stage without a result is not listed |
+| `observation_recorded` | whether the verify result holds a readable `evidence` object |
+| `mode` | verify's `gold_observation` mode, or null when nothing is recorded |
+| `kinds` | per kind (`authored`, `recomputed`, `generated`, `structural`, `mutation`, and `unclassified` only when above 0): `pass`, `fail`, `error`, `not_run`, the check ids per stage under `ids`, and under `authored` also `zero_row` (the authored checks of both zero-row lists) |
+| `overridden` | gold entries whose recorded kind was above what the rule allows; they count as generated |
+| `mutation`, `mutation_reason` | verify's mutant split (operators selected and not selected, eight buckets, `generated_only` ids) with reason `""`; or `{"not_judged": <n>}` with `not_recorded` (no readable evidence), `not_included` (verify is stale) or `v4_not_run` (`--only` left V4 out; then `<n>` is 0) |
+| `facets`, `facets_reason` | `total`, `compared`, `detected`, `accepted` (facet ids), `gaps` (`facet`, `reason`) with reason `""`; or null with `narrowed`, `not_recorded` or `not_included` |
+| `zero_row_checks`, `empty_stratum_zero_row_checks`, `gold_no_rows` | verify's lists (empty when its evidence is not read) |
+| `gold_generated_text` | the gold queries that count as generated (generated text, or a recorded kind other than authored) |
+
+Every check of an included stage counts once under the kind of the registry. The only recorded kind report reads is
+the kind of a gold query in verify's evidence, which can lower `v1:<gold>` and `v2:<gold>:<stratum>` from authored to
+generated and never raise anything; without a gold entry they count as unclassified, never authored. What verify
+recorded about mutants, facets, zero rows and gold text is shown only when verify is included and its evidence is
+readable. Readable means: an object with `schema_version` 1, the current `rule_version`, `mode` disclose or require,
+a `gold` list, the three id lists as lists of strings, a `mutation` object with non-negative integer counts and string
+lists, and either `scope` full with facet rows and `facets_reason` "" or `scope` narrowed with `facets` null and
+`facets_reason` "narrowed"; a verify result that fails the result contract counts as having none. Only these keys are
+copied, so a hand-edited key never reaches a report output.
+
+`report.md` gains a `## Evidence` section before `## Not proven`: a fixed introduction (only authored and recomputed
+checks compare generated layers with something the generators did not produce; "authored" says who wrote one side,
+not that it is right; compared with rows is not detection; paraphrased copies of generated SQL are not detected;
+`expect` rows are not read), a table of the kinds with what the two sides are and the four status counts, and five
+bullets: the mutants, the facets, the authored checks that compared no row (strata named `empty` apart) with the gold
+queries that compared no row, the gold SQL with generated text, and the stages not included. A narrowed verify run
+gives "Facets: not judged (narrowed verify run).", a verify result without evidence "Mutants: not judged (the verify
+result has no evidence section)." and the same for facets, a stale verify "not judged (verify is not included:
+stale)", and a run without V4 "Mutants: not judged (V4 was left out of this narrowed verify run)."; none of them shows
+"0 of 0".
+
+The console prints, after the NOT PROVEN lines and before `next:`, not with `--quiet`:
+
+```text
+  EVIDENCE  checks by kind (pass of all): authored {p}/{n} ({z}+{ze} compared no row), recomputed {p}/{n}, generated {p}/{n}, structural {p}/{n}, mutation {p}/{n}[, unclassified {p}/{n}]
+  EVIDENCE  mutants ({k} of 9 operators selected[; not selected: {ops}]): {a} killed with authored detection, {g} killed by generated checks only[ ({ids})], {u} unattributed, {acc} accepted, {s} survived, {j} not judged, {e} equivalent, {na} not applicable
+  EVIDENCE  facets: {c} of {t} compared with rows holding values by authored gold SQL, {d} more detected by an authored mutant kill; no authored evidence: {none|facet (reason)[, ...]}[; accepted: {facets}]
+  EVIDENCE  zero rows: {z} authored check(s) compared no row[ ({ids})][, {ze} more in strata named empty]; gold queries that compared no row: {none|ids}; gold SQL with generated text: {none|ids}
+  EVIDENCE  not included: {stage} ({why})[, ...]
+  EVIDENCE  observation not recorded: the verify result has no readable evidence section
+```
+
+The last two lines appear only when a stage is left out or no evidence is recorded; a mutants or facets line that is
+not judged reads `mutants: not judged (...)` or `facets: not judged (...)` with the reasons above. Lists are cut at 10
+ids with `, and <n> more`. A tool that parses the console should ignore lines that start with `  EVIDENCE  `.

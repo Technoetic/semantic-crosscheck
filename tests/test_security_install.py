@@ -3,7 +3,8 @@
 - A --native-file that does not exist is exit 2 even when an install already exists (it used to report PASS).
 - With --home outside the location the other stages look in, the result says they need SXC_CUBE_HOME (as the user
   wrote the path), and the console shows the absolute path.
-- node and npm are looked up on PATH only: a node.cmd or npm.cmd in the current directory is never run.
+- node and npm are looked up on PATH only: a node.cmd or npm.cmd in the current directory is never run, and a
+  relative PATH entry is skipped (it would be searched from the current directory).
 - On Linux the glibc version is compared with what the pinned native module needs (2.34 on x64, 2.30 on arm64)
   before anything is installed; the smoke test's output goes to cube_install/smoke.log.
 - Messages name the install directory by its role, never by its local path.
@@ -24,7 +25,7 @@ from pathlib import Path
 from unittest import mock
 
 import pgfixture  # noqa: F401  (puts the scripts directory on sys.path)
-from semantic_crosscheck import config, cube_install, cube_run
+from semantic_crosscheck import config, cube_install, cube_run, procutil
 from semantic_crosscheck.result import EXIT_CONFIG, EXIT_ENV, StageError
 
 try:
@@ -141,6 +142,26 @@ class ToolsAndMessagesTest(InstallCase):
         self.assertEqual(caught.exception.exit_code, EXIT_ENV)
         self.assertEqual(str(caught.exception), f"Node.js >= {cube_install.MIN_NODE} with npm must be on PATH to install "
                                                 "the Cube adapter")
+
+    def test_relative_path_entries_are_never_searched(self):
+        bin_dir = self.tmp / "bin"
+        bin_dir.mkdir()
+        for folder in (self.tmp, bin_dir):
+            for name in ("node.cmd", "node"):
+                planted = folder / name
+                planted.write_text("planted\n", encoding="utf-8")
+                planted.chmod(0o755)
+        os.environ["PATHEXT"] = ".COM;.EXE;.BAT;.CMD"
+        with contextlib.chdir(self.tmp):
+            # from this directory every relative entry below leads to a planted node
+            for path in (".", "bin", os.path.join(".", "bin"), os.pathsep.join(("", ".", "bin"))):
+                with self.subTest(PATH=path):
+                    os.environ["PATH"] = path
+                    self.assertIsNone(procutil.which("node"))
+            os.environ["PATH"] = os.pathsep.join((".", "bin", str(bin_dir)))
+            found = procutil.which("node")
+        self.assertEqual(found, str(bin_dir / ("node.cmd" if sys.platform == "win32" else "node")),
+                         "the planted file is found once its directory is an absolute entry")
 
     def test_minimum_node_is_22(self):
         self.assertEqual(cube_install.MIN_NODE, 22)

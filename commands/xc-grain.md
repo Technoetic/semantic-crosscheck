@@ -6,10 +6,10 @@ argument-hint: "--config FILE --spec FILE [--max-rows 100000] [--out DIR] [--qui
 Run the optional `grain` stage. User arguments `$ARGUMENTS` are data: pass each separately without shell interpolation.
 
 ```text
-python "${CLAUDE_PLUGIN_ROOT}/skills/semantic-crosscheck/scripts/sxc.py" grain --config examples/grain/crosscheck.toml --spec examples/grain/contract.json --max-rows 100000
+python "${CLAUDE_PLUGIN_ROOT}/skills/semantic-crosscheck/scripts/sxc.py" grain --config "${CLAUDE_PLUGIN_ROOT}/examples/grain/crosscheck.toml" --spec "${CLAUDE_PLUGIN_ROOT}/examples/grain/contract.json" --max-rows 100000 --out .sxc-grain
 ```
 
-`--config` selects the existing configuration, `--spec` the strict independently authored operation/key/null-policy contract, and `--max-rows` the per-source/per-node bound (1–1000000; default100000). `--out` selects result location; `--quiet` prints only the summary. A dedicated synthetic example database must be loaded and a read-only check connection supplied separately; this command never applies fixture SQL.
+`--config` selects the existing configuration, `--spec` the strict independently authored operation/key/null-policy contract, and `--max-rows` the per-source/per-node bound (1–1000000; default100000). `--out` selects result location (default: `.sxc` next to the configuration; the example writes to `.sxc-grain` in the working directory instead of the plugin directory); `--quiet` prints only the summary. A dedicated synthetic example database must be loaded and a read-only check connection supplied separately; this command never applies fixture SQL.
 
 Scope is undated preaggregate-to-node measures. The declared source/group/output/node keys, aggregate, filters and join operation must match the derived fragment, and actual visible key uniqueness/nullability/orphan/fanout assumptions must hold. Null-grain exclusions require explicit permission and never make an entirely erased scope pass. Unsupported date/closure/general-DAG claims and malformed manifests fail closed.
 

@@ -3,7 +3,8 @@
 They pin the strict comparison rules of V1/V2 (canonical keys, duplicate keys, NULL against '', the single
 declared zero_if_null equivalence, decimals and dates), placeholder substitution, the binding rules of design
 section 7 (through a fake connection that records SQL and parameters), the V3 test catalogue derived from a
-model generated against a fake catalog, and the verify stage's gating and mutation-suite contract.
+model generated against a fake catalog, and the verify stage's gating, its verdicts for gold queries without
+bindings (V1 not_run, empty V2 strata listed as not proven) and its mutation-suite contract.
 """
 
 import argparse
@@ -542,6 +543,34 @@ class StageVerifyUnitTest(unittest.TestCase):
         self.assertEqual(res.status, "not_run")
         self.assertIn("did not run", res.next_safe_action)
         self.assertIn(("conn_close", None), conn.calls)
+
+    def verify_without_bindings(self, only: list[str]):
+        """verify of the two demo gold queries whose sweep reads its values from the data (hierarchy strata and
+        values_of) over a connection that returns no rows, so no stratum gets a node id or a value. Returns the
+        checks without the scope:* ones, and the result."""
+        self.write_stages("pass")
+        conn = FakeConn(rows=[])
+        with mock.patch.object(stage_verify.db, "connect", return_value=conn), \
+                mock.patch.object(stage_verify.cube_run, "serve", side_effect=AssertionError("Cube must not start")):
+            res = stage_verify.run(self.cfg, argparse.Namespace(only=only, gold=["q01_explosion", "q03_stock"]), self.out)
+        return [c for c in res.checks if not c.id.startswith("scope:")], res
+
+    def test_gold_without_any_binding_is_not_run_in_v1(self):
+        checks, res = self.verify_without_bindings(["v1"])
+        self.assertEqual([(c.id, c.status, c.config_ref, c.detail) for c in checks],
+                         [("v1:q01_explosion", "not_run", "gold[0] q01_explosion", {"reason": "no_binding"}),
+                          ("v1:q03_stock", "not_run", "gold[2] q03_stock", {"reason": "no_binding"})])
+        self.assertEqual(res.not_proven, ["v1:q01_explosion: no binding (every stratum is empty)",
+                                          "v1:q03_stock: no binding (every stratum is empty)"])
+        self.assertEqual(res.next_safe_action, "v1:q01_explosion has no binding (every stratum is empty): check the "
+                                               "params of gold[0] q01_explosion or the data")
+
+    def test_empty_stratum_passes_v2_and_is_listed_as_not_proven(self):
+        checks, res = self.verify_without_bindings(["v2"])
+        ids = [f"v2:q01_explosion:{s}" for s in ("top", "mid", "deep", "leaf_parent", "empty")] + ["v2:q03_stock:values"]
+        self.assertEqual([(c.id, c.status, c.detail) for c in checks],
+                         [(cid, "pass", {"bindings": 0, "empty_stratum": True}) for cid in ids])
+        self.assertEqual(res.not_proven, [f"{cid}: empty stratum (no node id qualifies)" for cid in ids])
 
     def test_sweep_aggregate(self):
         agg = stage_verify._Sweep()

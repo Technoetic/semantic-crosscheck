@@ -46,6 +46,9 @@ USES = re.compile(r"^\s*(?:-\s+)?uses:\s*(\S+)(.*)$")
 PINNED_ACTION = re.compile(r"[\w.-]+/[\w.-]+(?:/[\w./-]+)?@[0-9a-f]{40}")
 VERSION_COMMENT = re.compile(r"\s*#\s*v\d+(?:\.\d+){0,2}\s*")
 PIN = re.compile(r"([A-Za-z0-9][A-Za-z0-9._-]*)==([0-9][0-9A-Za-z.+!-]*)")
+# Words that promise more than a check can show; "not proof", "no proof" and "not proven" state a limit.
+# "certify" is not in the pattern: see the docstring of test_descriptions_do_not_promise_proof.
+PROOF_PROMISE = re.compile(r"\b(?:prov(?:e|es|ed|ing)|guarantee\w*)\b|(?<!not )(?<!no )\b(?:proofs?|proven)\b", re.I)
 
 # Keys the dataclasses give a default for but config.load requires anyway.
 REQUIRED_BY_VALIDATION = {("Source", "schemas"), ("Ontology", "hierarchy"), ("Gold", "map")}
@@ -139,6 +142,15 @@ def sxc_invocations(path: Path) -> list[tuple[str, list[str]]]:
             continue
         out.append((tokens[i], args))
     return out
+
+
+def bare_example_paths(text: str, link_prefix: str) -> list[str]:
+    """Mentions of `examples/` that do not start at the plugin root. A command runs in the user's project folder,
+    where the plugin's examples do not exist, so they are written `${CLAUDE_PLUGIN_ROOT}/examples/...` (in the Codex
+    reference `<plugin root>/examples/...`); a Markdown link target is relative to its document (link_prefix)."""
+    allowed = ("${CLAUDE_PLUGIN_ROOT}/", "<plugin root>/", "](" + link_prefix)
+    return [text[max(0, m.start() - 30):m.end() + 30] for m in re.finditer(r"examples/", text)
+            if not text[:m.start()].endswith(allowed)]
 
 
 def parse_cli(argv: list[str]):
@@ -241,6 +253,36 @@ class ManifestTest(unittest.TestCase):
         codex = load_json(".codex-plugin/plugin.json")
         self.assertTrue((ROOT / codex["skills"] / NAME / "SKILL.md").is_file())
 
+    def test_descriptions_do_not_promise_proof(self):
+        """A pass means that the checks found no disagreement on this data (README, limits section). The
+        descriptions a user reads in a plugin list or a command list must not contain the words PROOF_PROMISE
+        refuses (prove, guarantee, and proof or proven unless negated), and the long description starts with what
+        the tool is, not with the notes of one release. The pattern is not every word that can overstate a check:
+        "certify" passes. The data-rules help text in sxc.py uses that word for comparing the lookup views with
+        the agreed rows, and the descriptions that use it for the same comparison follow the help text."""
+        claude = load_json(".claude-plugin/plugin.json")
+        market = load_json(".claude-plugin/marketplace.json")
+        codex = load_json(".codex-plugin/plugin.json")
+        texts = {"claude plugin": claude["description"], "claude marketplace": market["description"],
+                 "codex plugin": codex["description"], "codex short": codex["interface"]["shortDescription"],
+                 "codex long": codex["interface"]["longDescription"],
+                 "skill": scalar(frontmatter(SKILL)["description"])}
+        texts.update({f"marketplace entry {p['name']}": p["description"] for p in market["plugins"]})
+        texts.update({path.name: scalar(frontmatter(path)["description"]) for path in command_files()})
+        self.assertGreater(len(texts), 20)
+        for label, text in texts.items():
+            with self.subTest(description=label):
+                self.assertIsNone(PROOF_PROMISE.search(text))
+        self.assertFalse(codex["interface"]["longDescription"].lower().startswith("release"))
+        for promise in ("then prove the layers agree", "Prove that a closure and a model agree", "a proof of agreement",
+                        "proven agreement", "guarantees consistent layers"):
+            with self.subTest(promise=promise):
+                self.assertIsNotNone(PROOF_PROMISE.search(promise))
+        for limit in ("it is not proof that the model is right", "no proof of the business rule", "what is not proven",
+                      "not_proven lines", "key provenance", "approved and improved"):
+            with self.subTest(limit=limit):
+                self.assertIsNone(PROOF_PROMISE.search(limit))
+
 
 class CommandDocumentTest(unittest.TestCase):
     def test_every_command_has_a_yaml_safe_description(self):
@@ -272,6 +314,15 @@ class CommandDocumentTest(unittest.TestCase):
                     parse_cli(argv)
         self.assertTrue((ROOT / SCRIPT_REF.replace("${CLAUDE_PLUGIN_ROOT}/", "")).is_file())
 
+    def test_example_files_are_named_from_the_plugin_root(self):
+        for path in command_files():
+            with self.subTest(command=path.name):
+                self.assertEqual(bare_example_paths(read(path), "../"), [])
+        self.assertEqual(bare_example_paths(read(REFERENCES / "codex.md"), "../../../"), [])
+        self.assertTrue(any("${CLAUDE_PLUGIN_ROOT}/examples/" in read(path) for path in command_files()))
+        self.assertEqual(len(bare_example_paths("--spec examples/a.json and [x](../examples/b.md) and "
+                                                "\"${CLAUDE_PLUGIN_ROOT}/examples/c.json\"", "../")), 1)
+
 
 class DocumentTest(unittest.TestCase):
     def test_skill_frontmatter(self):
@@ -298,6 +349,12 @@ class DocumentTest(unittest.TestCase):
                 for _script, argv in sxc_invocations(path):
                     parse_cli(argv)
         self.assertEqual(set(STAGE_MENTION.findall(read(REFERENCES / "codex.md"))), set(sxc.STAGES))
+
+    def test_readme_lists_every_command(self):
+        """The list of added commands in the Claude Code install section names every file in commands/ once."""
+        section = read(ROOT / "README.md").split('<a id="claude-code"></a>', 1)[1].split('<a id="codex"></a>', 1)[0]
+        listed = [name for line in section.split("\n") if line.startswith("- ") for name in SLASH_COMMAND.findall(line)]
+        self.assertEqual(sorted(listed), sorted(path.stem for path in command_files()))
 
     def test_slash_commands_exist(self):
         for path in docs():

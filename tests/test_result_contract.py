@@ -147,6 +147,15 @@ class SavedResultContract(unittest.TestCase):
         self.assertEqual(saved['schema_version'], 1)
         self.assertEqual(load_result(self.out, 'build'), saved)
 
+    def test_writer_without_checks_cannot_establish_pass(self):
+        result = Result('build')
+        self.assertEqual((result.status, result.exit_code()), ('not_run', 1))
+        saved = json.loads(result.write(self.out).read_text(encoding='utf-8'))
+        self.assertEqual((saved['status'], saved['checks']), ('not_run', []))
+        # One passing check is enough to pass: the verdict above comes from the empty check list alone.
+        result.add('x', 'pass')
+        self.assertEqual((result.status, result.exit_code()), ('pass', 0))
+
     def test_malformed_optional_reason_cannot_disappear_as_stale(self):
         cfg_path = self.out / 'plain.toml'
         cfg_path.write_text('version = 1\n[source]\nschemas = ["src"]\n'

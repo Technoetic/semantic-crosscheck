@@ -5,8 +5,13 @@ that it still catches what it should.
 
 ## Development setup
 
-- Python 3.11 or later: `python -m pip install -r requirements/reason.txt` (it includes `requirements/core.txt`).
-- Unit tests need nothing else: `python -m unittest discover -s tests -v`.
+- Python 3.11 or later: `python -m pip install -r requirements/reason.txt -r requirements/witness.txt` (each
+  includes `requirements/core.txt`).
+- Unit tests: `python -m unittest discover -s tests -v`. They need `requirements/core.txt` and
+  `requirements/witness.txt`. Without `z3-solver`, which only `witness.txt` installs, tests in
+  `tests/test_constraint_audit.py` and `tests/test_search_extensions.py` fail or error instead of skipping (19 tests
+  at v0.22.0). Tests that need the other packages of `requirements/reason.txt` or `requirements/sql-structure.txt`
+  (pglast) skip when those are missing. The CI unit job installs `core.txt`, `witness.txt` and `sql-structure.txt`.
 - Integration tests need a throw-away PostgreSQL 17 server and a superuser DSN in `SXC_TEST_ADMIN_DSN`
   (they create and drop databases and the roles `xc_owner` and `xc_check`). OWL tests need Java 11 or later
   (`SXC_JAVA` or `java` on `PATH`); Cube tests need an adapter installed with `sxc.py cube-install`

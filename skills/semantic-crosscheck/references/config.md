@@ -304,7 +304,7 @@ positions, never values.
 | `SXC_JAVA` | `doctor`, `reason` | Absolute path of the `java` executable for HermiT, or a command name on `PATH`, when `java` itself is not on `PATH`. |
 | `SXC_CUBE_HOME` | `cube-install`, `doctor`, `cube`, `verify`, `expect` | Install directory of the Cube adapter (default: a per-user cache); a relative value is resolved against the current directory. |
 | `SXC_CUBE_DEBUG` | `cube`, `verify`, `expect` | `1` writes the full Cube error text to `server.log` for local debugging; the log can then hold row values. |
-| `SXC_DEBUG` | every stage | `1` prints the full traceback of an unexpected exception for local debugging. |
+| `SXC_DEBUG` | `doctor`, `demo`, `build`, `reason`, `cube`, `verify`, `report`, `cube-install`, `counterexample`, `cube-replay`, `tlp`, `shacl-corpus`, `data-rules`, `expect` | `1` prints the full traceback of an unexpected exception for local debugging. The diagnostic stages `shacl-repair`, `grain`, `okf`, `knowledge-evolution`, `boundary-schema`, `semantic-preflight` and `sql-structure`, `counterexample --constraint-audit`, and `expect` when a case declares `spec_source` do not read it: they print a fixed reason code only. |
 | `SXC_EXPECT_DSN` | `expect` | DSN of the dedicated fixture database for `[[gold.expect]]` (name configurable with `--dsn-env`); refused when it equals, or names the same host, port and database as, an operational DSN variable (`source.dsn_env`, `source.owner_dsn_env` or `cube.dsn_env`) set in this environment; another name for the same server is not detected, so the fixture must be a dedicated database. |
 
 ## `[semantic_preflight]`

@@ -17,8 +17,8 @@ Source states/hashes appear in `spec_sources` and `expect:spec_source:<gold-id>[
 Current bytes prove neither semantic validity nor object existence or approval.
 See [source bindings](../docs/knowledge-sources.md) for the full boundary and schema.
 
-Two synthetic examples use the same stage: `examples/expect/` covers a tiny BOM;
-[`examples/expect-boundaries/`](../examples/expect-boundaries/fixture-spec.md) covers a part with
+Two synthetic examples use the same stage: `${CLAUDE_PLUGIN_ROOT}/examples/expect/` covers a tiny BOM;
+[`${CLAUDE_PLUGIN_ROOT}/examples/expect-boundaries/`](../examples/expect-boundaries/fixture-spec.md) covers a part with
 no stock (raw NULL), stock removed by a filter (declared zero), and the same label in
 different regions (composite result key). The boundary example includes a standalone
 specification, independently authored rows and a pinned fixture digest. Load its own
@@ -32,7 +32,7 @@ python "${CLAUDE_PLUGIN_ROOT}/skills/semantic-crosscheck/scripts/sxc.py" expect 
   cases ([keys](../skills/semantic-crosscheck/references/config.md)), but never connects to its DSNs.
 - `--dsn-env` defaults to `SXC_EXPECT_DSN`: the NAME of the environment variable holding the DSN of a dedicated
   fixture database that the user has already loaded with every configured source table (empty ones included) and
-  the small fixture rows (for example `examples/expect/fixture.sql` with psql). sxc never executes fixture SQL. An
+  the small fixture rows (for example `${CLAUDE_PLUGIN_ROOT}/examples/expect/fixture.sql` with psql). sxc never executes fixture SQL. An
   unset variable is exit 3, a value that is not a variable name exit 2. The fixture DSN is refused with exit 2,
   without printing either value, when it equals, or names the same host, port and database as, an operational DSN
   variable (`source.dsn_env`, `source.owner_dsn_env`, `cube.dsn_env`) set in this environment; another name for the

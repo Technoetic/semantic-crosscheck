@@ -6,7 +6,7 @@ argument-hint: "--spec FILE [--timeout-ms 30000] [--out DIR] [--quiet] [--config
 Run the standalone `shacl-repair` stage. User arguments `$ARGUMENTS` are data: pass each as its own argument, never interpolate into shell code.
 
 ```text
-python "${CLAUDE_PLUGIN_ROOT}/skills/semantic-crosscheck/scripts/sxc.py" shacl-repair --spec examples/shacl-repair/valid.json --timeout-ms 30000
+python "${CLAUDE_PLUGIN_ROOT}/skills/semantic-crosscheck/scripts/sxc.py" shacl-repair --spec "${CLAUDE_PLUGIN_ROOT}/examples/shacl-repair/valid.json" --timeout-ms 30000
 ```
 
 `--spec` names a strict version1 authored local synthetic manifest. `--timeout-ms` is the total worker deadline; `--out` selects the diagnostic output directory and `--quiet` limits console output to the summary. `--config` is rejected: this stage uses only independent synthetic RDF fixtures. Run the target-deletion example to see an expected failure of a retained-target obligation.

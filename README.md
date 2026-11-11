@@ -1,28 +1,3 @@
-Since v0.15.0, authored `gold.expect` cases can opt into local opaque-byte
-[`spec_source` bindings](docs/knowledge-sources.md). Missing or changed evidence
-stops execution before DB; completion drift invalidates affected expectation
-passes. Source pins add no operational report or grain authority. The optional [OKF metadata diagnostic](docs/okf.md)
-exports explicitly selected Gold contracts or previews a local bundle against
-current trusted inputs. It performs no execution or import application; PASS
-means scoped metadata completion, with authenticity and correctness unproven.
-
-[v0.22.0](docs/releases/v0.22.0.md) adds an optional [`data-rules` stage](docs/data-rules.md). Typed rules from a separate rule file are evaluated twice on one read-only snapshot, as compiled PostgreSQL and as an independent standard-library Python evaluation, and a rule gets a verdict only when both agree and its authored examples hold. With `views = true` (the default) build creates lookup views, so the keys a rule found are read in the database with the user while results keep counts and ids only. Configurations without `[data_rules]` keep their build output, results and reports byte for byte, apart from the engine fingerprint. Agreement of the two evaluations does not prove that a rule is the right business rule.
-
-Since v0.21.1, [opt-in contract/plan report evidence](docs/contract-report.md), an optional [PostgreSQL SQL structure diagnostic](docs/sql-structure.md) and independent [bag/provenance-scope fixtures](docs/provenance-fixtures.md) are available. Configurations without the paired preflight selection retain existing report authority. Missing, changed or non-passing evidence cannot satisfy the opted-in report gate. SQL parsing and synthetic fixtures are separate supported-subset checks, not business-truth or query-equivalence proofs.
-
-- [`boundary-schema`](docs/boundary-schema.md) derives a small exact scalar
-  domain from a declared integer, numeric(p,s) or date comparison. It runs
-  offline and emits a schema consumed by the existing `--witness-schema` search.
-  This is a supported-subset experiment, not general SQL parsing or equivalence.
-- [`tlp --shrink`](docs/tlp.md) opts into structured reduction of TLP/NoREC
-  discrepancies. A source-bound v2 replay rechecks the original, accepted steps
-  and final fixture; default runs and valid v1 replays keep their contracts.
-- Previous exact Cube JSON/Decimal, Gold SQL metadata and bounded HTTP response
-  contracts remain in force. Core runtime dependencies and engine pins remain unchanged; optional SQL structure checks require a separately installed parser. Default pipeline stages and non-opted-in report authority are retained.
-
-Actual final-source local and main/tag CI results are recorded in the published
-verification JSON after execution. No earlier release total is substituted.
-
 <div align="center">
 
 # semantic-crosscheck
@@ -31,6 +6,9 @@ verification JSON after execution. No earlier release total is substituted.
 
 **설정 하나에서 네 계층을 만들고, 서로의 결과를 교차 검증합니다.**<br/>
 계층마다 그럴듯한 설명을 넘어, **검사 ID · 건수 · 종료 코드로 일치 여부를 확인합니다.**
+
+PostgreSQL 17 이상의 부모·자식 계층 데이터(예: BOM)에 대한 데이터 규칙·OWL 분류·Cube 시맨틱 레이어를 설정 하나로 정의하고,<br/>
+이 계층들이 같은 답을 내는지 확인하려는 팀과 그 검증을 맡은 코딩 에이전트(Claude Code · Codex)를 위한 검증 도구입니다.
 
 [![Release](https://img.shields.io/badge/Release-v0.22.0-0D9488?style=for-the-badge)](docs/releases/v0.22.0.md)
 [![CI](https://img.shields.io/github/actions/workflow/status/Technoetic/semantic-crosscheck/tests.yml?branch=main&style=for-the-badge&label=CI&logo=github)](https://github.com/Technoetic/semantic-crosscheck/actions/workflows/tests.yml)
@@ -111,6 +89,8 @@ flowchart TB
 | **출력** | 검사 ID·건수·상태·수정할 설정 항목·검증하지 못한 범위 |
 | **수정 지점** | 생성된 SQL·YAML 대신 **`crosscheck.toml`**을 수정하고 다시 실행 |
 
+**계층이 일치하면 무엇을 알 수 있는가.** 네 계층은 모두 `crosscheck.toml` 하나에서 생성합니다. 그래서 계층끼리의 일치(SQL 위반 뷰와 SHACL, SQL 폐포·분류와 OWL 추론)는 같은 설정을 서로 다른 생성기와 엔진이 이 데이터에서 같게 해석했다는 것을 보여 줄 뿐, 설정이 옳다는 근거는 아닙니다. 독립 근거는 사람이 독립적으로 작성한 gold SQL, 업무 명세에서 옮겨 쓴 기대 행(`expect` 단계가 읽는 `[[gold.expect]]`의 `authored` 사례), 그리고 생성한 폐포 SQL을 쓰지 않고 원본 연결에서 다시 계산하는 Python 폐포 검산(`v3:closure_oracle:<h>`)입니다. 이미 가지고 있는 Cube 모델·OWL 온톨로지·SHACL shapes 파일은 검증 파이프라인의 입력이 아니며, `build`·`reason`·`cube`·`verify`가 검사하는 모델은 이 설정에서 생성한 것입니다. 통과가 증명하지 못하는 범위는 [검증 한계](#limitations-and-not-proven)에 있습니다.
+
 <details>
 <summary><b>🧭 목차 전체 펼치기</b></summary>
 
@@ -127,6 +107,7 @@ flowchart TB
 - [문제 해결](#troubleshooting)
 - [검증 한계](#limitations-and-not-proven)
 - [제거](#uninstall) · [개발](#development) · [라이선스](#license)
+- [최근 변경 사항(영문)](#recent-changes)
 
 </details>
 
@@ -229,7 +210,12 @@ Cube는 항상 Tesseract SQL 플래너(`CUBEJS_TESSERACT_SQL_PLANNER=true`)로 �
 
 기본 브랜치를 따라가는 설치입니다. 릴리스를 고정하려면 해당 태그를 clone한 뒤 `/plugin marketplace add <path to the clone>`으로 등록합니다.
 
-추가되는 명령: `/xc-doctor` · `/xc-demo` · `/xc-build` · `/xc-reason` · `/xc-cube` · `/xc-verify` · `/xc-report` · `/xc-install`.
+추가되는 명령은 아래와 같습니다. 이름은 `/xc-<단계>`이며, `/xc-install`은 `cube-install` 단계를, `/xc-preflight`는 `semantic-preflight` 단계를 실행합니다.
+
+- **핵심 파이프라인:** [`/xc-doctor`](commands/xc-doctor.md) · [`/xc-demo`](commands/xc-demo.md) · [`/xc-build`](commands/xc-build.md) · [`/xc-reason`](commands/xc-reason.md) · [`/xc-cube`](commands/xc-cube.md) · [`/xc-verify`](commands/xc-verify.md) · [`/xc-report`](commands/xc-report.md) · [`/xc-install`](commands/xc-install.md)
+- **선택 단계·진단:** [`/xc-expect`](commands/xc-expect.md) · [`/xc-data-rules`](commands/xc-data-rules.md) · [`/xc-counterexample`](commands/xc-counterexample.md) · [`/xc-cube-replay`](commands/xc-cube-replay.md) · [`/xc-tlp`](commands/xc-tlp.md) · [`/xc-shacl-corpus`](commands/xc-shacl-corpus.md) · [`/xc-shacl-repair`](commands/xc-shacl-repair.md) · [`/xc-grain`](commands/xc-grain.md) · [`/xc-boundary-schema`](commands/xc-boundary-schema.md) · [`/xc-preflight`](commands/xc-preflight.md) · [`/xc-sql-structure`](commands/xc-sql-structure.md) · [`/xc-okf`](commands/xc-okf.md) · [`/xc-knowledge-evolution`](commands/xc-knowledge-evolution.md)
+
+각 단계의 역할과 옵션은 [단계·옵션·종료 코드](#stages)에 있습니다.
 
 <a id="codex"></a>
 ### Codex
@@ -274,7 +260,7 @@ Windows PowerShell에서 실행 정책 때문에 `codex.ps1`이 거부되면 두
 | `SXC_JAVA` | `doctor`, `reason` | Java 실행 파일의 절대 경로 또는 `PATH`의 명령 이름 |
 | `SXC_CUBE_HOME` | `cube-install`, `doctor`, `cube`, `verify`, `expect` | Cube 설치 위치 · 기본값은 사용자 캐시 |
 | `SXC_CUBE_DEBUG` | `cube`, `verify`, `expect` | `1`이면 Cube 오류 전문을 `server.log`에 기록 · 행 값이 포함될 수 있어 로컬 디버깅에만 사용 |
-| `SXC_DEBUG` | 모든 단계 | `1`이면 예외 traceback 출력 · 로컬 디버깅에만 사용 |
+| `SXC_DEBUG` | `doctor`·`demo`·`build`·`reason`·`cube`·`verify`·`report`·`cube-install`·`counterexample`·`cube-replay`·`tlp`·`shacl-corpus`·`data-rules`·`expect` | `1`이면 예상 밖 예외의 traceback 출력 · 로컬 디버깅에만 사용. 진단 단계 `shacl-repair`·`grain`·`okf`·`knowledge-evolution`·`boundary-schema`·`semantic-preflight`·`sql-structure`와 `counterexample --constraint-audit`, 사례에 `spec_source`가 있는 `expect`는 이 변수를 읽지 않고 고정된 사유 코드만 출력 |
 | `SXC_EXPECT_DSN` | `expect` | 사용자가 적재한 전용 fixture DB의 DSN · `--dsn-env`로 이름 변경 가능 · 이 환경에 설정된 운영 DSN 변수와 값이 같거나 같은 호스트·포트·DB를 가리키면 거부. 같은 서버를 다른 이름으로 가리키면 알아내지 못하므로 전용 DB를 사용 |
 
 PowerShell에서는 `$env:SXC_PG_DSN = "..."` 형식으로 지정합니다.
@@ -386,7 +372,7 @@ CLI 출력 원문을 유지했습니다. 아래 검사 수와 `NOT PROVEN` 문�
   NOT PROVEN  data revision is unbound: no owner-maintained revision was checked; separate database sessions and cached gold answers are not proven to observe one data version
 ```
 
-`NOT PROVEN` 13줄은 정상 데모에서도 예상됩니다. 기본 데모에는 revision 조회가 없어 build·reason·cube·verify·report 각각에 데이터 버전 미확인 안내가 나옵니다. 나머지 4개 중 `open_le_total`은 SQL 전용 규칙이고, 부품으로 쓰인 제품의 정의 클래스는 양쪽 모두 비어 있습니다. 위치 코드의 공백·대소문자 변형이 없는 데이터에서는 정규화를 제거한 두 변이도 원래 결과와 같습니다. `verify`는 변이마다 Cube를 시작하므로 느립니다. 기존 문서화된 측정 환경에서는 약 43초였으며 실행 환경에 따라 달라집니다.
+`NOT PROVEN` 14줄은 정상 데모에서도 예상됩니다. 기본 데모에는 revision 조회가 없어 build·reason·cube·verify·report 각각에 데이터 버전 미확인 안내가 나옵니다(5줄). 실제 실행 환경을 결과에 묶는 `runtime_evidence` 설정도 기본값대로 꺼져 있어 build·reason·cube·verify 각각에 실행 환경 미확인 안내가 나옵니다(4줄). 나머지 5줄은 reason의 3줄과 verify의 2줄입니다. reason에서는 생성한 SHACL의 사전 검사가 구문 규칙의 일부만 확인한다는 안내가 나오고, `open_le_total`은 SQL 전용 규칙이며, 부품으로 쓰인 제품의 정의 클래스는 양쪽 모두 비어 있습니다. verify에서는 위치 코드의 공백·대소문자 변형이 없는 데이터라서 정규화를 제거한 두 변이가 원래 결과와 같습니다. `verify`는 변이마다 Cube를 시작하므로 느립니다. 기존 문서화된 측정 환경에서는 약 43초였으며 실행 환경에 따라 달라집니다.
 
 </details>
 
@@ -402,6 +388,8 @@ python skills/semantic-crosscheck/scripts/sxc.py report --config demo/crosscheck
 ```
 
 이 순서에서는 `demo`는 0, `build`는 1, `reason`은 1, `cube`는 0, `verify`는 1, `report`는 1로 종료합니다. 오류 데이터를 적재하는 명령 자체는 성공하지만, 뒤의 검사가 심어 둔 결함을 찾아냅니다.
+
+실패한 검사가 화면에 어떻게 나오고 어떻게 읽는지는 [실패한 실행 읽기](#reading-a-failure)에 예시가 있습니다.
 
 <details>
 <summary><b>🔴 심어 둔 오류와 실제 검사 결과 펼치기</b></summary>
@@ -455,6 +443,8 @@ python skills/semantic-crosscheck/scripts/sxc.py <stage> [--config PATH] [--out 
 | `expect` | 전용 fixture DB에서 gold SQL·Cube를 실행해 `[[gold.expect]]`의 문자 그대로 기대 행과 비교 | `--allow-fixture-database`, `--dsn-env NAME` | `expect/result.json`, `expect/build/`, `expect/cube/`, `expect/server.log` |
 | `data-rules` | 데이터 규칙을 PostgreSQL과 독립 Python으로 각각 평가해 같은지 확인하고, 규칙별 뷰와 문제 품번 뷰를 검증 | `--rule ID` | `data_rules/result.json`, `data_rules/rules.sql` |
 
+나머지 네 단계 `shacl-repair`·`grain`·`okf`·`knowledge-evolution`의 옵션은 영문 부록의 [Optional diagnostic contracts](#optional-diagnostic-contracts) 표에 있습니다.
+
 **공통 옵션**
 
 - `--config PATH`: 명시하면 반드시 존재해야 합니다. 없으면 exit 2이며 단계를 실행하지 않습니다. 생략하면 `./crosscheck.toml`을 찾습니다. `doctor`·`cube-install`은 설정 없이도 실행합니다. 별도 합성 도구 `counterexample`은 설정을 읽지 않으며 `--config`를 거부합니다. `expect`는 운영 설정을 읽지만 fixture DB에만 접속합니다.
@@ -470,7 +460,6 @@ python skills/semantic-crosscheck/scripts/sxc.py <stage> [--config PATH] [--out 
 
 [설정 레퍼런스](skills/semantic-crosscheck/references/config.md) · [전체 설계 계약](docs/design.md)
 
-<a id="reading-results"></a>
 ## 합성 반례와 데이터 버전 추적
 
 `counterexample`은 전용 시험 DB에서 두 SQL 파일을 같은 합성 CTE 데이터로 실행합니다.
@@ -551,6 +540,7 @@ Node·Java 버전, 사용한 HermiT와 Cube 설치 파일의 해시도 검증 �
 이미 설치돼 있어야 하며, 기본값은 꺼짐입니다. 자세한 설정과 한계는
 [설정 안내](skills/semantic-crosscheck/references/config.md#actual-runtime-binding-opt-in)에 있습니다.
 
+<a id="reading-results"></a>
 ## 📋 결과 읽기
 
 각 단계의 `result.json`에는 `status`, `checks`의 ID·상태·`config_ref`·건수 정보, `not_proven`, `next_safe_action`이 들어갑니다.
@@ -584,6 +574,53 @@ flowchart TD
 
 > [!IMPORTANT]
 > 설정과 gold SQL의 fingerprint가 바뀌면 관련 결과는 `why=inputs_changed`로 오래된 상태가 됩니다. 데이터 버전 추적은 위의 선택 설정으로 연결할 수 있지만, **PostgreSQL·Cube의 모든 세션이 하나의 MVCC snapshot을 공유하지는 않습니다.** 한 번의 검증 동안 입력 데이터를 안정적으로 유지해야 합니다.
+
+<a id="reading-a-failure"></a>
+### 실패한 실행 읽기
+
+아래는 `build`의 검사 두 개가 실패했을 때의 콘솔 출력입니다. 테스트의 기준 출력 파일 [`build_fail/console.txt`](tests/fixtures/compat_v0_21_1/build_fail/console.txt)에서 그대로 옮겼습니다. 파일 첫 줄의 `exit 1`은 종료 코드 기록이라 뺐고, `<out>`은 출력 디렉터리 자리입니다. 이 출력은 데모 설정으로 `build`를 실행하되, 실제 DB 대신 고정된 합성 건수를 돌려주는 테스트용 연결을 써서 얻은 것입니다. 단위 테스트(`tests/test_data_rules_compat.py`)가 현재 코드의 출력과 바이트 단위로 같은지 확인합니다. 실제 DB에서 dirty 데모를 실행하면 심어 둔 결함이 더 많아 실패하는 검사가 더 많습니다.
+
+```text
+[sxc build] FAIL  checks: 4 pass, 2 fail, 0 error, 0 not_run  -> <out>/build/result.json
+  FAIL    shape:child_exists  [shapes[0] child_exists]  violations=2 severity=violation kind=class view=sxc_out.v_shape_child_exists
+  FAIL    shape:open_le_total  [shapes[3] open_le_total]  violations=3 severity=violation kind=sql view=sxc_out.v_shape_open_le_total trusted_sql=True
+  NOT PROVEN  runtime evidence is unbound: actual PostgreSQL, Node, Java, HermiT and selected Cube installation were not bound; local engine/package metadata alone does not establish the executing runtime
+  NOT PROVEN  data revision is unbound: no owner-maintained revision was checked; separate database sessions and cached gold answers are not proven to observe one data version
+  next: shapes failed: inspect the violating keys in sxc_out.v_shape_child_exists, sxc_out.v_shape_open_le_total, then fix the data or the [[shapes]] entries; then rerun build
+```
+
+| 출력에서 볼 곳 | 읽는 법 |
+|---|---|
+| 첫 줄의 `4 pass, 2 fail, 0 error, 0 not_run` | 단계 판정과 검사 수입니다. 실패한 검사가 있어 단계가 FAIL이고 종료 코드는 1입니다. 통과한 검사 4개는 화면에 나오지 않으며(경고 등급이라 위반 1건을 보고하고 통과한 `shape:stock_nonnegative` 포함) 전체 목록은 `result.json`에 있습니다. |
+| `shape:child_exists` | 실패한 검사의 ID입니다. |
+| `[shapes[0] child_exists]` | `config_ref`, 곧 점검할 설정 위치입니다. `crosscheck.toml`의 `[[shapes]]` 항목을 0부터 세어 0번(첫 번째)이고 `id`가 `child_exists`입니다. |
+| `violations=2`, `view=sxc_out.v_shape_child_exists` | 규칙을 어긴 행이 2건입니다. 행 값은 출력하지 않습니다. 어긴 행은 출력 스키마의 이 뷰에 있으므로 DB에서 조회합니다. |
+| `kind=sql`, `trusted_sql=True` | 설정에 적은 `sql_violation` 조건으로 검사한 규칙이라는 표시입니다. |
+| `NOT PROVEN` 두 줄 | 이 실행이 증명하지 못한 범위입니다. 통과한 실행에도 나오며 판정을 바꾸지 않습니다. |
+| `next:` | 다음에 할 일입니다. 두 뷰에서 어긴 행의 키를 확인하고, 데이터나 `[[shapes]]` 항목을 고친 뒤 `build`를 다시 실행하라고 합니다. |
+
+이 상태에서 `report`를 실행하면 최종 판정은 다음과 같습니다([`report_fail/console.txt`](tests/fixtures/compat_v0_21_1/report_fail/console.txt), 같은 실행의 [`report.md`](tests/fixtures/compat_v0_21_1/report_fail/report.md)).
+
+```text
+[sxc report] FAIL  checks: 0 pass, 1 fail, 0 error, 3 not_run  -> <out>/report/result.json
+  FAIL    stage:build  [shapes[0] child_exists]  pass=4 fail=2 error=0 not_run=0 not_proven=2 required=True
+  NOT_RUN stage:reason  reason=missing required=True
+  NOT_RUN stage:cube  reason=missing required=True
+  NOT_RUN stage:verify  reason=missing required=True
+  NOT PROVEN  data revision is unbound: no owner-maintained revision was checked; separate database sessions and cached gold answers are not proven to observe one data version
+  NOT PROVEN  stage doctor was not run, so the check role's privileges (read-only on the source tables) and the optional components were not verified
+  next: fix build first (fail): shapes failed: inspect the violating keys in sxc_out.v_shape_child_exists, sxc_out.v_shape_open_le_total, then fix the data or the [[shapes]] entries; then rerun build
+```
+
+- `report`는 필수 단계마다 `stage:<name>` 검사를 하나씩 둡니다(선택 단계 `doctor`·`demo`는 판정에 쓸 결과가 있을 때만). `stage:build`는 build 결과의 검사 수를 다시 세어 FAIL로 판정하고, 대괄호에는 그 단계에서 처음으로 통과하지 못한 검사의 `config_ref`를 보여 줍니다.
+- `NOT_RUN`과 `reason=missing`은 필수 단계 `reason`·`cube`·`verify`의 결과가 없다는 뜻입니다. 실행하지 않은 단계는 통과로 세지 않습니다.
+- `next:`는 먼저 고칠 단계를 알려 줍니다. 여기서는 build의 `next:`를 그대로 되풀이합니다.
+
+**다음에 할 일**
+
+1. `view=`에 나온 뷰를 DB에서 사용자와 함께 조회해 어긴 행을 확인합니다. 예: `SELECT * FROM sxc_out.v_shape_child_exists;`
+2. 데이터가 틀렸으면 원본 데이터를 고치고, 규칙이 틀렸으면 `config_ref`가 가리키는 `crosscheck.toml` 항목을 고칩니다. 생성된 SQL·YAML은 고치지 않습니다.
+3. 실패한 단계(`build`)를 다시 실행한 뒤, 그 뒤의 단계(`reason`·`cube`·`verify`)와 `report`를 순서대로 실행합니다.
 
 <a id="check-catalogue"></a>
 ## 🔎 검사 ID 목록
@@ -678,11 +715,10 @@ Cube의 기본 오류 로그에는 오류 클래스·코드·대략적인 범주
 - **설정 경로 오타**: `--config <name>: no such file`과 exit 2는 아무 단계도 실행하지 않았다는 뜻입니다.
 - **자원 제한**: SHACL·OWL 제한을 초과하면 not_run입니다. `verify.shacl_max_rows`·`verify.owl_max_individuals`와 입력 크기를 검토하고 reason을 다시 실행합니다.
 - **Cube 시작 실패**: exit 3과 정리된 오류가 나오면 `cube/server.log`를 확인합니다. 오류 전문이 필요하면 `SXC_CUBE_DEBUG=1`로 로컬에서 재실행합니다.
-- **예상 밖 예외**: exit 1과 예외 종류·위치가 출력됩니다. 로컬에서 `SXC_DEBUG=1`로 traceback을 확인합니다.
+- **예상 밖 예외**: exit 1과 예외 종류·위치가 출력됩니다. 로컬에서 `SXC_DEBUG=1`로 traceback을 확인합니다. 진단 단계처럼 `SXC_DEBUG`를 읽지 않는 단계는 예외 종류 대신 고정된 사유 코드(`reason=diagnostic_error` 등)만 출력합니다([환경 변수 표](#environment-variables)).
 
 </details>
 
-<a id="limitations-and-not-proven"></a>
 ## 선택형 독립 실행 검사
 
 다음 세 명령은 운영 설정을 읽지 않는 별도 합성 검사다. `--config`를 거부하며, 성공해도 기존 V1–V5와 `report`의 실데이터 검증 범위를 넓히지 않는다.
@@ -702,6 +738,7 @@ Cube의 기본 오류 로그에는 오류 클래스·코드·대략적인 범주
 
 **[데이터 규칙](docs/data-rules.md) (0.22.0부터, [명령](commands/xc-data-rules.md)):** `[data_rules]` 표가 가리키는 별도 규칙 파일에 여섯 종류(`row`·`duplicate`·`mode_outlier`·`same_signature`·`stored_metric`·`text_quantity`)의 타입이 있는 규칙과, 업무 규칙에서 직접 쓴 예제 행(`[[rule.example]]`)을 둔다. `data-rules`는 각 규칙을 하나의 READ ONLY REPEATABLE READ 스냅샷에서 두 번 평가한다. 한 번은 값을 바인딩한 PostgreSQL SQL로, 한 번은 같은 트랜잭션에서 내보낸 행을 SQL을 보지 않는 표준 라이브러리 Python으로 평가하고, 정규화한 결과 다중집합을 비교한다. 두 결과가 같고 예제도 맞을 때만 `rule:<id>`가 판정을 받는다. 두 결과가 다르면 `not_run`(`paths_disagree`)이고, 둘이 같은데 직접 쓴 예제 행과 다르면 `rule_example:<id>`가 `common_mode`로 실패하며 규칙은 `not_run`이다. `views = true`(기본값)이면 `build`가 출력 스키마에 규칙별 `v_rule_<id>`와 문제 키를 모은 `v_rules_subjects`를 만들고, `data-rules`가 두 뷰가 합의된 행을 정해진 순서(`ord`)로 정확히 돌려주는지 확인한다. 찾은 키는 결과 파일이 아니라 이 뷰를 사용자와 함께 DB에서 조회해 본다(`SELECT * FROM sxc_out.v_rules_subjects ORDER BY ord`). 뷰는 살아 있어 검사 시점의 행과만 같으므로 데이터가 바뀌면 다시 실행한다. 지원하지 않는 열 형식·비결정적 정렬 규칙(collation)·NaN·NULL이나 중복 키·순환·행 예산처럼 판정할 수 없는 조건은 통과가 아니라 `not_run`이다. 이 단계는 DB에 쓰지 않고, `report`는 그 결과를 읽지 않으며 `[data_rules]`가 있을 때 `not_proven` 한 줄만 더한다. `[data_rules]`가 없는 설정의 build 출력·검사 목록·결과·보고서는 엔진 fingerprint를 빼면 바뀌지 않는다. shape 규칙(`[[shapes]]`)은 한 열의 class·범위 규칙과 SHACL 대조에 계속 쓰고, 데이터 규칙은 끝점·하위/상위 부품 조건·참조 집합·중복·최빈값 이탈·같은 구성의 조립품·저장된 높이·이름에 적힌 수량처럼 더 넓은 구조 규칙의 문제 키를 찾는 데 쓴다. 합성 예제는 [examples/data-rules](examples/data-rules/)에 있다.
 
+<a id="limitations-and-not-proven"></a>
 ## ⚠️ 검증 한계와 not_proven
 
 **PASS는 이 데이터에서 수행한 검사들이 불일치를 찾지 못했다는 뜻입니다.** 모든 업무 규칙의 정확성이나 일반적인 모델의 무결성을 보증하지 않습니다.
@@ -751,11 +788,21 @@ Cube의 기본 오류 로그에는 오류 클래스·코드·대략적인 범주
 
 최종 공개 커밋·CI 작업 URL·실제 집계는 실행 후 릴리스와 함께 제공하는 **v0.22.0 검증 JSON**에서 확인합니다. 원시 CI 로그에서 읽은 집계만 공개 커밋의 근거로 사용하며, 이전 구현 단계 검증·새 전체 로컬 검증·전체 엔진 통합 CI를 구분합니다.
 
+릴리스 ZIP은 태그에서 `git archive`로 만듭니다. 명령에 적힌 태그가 있는 clone에서 아래 명령을 실행하면 게시된 ZIP과 대조할 파일이 나옵니다. ZIP에는 커밋 시각이 현지 시각으로 기록되므로 시간대를 UTC+9로 맞추며(`TZ=KST-9`), 압축 수준 `-9`나 `--prefix`를 바꿔도 해시가 달라집니다. 다른 git·zlib 버전에서의 바이트 동일성은 주장하지 않습니다.
+
+```bash
+TZ=KST-9 git archive --format=zip -9 --prefix=semantic-crosscheck-0.22.0/ -o semantic-crosscheck-0.22.0.zip v0.22.0
+```
+
+확인 기록(2026-11-11, v0.22.0 자산): git 2.55.0(Windows), 시간대 UTC+9에서 버전이 0.22.0인 위 명령의 결과는 게시된 `semantic-crosscheck-0.22.0.zip`과 바이트 단위로 같았고, SHA-256이 같은 릴리스의 SHA256SUMS 값과 일치했습니다. 이 기록은 그 자산 하나에 대한 것이며, 위 명령의 버전을 바꿀 때 함께 바꾸지 않습니다.
+
+단위 테스트는 다음 명령으로 실행합니다.
+
 ```bash
 python -m unittest discover -s tests -v
 ```
 
-단위 테스트에는 DB가 필요하지 않습니다. 통합 테스트는 전용 PostgreSQL 17 서버의 superuser 연결을 `SXC_TEST_ADMIN_DSN`으로 지정할 때 실행합니다. 테스트 역할 암호가 필요하면 `SXC_TEST_ROLE_PASSWORD`를 사용합니다. OWL에는 Java와 reason 패키지, Cube에는 이 checkout에서 설치한 어댑터가 필요합니다. `SXC_CUBE_HOME`을 지정하거나 기본 캐시를 쓰고, 어댑터 파일을 바꾸면 `sxc.py cube-install`로 갱신합니다.
+단위 테스트에는 DB가 필요하지 않습니다. Python 패키지는 `requirements/core.txt`와 `requirements/witness.txt`가 필요하며, `witness.txt`의 `z3-solver`가 없으면 일부 테스트가 건너뛰지 않고 실패합니다([CONTRIBUTING.md](CONTRIBUTING.md)). 통합 테스트는 전용 PostgreSQL 17 서버의 superuser 연결을 `SXC_TEST_ADMIN_DSN`으로 지정할 때 실행합니다. 테스트 역할 암호가 필요하면 `SXC_TEST_ROLE_PASSWORD`를 사용합니다. OWL에는 Java와 reason 패키지, Cube에는 이 checkout에서 설치한 어댑터가 필요합니다. `SXC_CUBE_HOME`을 지정하거나 기본 캐시를 쓰고, 어댑터 파일을 바꾸면 `sxc.py cube-install`로 갱신합니다.
 
 문서 테스트는 README·명령 안내·CI와 실제 CLI, 버전, 데모 출력의 일치를 확인합니다.
 
@@ -814,6 +861,36 @@ CI는 전체 이력을 가진 clone의 작업 트리·이력을 일반 패턴과
 
 </div>
 
+<a id="recent-changes"></a>
+## Recent changes
+
+Notes from recent releases (v0.15.0 to v0.22.0) on optional features and on what they leave unchanged. New users can skip this section. The full history is in the [changelog](CHANGELOG.md).
+
+Since v0.15.0, authored `gold.expect` cases can opt into local opaque-byte
+[`spec_source` bindings](docs/knowledge-sources.md). Missing or changed evidence
+stops execution before DB; completion drift invalidates affected expectation
+passes. Source pins add no operational report or grain authority. The optional [OKF metadata diagnostic](docs/okf.md)
+exports explicitly selected Gold contracts or previews a local bundle against
+current trusted inputs. It performs no execution or import application; PASS
+means scoped metadata completion, with authenticity and correctness unproven.
+
+[v0.22.0](docs/releases/v0.22.0.md) adds an optional [`data-rules` stage](docs/data-rules.md). Typed rules from a separate rule file are evaluated twice on one read-only snapshot, as compiled PostgreSQL and as an independent standard-library Python evaluation, and a rule gets a verdict only when both agree and its authored examples hold. With `views = true` (the default) build creates lookup views, so the keys a rule found are read in the database with the user while results keep counts and ids only. Configurations without `[data_rules]` keep their build output, results and reports byte for byte, apart from the engine fingerprint. Agreement of the two evaluations does not prove that a rule is the right business rule.
+
+Since v0.21.1, [opt-in contract/plan report evidence](docs/contract-report.md), an optional [PostgreSQL SQL structure diagnostic](docs/sql-structure.md) and independent [bag/provenance-scope fixtures](docs/provenance-fixtures.md) are available. Configurations without the paired preflight selection retain existing report authority. Missing, changed or non-passing evidence cannot satisfy the opted-in report gate. SQL parsing and synthetic fixtures are separate supported-subset checks, not business-truth or query-equivalence proofs.
+
+- [`boundary-schema`](docs/boundary-schema.md) derives a small exact scalar
+  domain from a declared integer, numeric(p,s) or date comparison. It runs
+  offline and emits a schema consumed by the existing `--witness-schema` search.
+  This is a supported-subset experiment, not general SQL parsing or equivalence.
+- [`tlp --shrink`](docs/tlp.md) opts into structured reduction of TLP/NoREC
+  discrepancies. A source-bound v2 replay rechecks the original, accepted steps
+  and final fixture; default runs and valid v1 replays keep their contracts.
+- Previous exact Cube JSON/Decimal, Gold SQL metadata and bounded HTTP response
+  contracts remain in force. Core runtime dependencies and engine pins remain unchanged; optional SQL structure checks require a separately installed parser. Default pipeline stages and non-opted-in report authority are retained.
+
+Actual final-source local and main/tag CI results are recorded in the published
+verification JSON after execution. No earlier release total is substituted.
+
 ## Offline business-definition preflight
 
 [`semantic-preflight`](docs/semantic-preflight.md) optionally compares authored
@@ -833,6 +910,7 @@ authority unless paired `[semantic_preflight]` sidecars are explicitly configure
 changes the existing fingerprint, so rerun operational stages after upgrading.
 See the [schema, synthetic example and reused NVIDIA references](docs/semantic-preflight.md).
 
+<a id="optional-diagnostic-contracts"></a>
 ## Optional diagnostic contracts (since v0.13.0)
 
 Three default-off paths deepen the evidence around a failure:

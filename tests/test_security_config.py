@@ -7,6 +7,8 @@
   a later stage, and 0 can no longer switch a timeout off.
 - The never-implemented [output] table is refused, unknown top-level tables are refused (a misspelt [cube] would
   silently drop its settings), and a UTF-8 BOM is accepted.
+- An entity table in a schema that source.schemas does not list (another schema, the output schema, a system
+  catalog) is a configuration error naming the entity.
 No database is needed.
 """
 
@@ -155,6 +157,19 @@ class TablesAndEncodingTest(ConfigCase):
             config.load(self.dir / "nested" / "absent.toml")
         self.assertEqual(caught.exception.exit_code, EXIT_CONFIG)
         self.assertEqual(str(caught.exception), "config not found: absent.toml")
+
+
+class EntitySchemaTest(ConfigCase):
+    def test_entity_table_outside_source_schemas_is_refused(self):
+        for schema in ("elsewhere", "sxc_out", "pg_catalog"):      # unlisted, the output schema, a system catalog
+            with self.subTest(schema=schema):
+                msg = self.refused(set_key(DEMO, "entities.stock", "table", json.dumps(f"{schema}.stock")))
+                self.assertEqual(msg, f"crosscheck.toml [entities.stock]: table schema {schema!r} is not listed in "
+                                      "source.schemas")
+        # the same table loads once its schema is listed
+        listed = set_key(set_key(DEMO, "entities.stock", "table", '"elsewhere.stock"'),
+                         "source", "schemas", '["sxc_demo", "elsewhere"]')
+        self.assertEqual(config.load(self.write(listed)).entities["stock"].table, "elsewhere.stock")
 
 
 if __name__ == "__main__":

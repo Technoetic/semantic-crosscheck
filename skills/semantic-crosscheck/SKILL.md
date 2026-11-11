@@ -5,46 +5,6 @@ description: "Use when verifying an ontology plus semantic layer built on Postgr
 
 # semantic-crosscheck
 
-Since v0.21.0: [xc-sql-structure](../../commands/xc-sql-structure.md) runs an
-explicit offline PostgreSQL17 AST diagnostic with separately installed pinned
-pglast. Use reviewed local SQL and independently authored structural expectations.
-Unsupported constructs or unavailable parser are non-passes; AST agreement is
-not SQL equivalence, data correctness or business meaning. It is not report
-evidence. [Independent bag fixtures](../../docs/provenance-fixtures.md) exercise
-only their declared synthetic scope, without Lean or a ProvSQL runtime.
-
-[xc-preflight](../../commands/xc-preflight.md) runs optional offline
-`semantic-preflight --config FILE --contract FILE --plan FILE`. It compares
-host-authored definitions and structured selections with configured
-measure/Gold/Cube metadata, without DB, network, model or SQL execution and
-without reading Gold/revision SQL bodies. Use explicit input paths; pass each
-argument separately. A missing/ambiguous selection or selected candidate remains
-`not_run`; complete declaration conflicts fail. Never describe `reviewed` as
-authenticated approval, matching unit/population/denominator/time fields as SQL
-proof, or a period as SQL parameter/date-filter binding. Since v0.21.0 an
-explicit paired `[semantic_preflight]` configuration opts report into current
-contract/plan/preflight evidence; see [report binding](../../docs/contract-report.md).
-Without that section default report authority is unchanged. New Python engine files
-change the existing fingerprint: rerun operational stages after upgrading.
-See [schema, limits and synthetic examples](../../docs/semantic-preflight.md).
-
-Since v0.15.0: [xc-knowledge-evolution](../../commands/xc-knowledge-evolution.md)
-replays a fixed bundled five-checkpoint source-contract scenario offline. It
-rejects `--config`, ignores cwd configuration and accepts no external fixture.
-Its 26 contracts check harness behavior with zero engine, DB or model execution;
-semantic coverage is not measured and no operational result is generated.
-Source restoration never promotes retained not_run evidence. See
-[offline replay](../../docs/knowledge-evolution.md) and
-[authored source binding scope](../../docs/knowledge-sources.md).
-
-Since v0.15.0: [xc-okf](../../commands/xc-okf.md) exports explicitly selected
-Gold contracts as a closed metadata-only OKF profile, or previews a local bundle
-against current trusted inputs. No SQL/source text, rows, parameter values,
-paths, DSN names or runtime receipts are exported. Both modes need explicit
-configuration; export also needs repeatable `--select`. Preview applies nothing.
-Operation PASS leaves execution, correctness, authenticity and application
-`not_proven`; operational report gates remain unchanged. See [OKF profile](../../docs/okf.md).
-
 semantic-crosscheck generates four layers from one configuration file, `crosscheck.toml`, and checks
 that they agree with each other and with hand-written gold SQL:
 
@@ -264,3 +224,45 @@ V4 replays all eligible bounded pair chunks and their NULL group; `verify.mutant
 per mutant (default 10000). Read `verify/mutation-coverage.json` and the existing result limitations before
 claiming coverage. OWL `--explain-max-explanations 5` opts into bounded alternative generated-group causes;
 `enumeration_status: partial` never means all causes were found.
+
+## Optional offline diagnostics
+
+Since v0.21.0: [xc-sql-structure](../../commands/xc-sql-structure.md) runs an
+explicit offline PostgreSQL17 AST diagnostic with separately installed pinned
+pglast. Use reviewed local SQL and independently authored structural expectations.
+Unsupported constructs or unavailable parser are non-passes; AST agreement is
+not SQL equivalence, data correctness or business meaning. It is not report
+evidence. [Independent bag fixtures](../../docs/provenance-fixtures.md) exercise
+only their declared synthetic scope, without Lean or a ProvSQL runtime.
+
+[xc-preflight](../../commands/xc-preflight.md) runs optional offline
+`semantic-preflight --config FILE --contract FILE --plan FILE`. It compares
+host-authored definitions and structured selections with configured
+measure/Gold/Cube metadata, without DB, network, model or SQL execution and
+without reading Gold/revision SQL bodies. Use explicit input paths; pass each
+argument separately. A missing/ambiguous selection or selected candidate remains
+`not_run`; complete declaration conflicts fail. Never describe `reviewed` as
+authenticated approval, matching unit/population/denominator/time fields as SQL
+proof, or a period as SQL parameter/date-filter binding. Since v0.21.0 an
+explicit paired `[semantic_preflight]` configuration opts report into current
+contract/plan/preflight evidence; see [report binding](../../docs/contract-report.md).
+Without that section default report authority is unchanged. New Python engine files
+change the existing fingerprint: rerun operational stages after upgrading.
+See [schema, limits and synthetic examples](../../docs/semantic-preflight.md).
+
+Since v0.15.0: [xc-knowledge-evolution](../../commands/xc-knowledge-evolution.md)
+replays a fixed bundled five-checkpoint source-contract scenario offline. It
+rejects `--config`, ignores cwd configuration and accepts no external fixture.
+Its 26 contracts check harness behavior with zero engine, DB or model execution;
+semantic coverage is not measured and no operational result is generated.
+Source restoration never promotes retained not_run evidence. See
+[offline replay](../../docs/knowledge-evolution.md) and
+[authored source binding scope](../../docs/knowledge-sources.md).
+
+Since v0.15.0: [xc-okf](../../commands/xc-okf.md) exports explicitly selected
+Gold contracts as a closed metadata-only OKF profile, or previews a local bundle
+against current trusted inputs. No SQL/source text, rows, parameter values,
+paths, DSN names or runtime receipts are exported. Both modes need explicit
+configuration; export also needs repeatable `--select`. Preview applies nothing.
+Operation PASS leaves execution, correctness, authenticity and application
+`not_proven`; operational report gates remain unchanged. See [OKF profile](../../docs/okf.md).

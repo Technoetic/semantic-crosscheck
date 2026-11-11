@@ -8,7 +8,8 @@
   ClosureGateTest      V4 closure operators follow build's closure check; survivors of a suite with items left out
                        are not_run
   ScopeTest            verify --only/--gold and reason --only leave not_run scope:* checks, so a narrowed run never
-                       passes; an unknown mutation operator is exit 2 before V1
+                       passes; an unknown mutation operator is exit 2 before V1; reason with nothing to compare
+                       records no check and is not_run
   PairSampleTest       V3 pair tests above shape_q.PAIR_KEY_CAP compare a deterministic sample and say so
   NextActionTest       next_safe_action never sends the agent to a server.log
   RdfKeyTest           SQL view keys use the same canon.key form as the RDF row IRIs
@@ -351,6 +352,14 @@ class ScopeTest(unittest.TestCase):
         res = self.reason(["owl"], cfg)
         self.assertEqual([c.id for c in res.checks], ["scope:shacl"])
         self.assertIn("owl: the configuration has no [ontology] section; the OWL checks were not run", res.not_proven)
+
+    def test_reason_with_nothing_to_compare_is_not_run(self):
+        cfg = demo_cfg()
+        cfg.shapes, cfg.ontology = [], config.Ontology()
+        res = self.reason(None, cfg)
+        self.assertEqual(res.checks, [], "without shapes and ontology neither part records a check, and none is left out")
+        self.assertEqual((res.status, res.exit_code()), ("not_run", 1), "a stage that checked nothing is not a pass")
+        self.assertIn("nothing was compared", res.next_safe_action)
 
     def test_reason_next_action_with_a_scope_check(self):
         res = Result("reason")

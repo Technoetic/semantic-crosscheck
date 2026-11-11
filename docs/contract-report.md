@@ -151,8 +151,23 @@ recorded about mutants, facets, zero rows and gold text is shown only when verif
 readable. Readable means: an object with `schema_version` 1, the current `rule_version`, `mode` disclose or require,
 a `gold` list, the three id lists as lists of strings, a `mutation` object with non-negative integer counts and string
 lists, and either `scope` full with facet rows and `facets_reason` "" or `scope` narrowed with `facets` null and
-`facets_reason` "narrowed"; a verify result that fails the result contract counts as having none. Only these keys are
-copied, so a hand-edited key never reaches a report output.
+`facets_reason` "narrowed"; a verify result that fails the result contract counts as having none. The values are
+checked too:
+
+- every facet id, gold id (of an entry with a string id) and entry of the three id lists is a plain id, made only of
+  `[A-Za-z0-9_.:*+[]-]` (no space, no line break);
+- a gap reason is one of the seven facet reasons, and a row that is not a gap has the reason "";
+- `operators_not_selected` holds distinct operators of the catalogue and adds up with `operators_selected` to 9, and
+  every `generated_only` entry is a `v4:<operator>:<target>` id;
+- the mutant split follows from the V4 checks of the same verify result: `evidence.v4_violations` finds nothing, no V4
+  mutant check id occurs twice, `killed_authored` equals the judged checks (status not `not_run` or `error`) with a
+  killer and detection `authored`, `survived` the judged `fail` checks without a killer, `killed_generated_only`,
+  `unattributed` and `accepted` add up to the other judged checks, `not_judged` is at least the number of `not_run` or
+  `error` mutant checks, and `generated_only` names exactly `killed_generated_only` distinct judged checks whose
+  detection is `generated_only`.
+
+An evidence object that fails any of this counts as not recorded and is not printed at all, so no line break and no
+row value reaches the console. Only these keys are copied, so a hand-edited key never reaches a report output.
 
 `report.md` gains a `## Evidence` section before `## Not proven`: a fixed introduction (only authored and recomputed
 checks compare generated layers with something the generators did not produce; "authored" says who wrote one side,

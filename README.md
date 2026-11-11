@@ -588,7 +588,7 @@ flowchart TD
 | `structural` | 한쪽뿐: 데이터·설정·환경·제공된 모델에 대한 규칙, 실행 범위의 기록 | `shape:<id>`, `cube:meta`, `scope:v1` |
 | `mutation` | V4 변이 검사. 무엇이 변이를 검출했는지는 `detection`에 따로 기록 | `v4:<operator>:<target>` |
 
-gold SQL에 생성한 텍스트가 그대로 있으면(출력 스키마 이름, 생성한 관계의 이름 `<h>_closure`·`<h>_cycles`·`v_shape_<id>`·`v_rule_<id>`·`v_rules_subjects`, 지표 필터의 조건절을 그대로 옮긴 것) 그 gold 질의의 `v1`·`v2` 검사는 generated로 세고, verify가 무엇이 일치했는지 `not_proven` 줄로 알립니다. 표현을 바꿔 옮긴 복사는 찾지 못합니다.
+gold SQL에 생성한 텍스트가 그대로 있으면(출력 스키마 이름, 생성한 관계의 이름 `<h>_closure`·`<h>_cycles`·`v_shape_<id>`·`v_rule_<id>`·`v_rules_subjects`, 지표 필터의 조건절을 그대로 옮긴 것) 그 gold 질의의 `v1`·`v2` 검사는 generated로 세고, verify가 무엇이 일치했는지 `not_proven` 줄로 알립니다. 규칙 뷰는 일치한 글자 대신 항상 한 항목 `relation:v_rule_*`로 적고, 대소문자는 ASCII 범위에서만 같게 봅니다. 표현을 바꿔 옮긴 복사는 찾지 못합니다.
 
 **V4의 `detection`.** V4 suite는 사람이 쓴 gold 항목을 먼저, 생성한 텍스트가 있는 gold 항목을 그다음, V3 항목을 마지막에 실행하고 처음 통과하지 않은 항목에서 멈춥니다. `v4:<operator>:<target>` 검사의 detail에는 `killed_by`(처음 실패한 항목)와 함께 `detection`, `facet`(연산자가 바꾸는 부분), `gold_comparing`(그 facet을 비교하는 사람이 쓴 gold 질의)이 있습니다.
 
@@ -608,9 +608,9 @@ gold SQL에 생성한 텍스트가 그대로 있으면(출력 스키마 이름, 
 - facet: 사람이 쓴 gold SQL이 값이 있는 행으로 비교한 수, 사람이 쓴 항목의 변이 검출로 더해진 수, 사람이 쓴 근거가 없는 facet과 그 이유
 - 0행: 양쪽 모두 0행을 비교한 authored 검사(이름이 `empty`인 층의 것은 따로), 모든 비교가 0행이었던 gold 질의, 생성한 텍스트가 있는 gold SQL
 
-facet은 지표·계층·`ontology.class_column`에서 gold 질의가 비교할 수 있는 한 부분입니다(예: `m_<m>.value`, `m_<m>.ts`, `<h>_closure.qty`, 노드 cube와 지표의 조인 `<node>+m_<m>`). 행을 비교했어도 gold 쪽 값이 모두 NULL·0·빈 문자열이면 비교한 것으로 세지 않습니다. 값이 있는 행을 비교했다는 것도 틀린 값을 잡아낸다는 뜻은 아니며, 변화를 보았다는 근거는 사람이 쓴 항목의 변이 검출뿐입니다. facet은 범위를 좁히지 않은 verify 실행에서만 판정하고, 좁힌 실행에서는 `not judged (narrowed verify run)`으로 나옵니다.
+facet은 지표·계층·`ontology.class_column`에서 gold 질의가 비교할 수 있는 한 부분입니다(예: `m_<m>.value`, `m_<m>.ts`, `<h>_closure.qty`, 노드 cube와 지표의 조인 `<node>+m_<m>`; 모델의 어느 엔터티 cube에도 분류 열이 없으면 `*.<class_column>` 하나가 `not_in_model` 빈틈으로 남음). 행을 비교했어도 gold 쪽 값이 모두 NULL·0·빈 문자열이면 비교한 것으로 세지 않습니다. 값이 있는 행을 비교했다는 것도 틀린 값을 잡아낸다는 뜻은 아니며, 변화를 보았다는 근거는 사람이 쓴 항목의 변이 검출뿐입니다. facet은 범위를 좁히지 않은 verify 실행에서만 판정하고, 좁힌 실행에서는 `not judged (narrowed verify run)`으로 나옵니다.
 
-**두 가지 모드.** `[verify] gold_observation`의 기본값 `"disclose"`는 알리기만 하고 상태를 바꾸지 않습니다. 예외가 하나 있습니다. gold SQL에 생성한 텍스트가 있으면 그 gold 항목은 V4 suite에서 사람이 쓴 항목 뒤로 가므로, 그런 설정에서는 `killed_by`와 V4 상태가 달라질 수 있습니다. 선택 값 `"require"`는 알리던 내용을 상태로 바꾸며, 통과를 실패나 `not_run`으로만 바꿉니다. 생성 계층끼리의 검사만 검출한 변이는 `fail`(`generated_only`, `unattributed`)이고 suite 항목이 빠졌으면 `not_run`(`suite_incomplete`), 전체 범위 실행에서는 지표·계층·`ontology.class_column`마다 `gold_evidence:<element>` 검사가 생기며, 모든 비교가 0행인 gold 질의의 통과한 `v1:<gold>`는 `not_run`(`no_rows_compared`)입니다. `error`는 바꾸지 않습니다. `verify.accepted_gaps`에 이미 아는 빈틈(요소, facet, `v4:<operator>:<target>`)을 적으면 그 항목은 실패하지 않고 `accepted by verify.accepted_gaps` 줄로 남습니다. 두 키는 [설정 레퍼런스](skills/semantic-crosscheck/references/config.md)에 있습니다.
+**두 가지 모드.** `[verify] gold_observation`의 기본값 `"disclose"`는 알리기만 하고 상태를 바꾸지 않습니다. 예외가 하나 있습니다. gold SQL에 생성한 텍스트가 있으면 그 gold 항목은 V4 suite에서 사람이 쓴 항목 뒤로 가므로, 그런 설정에서는 `killed_by`와 V4 상태가 어느 쪽으로든(`error`·`not_run`이 `pass`로, `pass`가 `error`·`not_run`으로) 달라질 수 있습니다. 선택 값 `"require"`는 알리던 내용을 상태로 바꾸며, 통과를 실패나 `not_run`으로만 바꿉니다. 생성 계층끼리의 검사만 검출한 변이는 `fail`(`generated_only`, `unattributed`)이고 suite 항목이 빠졌으면 `not_run`(`suite_incomplete`), 전체 범위 실행에서는 지표·계층·`ontology.class_column`마다 `gold_evidence:<element>` 검사가 생기며, 모든 비교가 0행인 gold 질의의 통과한 `v1:<gold>`는 `not_run`(`no_rows_compared`)입니다. `error`는 바꾸지 않습니다. `verify.accepted_gaps`에 이미 아는 빈틈(요소, facet, `v4:<operator>:<target>`)을 적으면 그 항목은 실패하지 않고 `accepted by verify.accepted_gaps` 줄로 남습니다. 두 키는 [설정 레퍼런스](skills/semantic-crosscheck/references/config.md)에 있습니다.
 
 <a id="reading-a-failure"></a>
 ### 실패한 실행 읽기

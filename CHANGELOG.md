@@ -22,7 +22,8 @@ statuses change only in the one case under "Changed".
   rows, and per compared member the matched rows whose gold value is not NULL, 0 or empty (`value_rows`); on
   full-scope runs every facet of a measure, hierarchy and `ontology.class_column` with its status (`compared`,
   `detected`, `accepted`, `gap`) and reason (`not_in_model`, `no_values`, `no_rows_compared`, `gold_not_run`,
-  `generated_text`, `filter_only`, `no_gold_reads`); the V1/V2 checks that compared no row; the gold queries whose
+  `generated_text`, `filter_only`, `no_gold_reads`; a set class column that no entity cube of the model holds is the
+  one facet `*.<class_column>`, a `not_in_model` gap); the V1/V2 checks that compared no row; the gold queries whose
   every comparison had zero rows; and the mutant split (`operators_selected`, `operators_not_selected`,
   `killed_authored`, `killed_generated_only`, `unattributed`, `accepted`, `survived`, `not_judged`, `equivalent`,
   `not_applicable`, `generated_only`).
@@ -30,7 +31,8 @@ statuses change only in the one case under "Changed".
   `facet` and `gold_comparing`. `verify/mutation-coverage.json` (still `schema_version` 1) gains `detection` on rows
   with `killed_by` and `kind` on every receipt item.
 - verify: not_proven lines for gold SQL that names the output schema, names a generated relation (`<h>_closure`,
-  `<h>_cycles`, `v_shape_<id>`, `v_rule_<id>`, `v_rules_subjects`) or contains a generated measure filter clause
+  `<h>_cycles`, `v_shape_<id>`, `v_rule_<id>`, `v_rules_subjects`; any rule view is the one item `relation:v_rule_*`,
+  never the text that matched; case folds in ASCII only) or contains a generated measure filter clause
   verbatim; for a gold query whose every comparison that ran had zero rows on both sides; for an element whose facets
   have no authored evidence (one line per element, with reasons and the gold queries concerned); for a V4 kill that
   only a check between generated layers made, with a remedy for its operator (for `measure_agg_to_max`: a gold query
@@ -41,7 +43,9 @@ statuses change only in the one case under "Changed".
   `  EVIDENCE  ` console lines after the NOT PROVEN lines (not with `--quiet`): checks by kind, the mutant split, the
   facets without authored evidence, zero-row comparisons, gold SQL with generated text, stages not included. A verify
   result without a readable `evidence` object (for example one written by an earlier release) is shown as "observation not
-  recorded", and its V1/V2 checks count as unclassified.
+  recorded", and its V1/V2 checks count as unclassified. Readable also means closed values (reasons, operator names,
+  plain ids without spaces or line breaks) and a mutant split that follows from the V4 checks of the same result
+  (docs/contract-report.md).
 - Configuration (`[verify]`, both part of the configuration hash): `gold_observation` (`"disclose"`, the default, or
   `"require"`) and `accepted_gaps` (a list of elements, facet ids or `v4:<operator>:<target>` ids of this
   configuration; anything else is exit 2).
@@ -67,18 +71,24 @@ statuses change only in the one case under "Changed".
 - V4 suite order: the items of gold queries whose SQL contains generated text now run after the items of authored
   gold queries (a stable sort). Without such a gold query the order, every V4 status and every `killed_by` are as in
   0.22.1. With one, `killed_by` and V4 statuses can change in the default mode too: another item can be the first to
-  fail, or an item that errors twice or the `verify.mutant_max_items` budget can be met first.
+  fail, or an item that errors twice or the `verify.mutant_max_items` budget can be met first. This goes either way:
+  `error` or `not_run` can become `pass`, and `pass` can become `error` or `not_run`; the coverage receipts change
+  with it.
 - The next action of a surviving V4 mutant reads "no replayed suite item detects this kind of error" instead of "no
   gold query observes this kind of error". The `shape_q.measure_total_sql` docstring no longer calls the V3 total SQL
   independent of the Cube model: it uses the same `cube_gen.where_sql`.
 - verify prints more NOT PROVEN lines for most configurations, so scripts that count them see more; report gets no
   new NOT PROVEN line. Console parsers should ignore lines that start with `  EVIDENCE  `.
+- Configuration: an identifier (gold ids, measure and entity names, the class column and the other names checked
+  against `^[a-z_][a-z0-9_]{0,62}$`) or a Cube member of `cube_query` or `map` that ends with a line break is now exit 2
+  (`invalid identifier: ...`, `bad Cube member ...`); before, the pattern's `$` let it through.
 
 ### Upgrading
 
 - Engine code changed, so the engine fingerprint changed: every earlier build, reason, cube and verify result is
   stale (`inputs_changed`). Rerun the whole pipeline after upgrading.
-- No configuration needs editing; the default mode changes no status apart from the suite-order case above. Build,
+- No configuration needs editing, unless an identifier or Cube member ends with a line break (above); the default
+  mode changes no status apart from the suite-order case above. Build,
   reason and cube outputs, check ids and reports without a verify result are unchanged apart from the engine
   fingerprint (the compatibility goldens hold this).
 - No new runtime dependency.

@@ -281,7 +281,8 @@ parameter set with rows. With `verify.gold_observation = "require"` its passing 
 
 Since 0.23.0 verify reads each gold SQL file for text copied from the generated layers: the output schema used as a
 qualifier, the bare name of a generated relation (`<h>_closure`, `<h>_cycles`, `v_shape_<id>`, `v_rule_<id>`,
-`v_rules_subjects`) or a measure's generated filter clause verbatim. A gold query with such text counts as
+`v_rules_subjects`; any rule view is reported as the one item `relation:v_rule_*`, and case folds in ASCII only) or a
+measure's generated filter clause verbatim. A gold query with such text counts as
 generated evidence, not authored: its `v1`/`v2` checks are counted as generated, its items run after the authored
 gold items in V4, and a not proven line names what matched. Write gold SQL from the business definition against the
 source tables; a paraphrased copy is not detected, and it is still not independent.

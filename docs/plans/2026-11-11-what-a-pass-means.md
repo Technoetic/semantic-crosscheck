@@ -890,10 +890,14 @@ Where the implementation (0.23.0) differs from this plan, or settles what it lef
   another stage is `unclassified`.
 - Generated text (5.2): a match of rule 2 also gets its own line in the N1 family, `gold:{g}: the gold SQL names the
   generated relation {names}; ...`. Rule views are matched by the prefix `v_rule_` (verify does not read the rule
-  file). Comments are not removed inside double-quoted identifiers either, and nested block comments are removed as
-  PostgreSQL nests them.
+  file), and any match is the one fixed item `relation:v_rule_*` (after the configured relation names, before
+  `relation:v_rules_subjects`), never the text that matched, which may be a literal. Case folding in rules 1 and 2 is
+  ASCII only, as PostgreSQL folds unquoted identifiers. Comments are not removed inside double-quoted identifiers
+  either, and nested block comments are removed as PostgreSQL nests them.
 - `value_rows` (3.2): every boolean gold value counts as a value.
-- Facets (3.3): without a model (configuration validation) the class facets are listed for every entity. Reason
+- Facets (3.3): without a model (configuration validation) the class facets are listed for every entity. With a
+  model in which no entity cube holds the class column, one facet `*.<class_column>` (cube `*`, reason
+  `not_in_model`) stands for it, so a set class column is never left out. Reason
   `generated_text` also covers a facet that only generated golds use in filters. A gap line names the golds behind
   its reason. Full scope means every part and every configured gold query planned; a `--gold` naming all of them is
   full scope.
@@ -904,7 +908,9 @@ Where the implementation (0.23.0) differs from this plan, or settles what it lef
 - Report (4.3-4.5): `excluded_stages` lists a required stage without a result as `missing` and an optional stage
   without a result not at all. A stale verify gets the not-judged texts with reason `not_included`. report.json has
   `mutation_reason` (`not_recorded`, `not_included`, `v4_not_run`). "Malformed evidence" is defined field by field,
-  and a verify result that fails the result contract counts as having none. The zero-row texts list authored checks
+  values included (closed reason and operator sets, plain ids without spaces or line breaks), the mutant split must
+  follow from the V4 checks of the same result, and a verify result that fails the result contract counts as having
+  none. The zero-row texts list authored checks
   only; `gold_generated_text` names the golds counted as generated.
 - Require mode (3.5, 4.6, 4.7): for an `unattributed` kill the N5b line and the next actions call the killer "an item
   which no evidence rule classifies". The detail of a passing `gold_evidence:<element>` has no `reason`; an element

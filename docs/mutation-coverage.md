@@ -17,7 +17,9 @@ The key budget bounds key reads and partition storage; the item budget is a sepa
 (default 10000) limiting logical suite items **per mutant**. A pair chunk or NULL group is one item,
 regardless of its number of Cube requests. An error still gets one retry within the same item. Budgets
 and receipts reset before every mutant, and an early mismatch still kills that mutant. The first item
-left out by the item budget produces `not_run` with `reason: suite_budget`; it cannot establish survival.
+left out by the item budget produces `not_run` with `reason: suite_budget` when no earlier non-pass exists;
+it cannot establish survival. In optional `mutant_observation = "all"` mode an earlier non-pass remains
+authoritative even if later observation exhausts the budget; the receipt is partial.
 
 `verify/mutation-coverage.json` is an atomic diagnostic artifact, outside report authority. It describes
 the selected mutant instances and selected passing suite only. Each instance records an outcome:
@@ -46,7 +48,10 @@ an item of a gold query whose SQL contains generated text, `unclassified` otherw
 `generated_only`, `unattributed` or `none`. Rows without `killed_by` (equivalent, not applicable, gated, errored or
 unrun mutants) get no `detection`, since none is defined for them. The suite runs authored gold items first, so
 `generated_only` means that every replayed authored item passed against the mutant; it does not say which later
-items would also have failed, because they were not run. The artifact stays outside report authority: report never
+items would also have failed in default `mutant_observation = "first"` mode, because they were not run.
+Optional `"all"` mode records later observations within the budget; the
+[matrix](mutation-matrix.md) lists all observed detectors without upgrading first-detector authority.
+The artifact stays outside report authority: report never
 reads it, and these item kinds never set the kind of a check. The kinds report counts come from the registry
 ([design, section 8](design.md#evidence-kinds)). In `verify.gold_observation = "require"` mode a rewritten kill's row
 gets `outcome` `survived` (a `fail`) or `not_run` (`suite_incomplete`) with its `reason`, and keeps `killed_by` and

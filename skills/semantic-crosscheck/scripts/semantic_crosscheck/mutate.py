@@ -484,7 +484,7 @@ def run_mutants(cfg, out: Path, conn, model: dict, suite, closure: dict | None =
                 sampled_items=(), coverage: list | None = None) -> tuple[list[tuple], list[str]]:
     """Witness, serve and judge every selected mutant.
 
-    suite(client) -> (status, item) runs the gold suite against one CubeClient and stops at the first item that does
+    suite(client) -> (status, item) runs the gold suite against one CubeClient and returns the first item that does
     not pass: ("fail", item) kills the mutant, ("error", item) leaves it unjudged, ("pass", "") means it survived.
     item must be a check id because it is stored in the result. closure maps each hierarchy to the status of build's
     closure:<h> (default: read from out/build/result.json); the operators on a hierarchy whose closure did not pass

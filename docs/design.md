@@ -723,7 +723,8 @@ detail gains `pair_key_budget`, and the `not_proven` line adds that the key coun
 replays every chunk and the NULL group of a passing chunked baseline from the same in-memory key partition,
 without a new key read. Each chunk is an explicit suite item; above the key budget, the sample and
 `sample_blind_possible` disclosure remain. The separate positive `verify.mutant_max_items` budget (default 10000)
-limits logical items per mutant. Exhaustion is `not_run` (`suite_budget`), never a survival verdict.
+limits logical items per mutant. Without an earlier non-pass, exhaustion is `not_run` (`suite_budget`), never a
+survival verdict. Optional `all` observation retains an earlier non-pass and marks later exhaustion partial.
 [Per-mutant coverage](mutation-coverage.md) records executed and unexecuted items, including early stops.
 
 **V3 additivity over join paths.** Predefined joins inflate totals when a row matches several rows of the
@@ -762,7 +763,8 @@ describes (a hand-edited model) has no independent SQL, gets no test and is list
 (from `verify/mutants/<operator>__<target>/`) and the suite runs against it. The suite replays V1 (the first
 binding of every gold query), V2 (the first `verify.mutant_bindings` bindings of every stratum) and V3, but only
 the items that passed against the unmutated model (the others are counted in a `not_proven` line), with gold rows
-computed once. It stops at the first item that does not pass:
+computed once. Its authoritative result is the first item that does not pass. Default `first` observation
+stops there; optional `all` continues within the budget and records only diagnostic later observations:
 
 - a **failing** item kills the mutant: the check passes and `killed_by` names the item (`v1:<gold>`,
   `v2:<gold>:<stratum>[<position>]` with the position in the deterministic binding order, or a V3 check
@@ -805,10 +807,11 @@ be met first. The change goes either way: `error` or `not_run` can become `pass`
 
 - `detection`: the kind of the `killed_by` item. `authored` (an item of an authored gold query), `generated_only` (a
   V3 item or an item of a gold query with generated text), `unattributed` (an item of no known kind) or `none`
-  (nothing killed it). Because authored items run first and the suite stops at the first item that does not pass,
+  (nothing killed it). Because authored items run first and the authoritative result is the first non-pass,
   `generated_only` means that every replayed authored item ran and passed against the mutant. It is exact for the
   replayed bindings only (the first binding in V1, the first `verify.mutant_bindings` per stratum in V2), and later
-  items are not run, so only the first detecting item and its kind are known;
+  items are not run in default `first` mode, so only the first detecting item and its kind are known there.
+  Optional `all` observations never upgrade this authoritative first-detector classification;
 - `facet`: what the operator changes (the facet table below), and `gold_comparing`: the authored gold queries of this
   run whose `map` compares that facet.
 

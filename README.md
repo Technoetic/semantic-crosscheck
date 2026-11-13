@@ -1014,11 +1014,14 @@ uniqueness gives `complete`. Original consistency failure and first-core fields 
 V4 now replays every eligible chunk of a bounded V3 pair baseline and its NULL group, using the same in-memory key
 partition. Chunk replay item ids append `:chunk[<index>]` to the V3 check id; the NULL group appends `:null`.
 These are suite item ids in `killed_by` and coverage, not additional top-level checks. The configurable
-`verify.mutant_max_items` (positive integer, default 10000) caps logical replay items per mutant. Exhaustion is
-`not_run` (`suite_budget`), not a survival verdict. `verify/mutation-coverage.json` records each selected mutant
+`verify.mutant_max_items` (positive integer, default 10000) caps logical replay items per mutant. Without an
+earlier non-pass, exhaustion is `not_run` (`suite_budget`), not a survival verdict. Since v0.24.0 optional `all`
+observation retains an earlier non-pass and records later budget exhaustion as partial observations.
+`verify/mutation-coverage.json` records each selected mutant
 instance, executed items/attempt counts and unexecuted reasons, including equivalent-on-current-data and
 not-applicable instances. Mutant details also retain their execution receipts. An early confirmed kill remains
-valid with remaining items explicitly unrun. Above `pair_key_budget`, sampling and its disclosures remain;
+valid with remaining items explicitly unrun in default `first` mode; optional `all` observes later items within
+the budget. Above `pair_key_budget`, sampling and its disclosures remain;
 Cube queries and SQL still do not share an MVCC snapshot. See [replay coverage](docs/mutation-coverage.md).
 
 ## 한국어 요약

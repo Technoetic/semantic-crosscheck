@@ -184,6 +184,7 @@ that generated the model. Fix `crosscheck.toml` or the gold SQL file, never the 
 - Exit code 2: no cube result or model, an unknown `--only` or `--gold` value, or an unknown mutation
   operator. Exit code 3: Cube could not start; see [/xc-cube](xc-cube.md).
 
-V4 uses `verify.mutant_max_items` (positive integer, default 10000) per mutant. Budget exhaustion is
-`not_run` (`suite_budget`); `verify/mutation-coverage.json` records attempted items, retries and explicit
+V4 uses `verify.mutant_max_items` (positive integer, default 10000) per mutant. Without an earlier non-pass,
+budget exhaustion is `not_run` (`suite_budget`). Optional `all` observation retains an earlier non-pass and
+marks the later receipt partial; `verify/mutation-coverage.json` records attempted items, retries and explicit
 unexecuted reasons for each selected mutant instance. See [coverage](../docs/mutation-coverage.md).

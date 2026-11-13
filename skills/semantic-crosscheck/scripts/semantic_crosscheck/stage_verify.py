@@ -29,7 +29,7 @@ Gold and Cube values are compared in the form of the Cube member type of each ma
 the model): text exactly, numbers as exact decimals, dates and timestamps in UTC, booleans as booleans.
 
 V4 hands mutate.run_mutants a suite that replays V1 (first binding of every gold query), V2 (the first
-verify.mutant_bindings bindings of every stratum) and V3 against a mutant's Cube and stops at the first item that
+verify.mutant_bindings bindings of every stratum) and V3 against a mutant's Cube; the authoritative result is the first item that
 does not pass. A failing item kills the mutant (killed_by names the item, a gold item or a V3 item; the detection
 below says which kind); an item that still errors after one retry
 leaves the mutant unjudged (an error check with reason suite_error), because a query that could not run proves

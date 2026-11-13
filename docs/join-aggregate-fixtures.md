@@ -78,3 +78,11 @@ nondeterministic collations, ordering and production data are outside scope.
 Passing the cases does not prove SQL equivalence, establish PostgreSQL/Cube
 equivalence, or transfer a formal theorem to an execution engine. Operational
 report authority and coverage do not change.
+
+## Conceptual references
+
+[SPES: A Symbolic Approach to Proving Query Equivalence Under Bag Semantics, arXiv v2](https://arxiv.org/abs/2004.00481v2)
+provides background on preserving duplicate multiplicities when reasoning about query results. The
+[public SPES repository pinned at 8049f98d8e64a5c2c43d1ed581e7d5b6e0a006e2](https://github.com/georgia-tech-db/spes/tree/8049f98d8e64a5c2c43d1ed581e7d5b6e0a006e2)
+is an Apache-2.0 design reference only. The literals, SQL and Python arithmetic here are original; no upstream
+code, proof engine or paper examples are incorporated. See [THIRD_PARTY.md](../THIRD_PARTY.md).

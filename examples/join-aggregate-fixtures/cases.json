@@ -1,0 +1,131 @@
+{
+  "schema_version": 1,
+  "synthetic": true,
+  "expected_source": "Independently authored literal results, before reference arithmetic or database execution",
+  "cases": [
+    {
+      "id": "duplicates_both_sides",
+      "operation": "inner_join",
+      "left": [["A", 2], ["A", 2], ["B", -1], [null, 99]],
+      "right": [["A", "x"], ["A", "x"], ["A", "y"], ["B", "z"], [null, "n"]],
+      "expected": [{"row": ["A", 2, "x"], "count": 4}, {"row": ["A", 2, "y"], "count": 2}, {"row": ["B", -1, "z"], "count": 1}],
+      "sql": "WITH l(k,v) AS (VALUES ('A'::text,2),('A',2),('B',-1),(NULL,99)), r(k,v) AS (VALUES ('A'::text,'x'::text),('A','x'),('A','y'),('B','z'),(NULL,'n')) SELECT l.k,l.v,r.v FROM l JOIN r ON l.k=r.k",
+      "mutants": [
+        {
+          "operation": "dedup_left",
+          "expected": [{"row": ["A", 2, "x"], "count": 2}, {"row": ["A", 2, "y"], "count": 1}, {"row": ["B", -1, "z"], "count": 1}],
+          "sql": "WITH l0(k,v) AS (VALUES ('A'::text,2),('A',2),('B',-1),(NULL,99)), l AS (SELECT DISTINCT * FROM l0), r(k,v) AS (VALUES ('A'::text,'x'::text),('A','x'),('A','y'),('B','z'),(NULL,'n')) SELECT l.k,l.v,r.v FROM l JOIN r ON l.k=r.k"
+        },
+        {
+          "operation": "dedup_right",
+          "expected": [{"row": ["A", 2, "x"], "count": 2}, {"row": ["A", 2, "y"], "count": 2}, {"row": ["B", -1, "z"], "count": 1}],
+          "sql": "WITH l(k,v) AS (VALUES ('A'::text,2),('A',2),('B',-1),(NULL,99)), r0(k,v) AS (VALUES ('A'::text,'x'::text),('A','x'),('A','y'),('B','z'),(NULL,'n')), r AS (SELECT DISTINCT * FROM r0) SELECT l.k,l.v,r.v FROM l JOIN r ON l.k=r.k"
+        },
+        {
+          "operation": "dedup_both",
+          "expected": [{"row": ["A", 2, "x"], "count": 1}, {"row": ["A", 2, "y"], "count": 1}, {"row": ["B", -1, "z"], "count": 1}],
+          "sql": "WITH l0(k,v) AS (VALUES ('A'::text,2),('A',2),('B',-1),(NULL,99)), l AS (SELECT DISTINCT * FROM l0), r0(k,v) AS (VALUES ('A'::text,'x'::text),('A','x'),('A','y'),('B','z'),(NULL,'n')), r AS (SELECT DISTINCT * FROM r0) SELECT l.k,l.v,r.v FROM l JOIN r ON l.k=r.k"
+        }
+      ]
+    },
+    {
+      "id": "null_keys_and_empty_text",
+      "operation": "inner_join",
+      "left": [[null, 1], ["A", 0], ["", -2]],
+      "right": [[null, "n"], ["A", ""], ["", null]],
+      "expected": [{"row": ["A", 0, ""], "count": 1}, {"row": ["", -2, null], "count": 1}],
+      "sql": "WITH l(k,v) AS (VALUES (NULL::text,1),('A',0),('',-2)), r(k,v) AS (VALUES (NULL::text,'n'::text),('A',''),('',NULL)) SELECT l.k,l.v,r.v FROM l JOIN r ON l.k=r.k"
+    },
+    {
+      "id": "integer_keys",
+      "operation": "inner_join",
+      "left": [[0, "zero"], [-1, null], [null, "missing"]],
+      "right": [[0, 0], [-1, -3], [null, 4]],
+      "expected": [{"row": [0, "zero", 0], "count": 1}, {"row": [-1, null, -3], "count": 1}],
+      "sql": "WITH l(k,v) AS (VALUES (0,'zero'::text),(-1,NULL),(NULL,'missing')), r(k,v) AS (VALUES (0,0),(-1,-3),(NULL,4)) SELECT l.k,l.v,r.v FROM l JOIN r ON l.k=r.k"
+    },
+    {
+      "id": "empty_left_join",
+      "operation": "inner_join",
+      "left": [], "right": [["A", 1]], "expected": [],
+      "sql": "WITH l(k,v) AS (SELECT NULL::text, NULL::integer WHERE false), r(k,v) AS (VALUES ('A'::text,1)) SELECT l.k,l.v,r.v FROM l JOIN r ON l.k=r.k"
+    },
+    {
+      "id": "empty_right_join",
+      "operation": "inner_join",
+      "left": [["A", 1]], "right": [], "expected": [],
+      "sql": "WITH l(k,v) AS (VALUES ('A'::text,1)), r(k,v) AS (SELECT NULL::text, NULL::integer WHERE false) SELECT l.k,l.v,r.v FROM l JOIN r ON l.k=r.k"
+    },
+    {
+      "id": "mixed_groups_nulls_and_signs",
+      "operation": "grouped",
+      "rows": [["red", 5], ["red", null], ["red", -2], ["blue", 0], ["blue", -3], ["blue", null], [null, 4], [null, null]],
+      "expected": [{"row": ["red", 3, 2, 3], "count": 1}, {"row": ["blue", 3, 2, -3], "count": 1}, {"row": [null, 2, 1, 4], "count": 1}],
+      "sql": "WITH t(g,v) AS (VALUES ('red'::text,5),('red',NULL),('red',-2),('blue',0),('blue',-3),('blue',NULL),(NULL,4),(NULL,NULL)) SELECT g,count(*),count(v),sum(v) FROM t GROUP BY g",
+      "mutants": [
+        {
+          "operation": "count_rows_to_nonnull",
+          "expected": [{"row": ["red", 2, 2, 3], "count": 1}, {"row": ["blue", 2, 2, -3], "count": 1}, {"row": [null, 1, 1, 4], "count": 1}],
+          "sql": "WITH t(g,v) AS (VALUES ('red'::text,5),('red',NULL),('red',-2),('blue',0),('blue',-3),('blue',NULL),(NULL,4),(NULL,NULL)) SELECT g,count(v),count(v),sum(v) FROM t GROUP BY g"
+        },
+        {
+          "operation": "count_nonnull_to_rows",
+          "expected": [{"row": ["red", 3, 3, 3], "count": 1}, {"row": ["blue", 3, 3, -3], "count": 1}, {"row": [null, 2, 2, 4], "count": 1}],
+          "sql": "WITH t(g,v) AS (VALUES ('red'::text,5),('red',NULL),('red',-2),('blue',0),('blue',-3),('blue',NULL),(NULL,4),(NULL,NULL)) SELECT g,count(*),count(*),sum(v) FROM t GROUP BY g"
+        },
+        {
+          "operation": "sum_to_max",
+          "expected": [{"row": ["red", 3, 2, 5], "count": 1}, {"row": ["blue", 3, 2, 0], "count": 1}, {"row": [null, 2, 1, 4], "count": 1}],
+          "sql": "WITH t(g,v) AS (VALUES ('red'::text,5),('red',NULL),('red',-2),('blue',0),('blue',-3),('blue',NULL),(NULL,4),(NULL,NULL)) SELECT g,count(*),count(v),max(v) FROM t GROUP BY g"
+        }
+      ]
+    },
+    {
+      "id": "all_null_group_versus_zero",
+      "operation": "grouped",
+      "rows": [["A", null], ["A", null], ["B", 0]],
+      "expected": [{"row": ["A", 2, 0, null], "count": 1}, {"row": ["B", 1, 1, 0], "count": 1}],
+      "sql": "WITH t(g,v) AS (VALUES ('A'::text,NULL::integer),('A',NULL),('B',0)) SELECT g,count(*),count(v),sum(v) FROM t GROUP BY g"
+    },
+    {
+      "id": "global_mixed",
+      "operation": "global",
+      "rows": [["g", 5], ["g", null], ["h", -2], ["h", 0]],
+      "expected": [{"row": [4, 3, 3], "count": 1}],
+      "sql": "WITH t(g,v) AS (VALUES ('g'::text,5),('g',NULL),('h',-2),('h',0)) SELECT count(*),count(v),sum(v) FROM t"
+    },
+    {
+      "id": "global_all_null",
+      "operation": "global",
+      "rows": [["g", null], ["h", null]],
+      "expected": [{"row": [2, 0, null], "count": 1}],
+      "sql": "WITH t(g,v) AS (VALUES ('g'::text,NULL::integer),('h',NULL)) SELECT count(*),count(v),sum(v) FROM t"
+    },
+    {
+      "id": "empty_grouped",
+      "operation": "grouped", "rows": [], "expected": [],
+      "sql": "WITH t(g,v) AS (SELECT NULL::text,NULL::integer WHERE false) SELECT g,count(*),count(v),sum(v) FROM t GROUP BY g"
+    },
+    {
+      "id": "empty_global",
+      "operation": "global", "rows": [],
+      "expected": [{"row": [0, 0, null], "count": 1}],
+      "sql": "WITH t(g,v) AS (SELECT NULL::text,NULL::integer WHERE false) SELECT count(*),count(v),sum(v) FROM t"
+    },
+    {
+      "id": "join_then_grouped",
+      "operation": "join_grouped",
+      "left": [["A", 2], ["A", 2], ["B", null]],
+      "right": [["A", "x"], ["A", "x"], ["A", "y"], ["B", "z"]],
+      "expected": [{"row": ["A", 6, 6, 12], "count": 1}, {"row": ["B", 1, 0, null], "count": 1}],
+      "sql": "WITH l(k,v) AS (VALUES ('A'::text,2),('A',2),('B',NULL)), r(k,v) AS (VALUES ('A'::text,'x'::text),('A','x'),('A','y'),('B','z')) SELECT l.k,count(*),count(l.v),sum(l.v) FROM l JOIN r ON l.k=r.k GROUP BY l.k"
+    },
+    {
+      "id": "unmatched_join_then_global",
+      "operation": "join_global",
+      "left": [["A", 2], [null, 3]], "right": [["B", "x"], [null, "n"]],
+      "expected": [{"row": [0, 0, null], "count": 1}],
+      "sql": "WITH l(k,v) AS (VALUES ('A'::text,2),(NULL,3)), r(k,v) AS (VALUES ('B'::text,'x'::text),(NULL,'n')) SELECT count(*),count(l.v),sum(l.v) FROM l JOIN r ON l.k=r.k"
+    }
+  ]
+}

@@ -24,7 +24,8 @@ runtime; the amount depends on the selected suite and has not been benchmarked.
 
 Only `all` writes `verify/mutation-matrix.json`. It is an atomic diagnostic sidecar with `schema_version: 1`
 and `diagnostic_only: true`. Report does not read it. A new verify attempt removes the old matrix before
-argument validation, prerequisite checks, database/Cube startup, or CLI TOML parsing. Default mode and
+stage-argument validation, prerequisite checks, database/Cube startup, or CLI TOML parsing. Malformed or unknown
+CLI switches rejected by argparse occur before output cleanup and leave prior diagnostic files in place. Default mode and
 runs excluding V4 leave no matrix. Cleanup refuses a configuration alias or a verify directory resolving
 outside the chosen output directory. Atomic replacement does not follow an artifact-file symlink.
 

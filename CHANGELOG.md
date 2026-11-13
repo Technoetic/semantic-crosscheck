@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.24.0 — 2026-11-13
+## [0.24.0] - 2026-11-13
 
 - Add optional `[verify] mutant_observation = "all"`: bounded observations after the first non-pass and a
   diagnostic-only `verify/mutation-matrix.json`; default first-mode stopping and first-detector report authority
@@ -968,3 +968,5 @@ First release. Release notes: [docs/releases/v0.1.0.md](docs/releases/v0.1.0.md)
 [0.19.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.19.0
 
 [0.19.1]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.19.1
+
+[0.24.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.24.0

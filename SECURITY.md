@@ -6,7 +6,7 @@ and how to report a vulnerability.
 
 ## Supported versions
 
-Security fixes are made for the latest release (currently 0.23.x). Older releases are not patched.
+Security fixes are made for the latest release (currently 0.24.x). Older releases are not patched.
 
 ## Reporting a vulnerability
 

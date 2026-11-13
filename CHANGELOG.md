@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.24.0 — 2026-11-13
+
+- Add optional `[verify] mutant_observation = "all"`: bounded observations after the first non-pass and a
+  diagnostic-only `verify/mutation-matrix.json`; default first-mode stopping and first-detector report authority
+  remain. Errors, partial/budget exhaustion and skipped observations are distinct from detected mismatches.
+- Add independently authored duplicate-inner-join and grouped/global integer aggregate fixtures, separate
+  Python reference arithmetic, PostgreSQL companion tests and distinguishing wrong variants. Existing
+  one-column provenance fixtures remain. No new runtime dependency or CLI stage.
+- Pin StrykerJS, Mutation Testing Elements and SPES as conceptual references; no upstream engine/code is bundled.
+- Engine/config fingerprints change; rerun operational stages after upgrading. See
+  [release scope and evidence](docs/releases/v0.24.0.md).
+
 ## [0.23.0] - 2026-11-12
 
 Release notes: [docs/releases/v0.23.0.md](docs/releases/v0.23.0.md).

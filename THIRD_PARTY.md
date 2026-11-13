@@ -195,3 +195,20 @@ original synthetic manifests in the suite's Turtle format, and CI downloads the 
 verifies its SHA-256 and extracts only `data-shapes-test-suite/` and `LICENSE.md`. The licence name comes from the
 suite's `LICENSE.md`. Under the licence's 2023 text, copying suite files into a distribution would require the full
 licence notice, the existing notices and a note of changes, and such copies would remain under that licence.
+
+
+## v0.24.0 mutation observation and authored join/aggregate fixtures
+
+The optional all-item mutation observations are an original implementation informed by
+[StrykerJS v10.1.1's disableBail option](https://github.com/stryker-mutator/stryker-js/blob/959127763e5bbe2eb65f5341a8161780d6d8a476/packages/api/schema/stryker-core.json#L499-L503)
+and [Mutation Testing Elements' separate coveredBy, killedBy and testsCompleted fields](https://github.com/stryker-mutator/mutation-testing-elements/blob/4b5b62cc6bf81f23dd9521447131abeb51f895db/packages/report-schema/src/mutation-testing-report-schema.json#L43-L100).
+Both referenced projects are Apache-2.0 licensed; no source, schema or JavaScript engine is copied, bundled or
+installed. Execution coverage is not detection, and a bounded partial matrix is not full semantic coverage.
+
+The authored duplicate-join and aggregate corpus is conceptually informed by
+[SPES: A Symbolic Approach to Proving Query Equivalence Under Bag Semantics (ICDE 2022), arXiv v2](https://arxiv.org/abs/2004.00481v2)
+by Qi Zhou, Joy Arulraj, Shamkant Navathe, William Harris and Jinpeng Wu. The
+[public SPES repository](https://github.com/georgia-tech-db/spes/tree/8049f98d8e64a5c2c43d1ed581e7d5b6e0a006e2)
+is Apache-2.0 licensed. The fixtures, SQL and bounded Python reference arithmetic are independently authored;
+no SPES code, proof engine, Java/Calcite/Z3 stack or paper examples are incorporated. The fixtures do not
+establish general PostgreSQL/Cube query equivalence or certify business definitions.

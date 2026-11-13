@@ -229,6 +229,13 @@ Saved operational results now declare `schema_version: 1`. Valid legacy unversio
 readable; invalid check lists, duplicate IDs, unsupported statuses and malformed JSON become a
 sanitized `result_file:error`, including optional-stage files. Repair and rerun the producing stage.
 
+Optional `verify.mutant_observation = "all"` continues selected replay items after the first non-pass and
+records a [diagnostic mutation matrix](../../docs/mutation-matrix.md), bounded per mutant. Preserve the
+first-detector authoritative verdict; later mismatches never upgrade evidence or report status. Errors, skipped
+cells and mere execution are not detections. Default `"first"` keeps early stopping. Separate
+[authored join/aggregate fixtures](../../docs/join-aggregate-fixtures.md) are synthetic tests, not operational
+Gold or a general equivalence engine.
+
 V4 replays all eligible bounded pair chunks and their NULL group; `verify.mutant_max_items` bounds logical items
 per mutant (default 10000). Read `verify/mutation-coverage.json` and the existing result limitations before
 claiming coverage. OWL `--explain-max-explanations 5` opts into bounded alternative generated-group causes;

@@ -1571,3 +1571,19 @@ pglast; it has no operational report authority. [Bag/provenance fixtures](proven
 use original finite reference operations and literal expectations with separate
 PostgreSQL companion tests, not a production provenance engine or universal proof.
 No common cross-engine snapshot is introduced.
+
+
+## v0.24.0 bounded mutation observation and authored aggregate fixtures
+
+`verify.mutant_observation` defaults to `"first"`. Optional `"all"` continues the selected baseline-passing
+suite within the existing per-mutant item budget, while returning the first non-pass result to authoritative
+V4. The [matrix sidecar](mutation-matrix.md) separates observed mismatches from execution, errors and missing
+observations; no report reader consumes it as proof. Later detections do not retroactively change the first
+detector's evidence kind or satisfy require mode. Additional observations cost time and remain limited to the
+selected data, operators, items and bindings. No shared cross-engine snapshot is introduced.
+
+The separate [join/aggregate fixture corpus](join-aggregate-fixtures.md) extends synthetic test evidence with
+duplicate equijoin cardinalities, NULL keys and aggregate empty/all-NULL rules. Original bounded Python
+arithmetic and PostgreSQL are compared with independently authored literal expectations. Existing one-column
+provenance fixtures remain unchanged. This is not an operational measure oracle or a general SQL evaluator.
+No default dependency, CLI stage or production database workflow is added.

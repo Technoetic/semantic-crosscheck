@@ -59,7 +59,9 @@ python "${CLAUDE_PLUGIN_ROOT}/skills/semantic-crosscheck/scripts/sxc.py" verify 
   no witness. Pair tests of at most 2,000 keys compare every key unfiltered and get no witness check.
 - V4 patches copies of the model and serves each mutant in a fresh Cube process. Only suite items that
   pass against the unmutated model are replayed (V1, the first `verify.mutant_bindings` bindings per
-  stratum, V3), and the suite stops at the first item that does not pass. Only a failing item kills a
+  stratum, V3), and the authoritative result is the first item that does not pass. Default `verify.mutant_observation =
+  "first"` stops there; opt-in `"all"` continues observing the selected suite within `mutant_max_items` and writes
+  a [diagnostic mutation matrix](../docs/mutation-matrix.md), without upgrading the first-detector verdict. Only a failing item kills a
   mutant; an item that still errors after one retry leaves the mutant unjudged (`error`,
   `reason=suite_error`). A witness query first counts the rows the mutation would change on the current
   data; a witness of 0 means the mutant is equivalent here and goes to not proven. V4 is the slowest

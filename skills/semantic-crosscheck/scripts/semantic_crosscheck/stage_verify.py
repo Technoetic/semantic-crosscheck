@@ -80,7 +80,10 @@ Results hold counts, check ids and positions in the deterministic binding order,
 """
 
 import contextlib
+import hashlib
+import json
 import re
+import uuid
 from pathlib import Path
 from typing import Callable
 
@@ -190,6 +193,8 @@ def _killer(d: dict) -> str:
 
 def run(cfg, args, out: Path) -> Result:
     out = Path(out)
+    # A new attempt invalidates diagnostics even when validation/prerequisites fail.
+    mutation_coverage.discard_matrix(out, cfg.path)
     only = _only(args)
     golds = _golds(cfg, args)
     mutate.selected(cfg)
@@ -351,6 +356,9 @@ class _Verify:
         self.counts: dict[str, dict] = {}                # gold id -> comparisons per part and value_rows per member
         self.facet_rows: list[dict] | None = None
         self.ledger: list[dict] = []                     # V4 coverage rows (verify/mutation-coverage.json "mutants")
+        self.observation_id = uuid.uuid4().hex
+        self.matrix_identity = self._matrix_identity() if cfg.verify.mutant_observation == "all" else None
+        self.binding_ids: dict[str, str] = {}           # stratum/index only, never the replay parameters
 
     # ---- planning (database only, before Cube starts) ---------------------------------------------
     def gate(self, members) -> tuple[str, str] | None:
@@ -408,10 +416,12 @@ class _Verify:
         first = _first(plan["bindings"])
         if first:
             self.items.append((f"v1:{g.id}", f"v1:{g.id}", self._binding_fn(conn, g, first[1], plan["types"])))
+            self.binding_ids[f"v1:{g.id}"] = f"{g.id}:{first[0]}[0]"
         for stratum, plist in _by_stratum(plan["bindings"]).items():
             for j, params in enumerate(plist[: self.mb]):
                 cid = f"v2:{g.id}:{stratum}"
                 self.items.append((f"{cid}[{j}]", cid, self._binding_fn(conn, g, params, plan["types"])))
+                self.binding_ids[f"{cid}[{j}]"] = f"{g.id}:{stratum}[{j}]"
         return plan
 
     def plan_tests(self, conn) -> list[tuple[dict, tuple | None]]:
@@ -428,13 +438,16 @@ class _Verify:
         return planned
 
     def _binding_fn(self, conn, g, params: dict, types: dict):
-        def fn(client) -> str:
-            return compare.status(compare.run_binding(conn, client, self.cfg, g, params, cache=self.cache, types=types))
+        def fn(client) -> str | tuple[str, dict]:
+            detail = compare.run_binding(conn, client, self.cfg, g, params, cache=self.cache, types=types)
+            status = compare.status(detail)
+            return (status, detail) if self.cfg.verify.mutant_observation == "all" else status
         return fn
 
     def _test_fn(self, conn, t: dict):
-        def fn(client) -> str:
-            return shape_q.replay_test(conn, client, self.cfg, self.model, t)[0]
+        def fn(client) -> str | tuple[str, dict]:
+            answer = shape_q.replay_test(conn, client, self.cfg, self.model, t)
+            return answer if self.cfg.verify.mutant_observation == "all" else answer[0]
         return fn
 
     def _needs_cube(self, plans: list, tests: list) -> bool:
@@ -470,7 +483,8 @@ class _Verify:
             if "v4" in self.only:
                 for iid, _cid, fn in self.items:
                     if iid not in self.baseline:
-                        self.baseline[iid] = fn(client)
+                        answer = fn(client)
+                        self.baseline[iid] = answer[0] if isinstance(answer, tuple) else answer
         self.gold_evidence()
         if "v4" in self.only:
             self.v4(conn)
@@ -600,10 +614,13 @@ class _Verify:
             suite = mutation_coverage.Suite(evidence.order_suite([(iid, fn) for iid, _cid, fn in self.items],
                                                                  self.gold_kinds),
                                             max_items=self.cfg.verify.mutant_max_items)
+            if self.cfg.verify.mutant_observation == "all":
+                suite = mutation_coverage.Suite([], max_items=self.cfg.verify.mutant_max_items, observation="all")
             self.ledger = mutate.unrun_coverage(self.cfg, suite, "no_passing_suite_item")
             self._annotate(self.ledger, [])
             mutation_coverage.write(self.out, self.ledger, max_items=self.cfg.verify.mutant_max_items,
                                     reason="no_passing_suite_item", excluded_items=excluded_items)
+            self._matrix([], excluded_items, reason="no_passing_suite_item")
             return
         pair_tests = {f"v3:{t['id']}": t for t in self.suite_tests}
         expanded = []
@@ -622,7 +639,8 @@ class _Verify:
         checks, not_proven = mutate.run_mutants(
             self.cfg, self.out, conn, self.model,
             mutation_coverage.Suite(evidence.order_suite(expanded, self.gold_kinds),
-                                    max_items=self.cfg.verify.mutant_max_items),
+                                    max_items=self.cfg.verify.mutant_max_items,
+                                    observation=self.cfg.verify.mutant_observation),
             closure=self.closure, sampled_items=sampled, coverage=ledger)
         self.ledger = ledger
         summaries = next((dict(detail["summary"]) for _cid, _st, _ref, detail in checks
@@ -667,6 +685,7 @@ class _Verify:
         self._annotate(ledger, changed)
         mutation_coverage.write(self.out, ledger, max_items=self.cfg.verify.mutant_max_items,
                                 excluded_items=excluded_items)
+        self._matrix(evidence.order_suite(expanded, self.gold_kinds), excluded_items)
         self.res.not_proven.extend(not_proven)
         self.res.not_proven.extend(self._kill_lines(changed))
         partial =[f"v3:{t['id']}" for t in self.suite_tests if shape_q.sampled(t) and t.get("replay_keys") is None]
@@ -675,6 +694,27 @@ class _Verify:
                                        "so a mutant that changes only other keys can survive them")
 
     # ---- V4 attribution --------------------------------------------------------------------------
+    def _matrix_identity(self):
+        try:
+            config_hash = hashlib.sha256(Path(self.cfg.path).read_bytes()).hexdigest()
+        except OSError:
+            config_hash = None
+        return {"verify_started_at": self.res.started_at, "observation_id": self.observation_id,
+                "config_sha256": config_hash,
+                "model_sha256": hashlib.sha256(json.dumps(self.model, sort_keys=True,
+                                                          ensure_ascii=True).encode("utf-8")).hexdigest()}
+
+    def _matrix(self, items, excluded_items, *, reason="completed"):
+        if self.cfg.verify.mutant_observation != "all":
+            return
+        mutation_coverage.write_matrix(
+            self.out, self.ledger,
+            [{"id": iid, "kind": evidence.item_kind(iid, self.gold_kinds),
+              **({"binding_id": self.binding_ids[iid]} if iid in self.binding_ids else {})} for iid, _fn in items],
+            max_items=self.cfg.verify.mutant_max_items, identity=self.matrix_identity or self._matrix_identity(),
+            reason=reason,
+            excluded_items=excluded_items)
+
     def _facet_of(self, cid: str) -> str:
         """The facet a V4 mutant check changes ("" for an id that names no known operator)."""
         parts = cid.split(":")
@@ -705,6 +745,8 @@ class _Verify:
         for receipt in receipts:
             for item in (receipt or {}).get("items", []) if isinstance(receipt, dict) else []:
                 item["kind"] = evidence.item_kind(item.get("id"), self.gold_kinds)
+                if self.cfg.verify.mutant_observation == "all" and item.get("id") in self.binding_ids:
+                    item["binding_id"] = self.binding_ids[item["id"]]
         for row in ledger:
             if "killed_by" in row:
                 row["detection"] = detections.get(row["id"], evidence.detection(row["killed_by"], self.gold_kinds))

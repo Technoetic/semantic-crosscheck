@@ -35,7 +35,7 @@ from pathlib import Path  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from semantic_crosscheck import VERSION, config, provenance  # noqa: E402
+from semantic_crosscheck import VERSION, config, mutation_coverage, provenance  # noqa: E402
 from semantic_crosscheck.result import EXIT_CONFIG, EXIT_FAIL, Result, StageError, discard, inputs_fingerprint  # noqa: E402
 
 STAGES = {
@@ -654,6 +654,15 @@ def main(argv=None) -> int:
     report_cfg = report_cfg_sha = None
     out = Path(args.out) if args.out else None
     try:
+        if stage == "verify":
+            # Verify's output is known even when configuration discovery fails.
+            if out is None:
+                out = (Path(args.config).resolve().parent if args.config else Path.cwd()) / ".sxc"
+            try:
+                mutation_coverage.discard_matrix(out, args.config or DEFAULT_CONFIG)
+            except StageError:
+                out = None  # An unsafe diagnostic alias must not redirect an error-result write.
+                raise
         if stage == 'expect':
             try:
                 expect_cfg, expect_cfg_sha, out, cfg_file = _expect_prepare(args, out)
@@ -712,6 +721,13 @@ def main(argv=None) -> int:
         ensure_out(out)
         if stage == 'expect' and not _expect_verified(expect_cfg, expect_cfg_sha):
             raise StageError('expect: configuration_changed', EXIT_CONFIG)
+        if stage == "verify":
+            # Clear before parsing TOML/fingerprinting, as well as in stage_verify.run.
+            try:
+                mutation_coverage.discard_matrix(out, cfg_file)
+            except StageError:
+                out = None
+                raise
         discard(out, result_name)
         if stage == "report":
             discard_report_files(out)

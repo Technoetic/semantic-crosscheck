@@ -225,6 +225,7 @@ class Verify:
     mutation_operators: object = "default"   # "default" or a list of operator names
     mutant_bindings: int = 3       # bindings per stratum replayed against each mutant
     mutant_max_items: int = 10000  # logical suite items per mutant, including pair chunks and NULL groups
+    mutant_observation: str = "first"  # "all": observe later items without changing the first non-pass verdict
     shacl_max_rows: int = 200000
     owl_max_individuals: int = 50000
     pair_key_budget: int = PAIR_KEY_CAP   # keys a V3 pair test may compare in full, in chunks of PAIR_KEY_CAP
@@ -540,6 +541,8 @@ def _parse(text: str, p: Path) -> Config:
     _int("verify.seed", verify.seed)
     _int("verify.mutant_bindings", verify.mutant_bindings, 1)
     _int("verify.mutant_max_items", verify.mutant_max_items, 1)
+    if not isinstance(verify.mutant_observation, str) or verify.mutant_observation not in ("first", "all"):
+        _err("verify.mutant_observation", 'use "first" or "all"')
     _int("verify.shacl_max_rows", verify.shacl_max_rows, 1)
     _int("verify.owl_max_individuals", verify.owl_max_individuals, 1)
     _int("verify.pair_key_budget", verify.pair_key_budget, PAIR_KEY_CAP)

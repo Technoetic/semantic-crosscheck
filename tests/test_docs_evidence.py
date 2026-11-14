@@ -7,8 +7,9 @@ the old sentences out, require the new one, and hold the tables of docs/design.m
 docs/contract-report.md to the code: the codes to the tuples of evidence.py, the operator facets to
 evidence.operator_facet, the remedies to evidence.remedy, and the not_proven lines and next actions to the strings
 stage_verify.py writes. A line text is compared as a template: the parts the code fills in (`{...}` in the document,
-a formatted value in the code) become `{}`, and a local variable that holds a literal string is read in. No database
-is needed.
+a formatted value in the code) become `{}`, and a local variable that holds a literal string is read in. The
+not_proven texts of empty comparisons that docs/design.md section 7 quotes word for word (since 0.25.0) are held to
+the texts stage_reason.py and shape_q.py write. No database is needed.
 """
 
 import ast
@@ -20,7 +21,7 @@ from pathlib import Path
 import pgfixture
 import test_docs_catalogue as catalogue
 
-from semantic_crosscheck import config, evidence
+from semantic_crosscheck import config, evidence, shape_q, stage_reason
 
 ROOT = pgfixture.ROOT
 README = ROOT / "README.md"
@@ -232,6 +233,25 @@ class LineTextTest(unittest.TestCase):
         for check, text in rows:
             with self.subTest(check=check):
                 self.assertIn(template(ticked(text)[-1]), self.templates)
+
+
+class EmptyComparisonLinesTest(unittest.TestCase):
+    """docs/design.md section 7 quotes the not_proven texts of empty comparisons word for word: the SHACL line and its
+    no-row part (stage_reason constants), the pair-test line (shape_q.empty_note) and the closure and defined-class
+    lines (f-strings of stage_reason, compared as templates with the id as `{}`)."""
+
+    def test_design_quotes_the_texts_the_code_writes(self):
+        text = flat(read(DESIGN))
+        for quote in (f"`{{ids}}: {stage_reason.EMPTY_SHACL_NOTE}`", f"`; {{ids}} {stage_reason.NO_ROW_NOTE}`",
+                      f"`{{ids}}: {shape_q.empty_note()}`"):
+            with self.subTest(quote=quote):
+                self.assertIn(quote, text)
+        templates = source_templates("stage_reason")
+        for check in ("v5:closure:<h>", "v5:defined:<name>"):
+            quoted = re.search(rf"`{re.escape(check)}: ([^`]+)`", text)
+            with self.subTest(check=check):
+                self.assertIsNotNone(quoted)
+                self.assertIn("{}: " + template(quoted.group(1)), templates)
 
 
 if __name__ == "__main__":

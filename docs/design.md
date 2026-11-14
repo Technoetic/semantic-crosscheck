@@ -1510,8 +1510,10 @@ or the checks it exercises without being reported). See `commands/xc-demo.md` fo
   documents against the code).
 - Empty comparisons (since 0.25.0): `tests/test_empty_passes.py` (no database: `empty = true` and the `not_proven`
   lines of `shacl:<id>`, `shacl:pair:<id>`, `v5:closure:<h>`, `v5:defined:<name>` and the V3 pair tests in every
-  mode, unchanged non-empty passes and fails, the same verdicts in both `gold_observation` modes) and
-  `tests/test_reason.py` (the clean demo's shapes and a demo emptied of parts, lines and stock, on PostgreSQL). The
+  mode, unchanged non-empty passes and fails, the same verdicts and evidence object in both `gold_observation`
+  modes, the SHACL line of a whole reason run with pair checks, the same id cut in every stage),
+  `tests/test_reason.py` (the clean demo's shapes and a demo emptied of parts, lines, stock and sales orders, with and
+  without pair checks, on PostgreSQL) and `tests/test_docs_evidence.py` (the line texts this document quotes). The
   regular-expression match choice of the data rules: `RegexEnginesTest` (a difference that changes the output is a
   disagreement) and `RegexSameOutputsTest` (one that changes no output changes no verdict) in
   `tests/test_data_rules_pg.py`, and `tests/test_data_rules_eval.py`.

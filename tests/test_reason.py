@@ -4,9 +4,10 @@ Unit tests need no database: the reversible RDF row keys (naming.rdf_node / rdf_
 results), the literal forms of bound values, which shapes are compared, the SQL definitions of the defined classes,
 the stage's prerequisites and, when owlready2 and Java are available, HermiT on a small hand-made hierarchy.
 Integration tests (skipped unless SXC_TEST_ADMIN_DSN is set; the OWL parts also need owlready2 and Java) run build and
-then reason on the clean and the dirty demo, and on the clean demo emptied of parts, lines and stock (every comparison
-over empty sets, which passes and is disclosed), each class in its own throw-away database prefixed sxc_t_reason, and
-compare with the demo's independent Python numbers (fx.data["expected"]).
+then reason on the clean and the dirty demo, and on the clean demo emptied of parts, lines, stock and sales orders
+(every comparison over empty sets, pair checks included, which passes and is disclosed), each class in its own
+throw-away database prefixed sxc_t_reason, and compare with the demo's independent Python numbers
+(fx.data["expected"]).
 """
 
 import contextlib
@@ -897,10 +898,10 @@ class ReasonDirtyTest(_ReasonCase):
 
 
 class ReasonEmptySourceTest(_ReasonCase):
-    """The clean demo with every part, BOM line and stock row deleted before build: the SHACL value group exports no
-    row and the hierarchy has no edge, so every comparison of reason is over empty sets. Each passes, as before, and
-    says so: empty = true, the SHACL line naming the shapes that had no row to check, the closure line and the
-    defined-class lines."""
+    """The clean demo with every part, BOM line, stock row and sales order deleted before build: the SHACL value group
+    exports no row and the hierarchy has no edge, so every comparison of reason is over empty sets. Each passes, as
+    before, and says so: empty = true, the SHACL line naming the shapes that had no row to check, the closure line and
+    the defined-class lines. With verify.shacl_pairs on, the pair export is empty too."""
 
     database = f"{PREFIX}_empty"
 
@@ -909,7 +910,7 @@ class ReasonEmptySourceTest(_ReasonCase):
         conn = db.connect("SXC_PG_OWNER_DSN")
         try:
             with db.write_tx(conn):
-                for table in ("bom_line", "stock", "part"):
+                for table in ("bom_line", "stock", "part", "sales_order"):
                     conn.run(f"DELETE FROM sxc_demo.{table}")
         finally:
             conn.close()
@@ -923,6 +924,21 @@ class ReasonEmptySourceTest(_ReasonCase):
         listed = ", ".join(ids)
         self.assertIn(f"{listed}: {stage_reason.EMPTY_SHACL_NOTE}; {listed} {stage_reason.NO_ROW_NOTE}",
                       self.res.not_proven)
+
+    def test_an_empty_pair_export_is_named_with_the_shapes(self):
+        """verify.shacl_pairs on the same build output: the target of open_le_total, sales_order, is empty and so is
+        the run's whole pair export (rows_exported 0, which every pair check shares), so the run's one SHACL line names
+        the pair check with the shapes, in both of its parts."""
+        cfg = config.load(pgfixture.DEMO_CONFIG)
+        cfg.verify.shacl_pairs = True
+        res = self.reason(cfg, self.copy_out("pairs"), only=["shacl"])
+        c = get_check(res, "shacl:pair:open_le_total")
+        self.assertEqual((c.status, c.detail["violations"], c.detail["shacl_focus_nodes"], c.detail["rows_exported"],
+                          c.detail["empty"]), ("pass", 0, 0, 0, True))
+        self.assertEqual({c.status for c in res.checks if c.id.startswith("shacl:")}, {"pass"})
+        listed = ", ".join([f"shacl:{s.id}" for s in self.cfg.shapes[:3]] + ["shacl:pair:open_le_total"])
+        self.assertEqual([n for n in res.not_proven if stage_reason.EMPTY_SHACL_NOTE in n],
+                         [f"{listed}: {stage_reason.EMPTY_SHACL_NOTE}; {listed} {stage_reason.NO_ROW_NOTE}"])
 
     @unittest.skipUnless(HAVE_OWL, "needs owlready2 and Java")
     def test_a_hierarchy_without_edges_has_an_empty_closure_comparison(self):

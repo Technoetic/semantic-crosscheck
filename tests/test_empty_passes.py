@@ -12,8 +12,10 @@ run for the pair tests. A non-empty pass gets neither, a fail keeps its detail, 
 gold_observation modes.
 
 Unit tests, no database: the stages' own comparison functions, with only what they read mocked (shacl_check.run and
-run_pairs, owl.read and owl.reason, Cube answers through a fake client). tests/test_reason.py runs the SHACL and V5
-cases on PostgreSQL.
+run_pairs, owl.read and owl.reason, Cube answers through a fake client), a whole reason run with pair checks, a whole
+verify run in both modes (the evidence object included) and the id cut the stages share. tests/test_reason.py runs the
+SHACL, pair and V5 cases on PostgreSQL; tests/test_docs_evidence.py holds the line texts docs/design.md quotes to the
+code.
 """
 
 import shutil
@@ -24,7 +26,7 @@ from pathlib import Path
 from unittest import mock
 
 import pgfixture  # noqa: F401  (puts the scripts directory on sys.path)
-from semantic_crosscheck import config, owl, shacl_check, shape_q, shapes, stage_reason, stage_verify
+from semantic_crosscheck import config, evidence, owl, shacl_check, shape_q, shapes, stage_reason, stage_verify
 from semantic_crosscheck.result import Result
 from test_compare_unit import FakeClient, FakeConn, demo_cfg, demo_model
 from test_require_mode import set_mode
@@ -172,6 +174,42 @@ class ShaclPairEmptyTest(unittest.TestCase):
                 self.assertFalse([n for n in res.not_proven if NOTE in n])
 
 
+class ReasonRunTest(unittest.TestCase):
+    """stage_reason.run() as a whole, with verify.shacl_pairs on and every SHACL and pair comparison empty; only the
+    database, the engines and the shapes files are faked. The tests above call the stage's functions one after another
+    themselves; this one pins that run() writes the SHACL line after the pair checks, so that it names them too."""
+
+    def test_the_line_of_a_run_names_its_pair_checks(self):
+        cfg = demo_cfg()
+        cfg.verify.shacl_pairs = True
+        planned, pairs = shacl_check.plan(cfg)[0], shacl_check.pair_plan(cfg)
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        out = Path(tmp.name)
+        build = Result("build")
+        for s in cfg.shapes:
+            build.add(f"shape:{s.id}", "pass", "")
+        build.write(out)
+        (out / "build" / "build.sql").write_bytes(
+            "\n".join(stage_reason._view_statement(cfg, s) for s in pairs).encode("utf-8"))
+        answers = {s.id: compared(set(), set(), group_rows=0, rows=0) for s in planned}
+        pair = ShaclPairEmptyTest.pair(set(), set(), rows=0)
+        with mock.patch.object(stage_reason, "shapes_ttl", return_value="ttl"), \
+                mock.patch.object(stage_reason, "components", return_value=None), \
+                mock.patch.object(shapes, "pair_shapes_ttl", return_value="pair ttl"), \
+                mock.patch.object(shacl_check, "validate_generated_shapes", return_value=(True, 0)), \
+                mock.patch.object(stage_reason.db, "connect", return_value=FakeConn()), \
+                mock.patch.object(shacl_check, "run", return_value=answers), \
+                mock.patch.object(shacl_check, "run_pairs", return_value={s.id: dict(pair) for s in pairs}):
+            res = stage_reason.run(cfg, types.SimpleNamespace(only=["shacl"]), out)
+        ids = [f"shacl:{sid}" for sid in SHAPES] + ["shacl:pair:open_le_total"]
+        self.assertEqual([(c.id, c.status, c.detail.get("empty")) for c in res.checks
+                          if c.id.startswith("shacl:") and c.id != stage_reason.META_ID],
+                         [(cid, "pass", True) for cid in ids])
+        listed = ", ".join(ids)
+        self.assertEqual([n for n in res.not_proven if NOTE in n], [f"{listed}: {NOTE}; {listed} {NO_ROW}"])
+
+
 # ---- reason: v5:closure:<h> and v5:defined:<name> ---------------------------------------------------------
 class OwlEmptyTest(unittest.TestCase):
     def setUp(self):
@@ -197,8 +235,10 @@ class OwlEmptyTest(unittest.TestCase):
                       "holds vacuously", res.not_proven)
 
     def test_a_closure_with_pairs_and_a_closure_that_differs_are_unchanged(self):
-        for owl_pairs, sql_pairs, status in (({("A", "B")}, {("A", "B")}, "pass"), (set(), {("A", "B")}, "fail")):
-            with self.subTest(status=status):
+        """A fail with pairs on one side only, either side: no flag and no closure line."""
+        for owl_pairs, sql_pairs, status in (({("A", "B")}, {("A", "B")}, "pass"), (set(), {("A", "B")}, "fail"),
+                                             ({("A", "B")}, set(), "fail")):
+            with self.subTest(owl_pairs=len(owl_pairs), sql_pairs=len(sql_pairs)):
                 res = self.reason(owl_pairs, sql_pairs)
                 c = check(res, "v5:closure:has_component")
                 self.assertEqual(c.status, status)
@@ -226,8 +266,11 @@ class ComparedNoKeyTest(unittest.TestCase):
             ({"keys": 4, "mismatched": {}, "duplicate_keys": 0, "alone_only_keys": {"a": 0}}, False),
             ({}, False),                                                     # no count: says nothing
             ({"keys": 0, "sampled_keys": 2000, "total_keys": 2500, "answered_keys": 0}, True),
+            ({"keys": 5, "sampled_keys": 2000, "total_keys": 2500, "answered_keys": 0}, True),   # answered, not keys
             ({"keys": 2000, "sampled_keys": 2000, "total_keys": 2500, "answered_keys": 2000}, False),
             ({"keys": 0, "mode": "chunked", "compared_keys": 2001, "answered_keys": 0,
+              "null_key_group": {"keys": 0}}, True),
+            ({"keys": 7, "mode": "chunked", "compared_keys": 2001, "answered_keys": 0,      # not the summed keys
               "null_key_group": {"keys": 0}}, True),
             ({"keys": 1, "mode": "chunked", "compared_keys": 2001, "answered_keys": 0,
               "null_key_group": {"keys": 1}}, False),
@@ -304,21 +347,28 @@ class VerifyPairEmptyTest(unittest.TestCase):
 
 class VerifyModesTest(VerifyRun):
     """The whole verify stage with every pair test answering that it compared no key: in the default mode and in
-    require mode the pair tests pass, carry empty = true and are named by one not_proven line."""
+    require mode the pair tests pass, carry empty = true and are named by one not_proven line. Everything else is what
+    a run whose pair tests compared keys gives: the statuses, the evidence object and the next action."""
+
+    keys = 0                       # the key count every pair test answers
 
     def _run_test(self, conn, client, cfg, model, test, budget=None, witness=None):
         if test["kind"] == "pair":
-            return "pass", {"keys": 0, "mismatched": {}, "duplicate_keys": 0,
+            return "pass", {"keys": self.keys, "mismatched": {}, "duplicate_keys": 0,
                             "alone_only_keys": dict.fromkeys(test["measures"], 0)}
         return "pass", {"equal": True}
+
+    def run_mode(self, mode: str | None, keys: int) -> Result:
+        set_mode(self, mode)
+        self.keys = keys
+        shutil.rmtree(self.out, ignore_errors=True)
+        return self.verify()
 
     def test_require_mode_keeps_the_verdicts_and_the_disclosure(self):
         outcomes = {}
         for mode in (None, "disclose", "require"):
             with self.subTest(mode=mode):
-                set_mode(self, mode)
-                shutil.rmtree(self.out, ignore_errors=True)
-                res = self.verify()
+                res = self.run_mode(mode, 0)
                 pairs = [c for c in res.checks if c.id.startswith("v3:pair:")]
                 self.assertEqual(len(pairs), 4)
                 self.assertEqual({(c.status, c.detail["empty"]) for c in pairs}, {("pass", True)})
@@ -327,6 +377,37 @@ class VerifyModesTest(VerifyRun):
                 outcomes[mode] = [(c.id, c.status) for c in res.checks if c.id.startswith("v3:")]
         self.assertEqual(outcomes[None], outcomes["require"])
         self.assertEqual(outcomes["disclose"], outcomes["require"])
+
+    def test_the_evidence_object_and_the_statuses_do_not_change(self):
+        """In both modes a run whose pair tests compared no key differs from one whose pair tests each compared five
+        keys only by the detail key and the one not_proven line."""
+        for mode in (None, "require"):
+            with self.subTest(mode=mode):
+                empty, compared = self.run_mode(mode, 0), self.run_mode(mode, 5)
+                self.assertEqual([(c.id, c.status) for c in empty.checks], [(c.id, c.status) for c in compared.checks])
+                self.assertEqual(empty.evidence, compared.evidence)
+                self.assertEqual(empty.next_safe_action, compared.next_safe_action)
+                pairs = [c.id for c in compared.checks if c.id.startswith("v3:pair:")]
+                self.assertEqual(len(pairs), 4)
+                self.assertFalse([c for c in compared.checks if "empty" in c.detail and c.id.startswith("v3:")])
+                self.assertEqual([n for n in empty.not_proven if n not in compared.not_proven],
+                                 [f"{', '.join(pairs)}: {shape_q.empty_note()}"])
+                self.assertEqual([n for n in compared.not_proven if n not in empty.not_proven], [])
+
+
+class CutTest(unittest.TestCase):
+    """reason, verify and the evidence lines each keep a copy of the id cut (at most ten ids, then how many more): the
+    not_proven lines of the stages must not cut ids differently."""
+
+    def test_the_copies_cut_alike(self):
+        cuts = (stage_reason._cut, stage_verify._cut, evidence._cut)
+        self.assertEqual({stage_reason.MAX_LISTED, stage_verify.MAX_LISTED, evidence.MAX_LISTED}, {10})
+        for n in (0, 1, 10, 11, 12):
+            ids = [f"c{i}" for i in range(n)]
+            with self.subTest(ids=n):
+                self.assertEqual({cut(ids) for cut in cuts}, {stage_reason._cut(ids)})
+        self.assertEqual(stage_reason._cut([f"c{i}" for i in range(12)]),
+                         ", ".join(f"c{i}" for i in range(10)) + ", and 2 more")
 
 
 if __name__ == "__main__":

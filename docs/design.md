@@ -1507,8 +1507,9 @@ or the checks it exercises without being reported). See `commands/xc-demo.md` fo
   lines of `shacl:<id>`, `shacl:pair:<id>`, `v5:closure:<h>`, `v5:defined:<name>` and the V3 pair tests in every
   mode, unchanged non-empty passes and fails, the same verdicts in both `gold_observation` modes) and
   `tests/test_reason.py` (the clean demo's shapes and a demo emptied of parts, lines and stock, on PostgreSQL). The
-  regular-expression match choice of the data rules: `RegexEnginesTest` in `tests/test_data_rules_pg.py` and
-  `tests/test_data_rules_eval.py`.
+  regular-expression match choice of the data rules: `RegexEnginesTest` (a difference that changes the output is a
+  disagreement) and `RegexSameOutputsTest` (one that changes no output changes no verdict) in
+  `tests/test_data_rules_pg.py`, and `tests/test_data_rules_eval.py`.
 
 
 ## Opt-in structured and finite-domain counterexample search
@@ -1630,5 +1631,6 @@ key V1 uses, and a `not_proven` line (section 7). Statuses, the V4 baseline, the
 `RULE_VERSION` do not change, in either `gold_observation` mode; `report.md` lists the lines with every stage's. An
 `expect` case whose sides are all empty is still not disclosed. The data-rules pattern subset is documented for what
 it guarantees (the same syntax read the same way, the refused constructs) and what it does not (a backtracking bound,
-the same chosen match: [data-rules.md](data-rules.md#pattern-subset-text_quantity)); a difference there stays a
-disagreement (`paths_disagree`).
+the same chosen match: [data-rules.md](data-rules.md#pattern-subset-text_quantity)); a difference there that changes
+the rule's output stays a disagreement (`paths_disagree`), and one that changes no output leaves the verdict the same
+under either reading.

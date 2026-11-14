@@ -191,12 +191,15 @@ the same way:
   leftmost position where a match starts, PostgreSQL takes the longest overall match (PostgreSQL 17 documentation,
   9.7.3.5 "Regular Expression Matching Rules") and Python's `re` takes the first match its backtracking finds, so the
   whole match and the captures can differ: `([0-9]+)(?:[0-9]g)?` on `123g` matches `123g` with capture `12` in
-  PostgreSQL and `123` with capture `123` in Python. The two outputs of the rule then differ, so `rule_xcheck:<id>`
-  fails and `rule:<id>` is `not_run` (`paths_disagree`), never a pass. Keep neighbouring items disjoint, so that no
-  optional or quantified item can take characters the item before it can take (`([0-9]+)g`; above, `(?:[0-9]g)?`
-  starts with a digit, which `[0-9]+` can take), or anchor the pattern with `^` and `$` when the whole text is the
-  match (`^([0-9]+)(?:[0-9]g)?$` captures `12` in both engines). That avoids the difference of this example; it is
-  not shown to avoid every difference, and a remaining one is still a disagreement.
+  PostgreSQL and `123` with capture `123` in Python. When the different match changes the rule's output (which rows
+  it flags, or the X or N of a flagged row), the two outputs differ, so `rule_xcheck:<id>` fails and `rule:<id>` is
+  `not_run` (`paths_disagree`), never a pass: a row with quantity 123 and `rel_tol = "0"`, which only Python's
+  reading flags, is such a case. A row that neither reading flags is in neither output, so a difference there is not
+  seen and changes no verdict. Keep neighbouring items disjoint, so that no optional or quantified item can take
+  characters the item before it can take (`([0-9]+)g`; above, `(?:[0-9]g)?` starts with a digit, which `[0-9]+` can
+  take), or anchor the pattern with `^` and `$` when the whole text is the match (`^([0-9]+)(?:[0-9]g)?$` captures
+  `12` in both engines). That avoids the difference of this example; it is not shown to avoid every difference, and
+  a remaining one that changes the output is still a disagreement.
 - The pattern needs 1 or 2 capturing groups: the amount, and optionally the divisor. Refused examples:
   `(?:[0-9]+)+x`, `(?:ab*){2,3}`.
 
@@ -388,8 +391,9 @@ or the rule file, rerun build and data-rules).
 - **Regex engines.** The pattern subset makes Python and PostgreSQL read the syntax the same way, but not choose the
   same match: from the leftmost position PostgreSQL takes the longest match and Python's `re` the first one its
   backtracking finds, so within the subset the whole match and the captures can differ (`([0-9]+)(?:[0-9]g)?` on
-  `123g`: capture `12` in PostgreSQL, `123` in Python; see [Pattern subset](#pattern-subset-text_quantity)). Such a
-  difference shows up as a disagreement (`paths_disagree`), never as a pass.
+  `123g`: capture `12` in PostgreSQL, `123` in Python; see [Pattern subset](#pattern-subset-text_quantity)). A
+  difference that changes the rule's output shows up as a disagreement (`paths_disagree`), never as a pass; one that
+  changes no output leaves the verdict the same under either reading.
 - **Pattern backtracking.** The subset excludes nested repetition but does not bound Python's backtracking over
   neighbouring quantified items that can match the same characters, and the Python evaluation has no time limit. Keep
   such items disjoint (see [Pattern subset](#pattern-subset-text_quantity)).

@@ -36,8 +36,10 @@ object, its schema and `evidence.RULE_VERSION` do not change, in either `gold_ob
   in the `compile_subset` and `Pattern` docstrings, docs/data-rules.md (a match-choice item, the semantic contract and
   the "Regex engines" limit), the pitfalls reference and the README limits table, with advice (disjoint neighbouring
   items, or an anchored pattern when the whole text is the match) that is not claimed to remove every difference.
-  Such a difference stays a failing `rule_xcheck:<id>` and a `not_run` rule (`paths_disagree`), never a pass; a
-  PostgreSQL 17 test pins the case and two controls that agree on the same row.
+  A difference that changes the rule's output (which rows it flags, or their numerator or divisor) stays a failing
+  `rule_xcheck:<id>` and a `not_run` rule (`paths_disagree`), never a pass; one that changes no output leaves the
+  verdict the same under either reading. PostgreSQL 17 tests pin both cases, with two controls that agree on the
+  same row.
 - Gold date windows (pitfalls reference): `col BETWEEN CAST(:from AS date) AND CAST(:to AS date)` is right for a
   `date` column, but on a `timestamp without time zone` column that holds times of day it leaves out the rows after
   midnight of the last day. The reference now gives `col::date BETWEEN ...` or the half-open

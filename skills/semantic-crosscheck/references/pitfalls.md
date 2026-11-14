@@ -244,8 +244,9 @@ on something the rule's author did not mean.
   classes, `$` written as `\Z` for Python, no repetition over a group that contains a quantifier. The subset removes
   the first three differences, not the last: keep neighbouring items disjoint (`([0-9]+)g`) or anchor the pattern
   when the whole text is the match (`^([0-9]+)(?:[0-9]g)?$` captures `12` in both), which avoids that example's
-  difference but is not shown to avoid every one. A difference that remains shows up as a failing
-  `rule_xcheck:<id>`, never as a pass.
+  difference but is not shown to avoid every one. A difference that remains and changes the rule's output (which
+  rows it flags, or their numerator or divisor) shows up as a failing `rule_xcheck:<id>`, never as a pass; one that
+  changes no output leaves the verdict the same under either reading.
 - **Overlapping quantifiers backtrack slowly in Python.** The subset excludes nested repetition, not neighbouring
   quantified items that can match the same characters: `([0-9]+)[0-9]*[0-9]*g` is accepted, and Python's `re` tries
   every split of a long digit run that is not followed by `g`, which takes polynomial time with no time limit on the

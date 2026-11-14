@@ -1074,9 +1074,11 @@ def compile_subset(pattern: str) -> Pattern:
     the engines choose the same match: from the leftmost position where a match starts, PostgreSQL takes the longest
     overall match (PostgreSQL 17 documentation, 9.7.3.5 "Regular Expression Matching Rules") and Python's re the first
     match its backtracking finds, so the whole match and the captures can differ. ([0-9]+)(?:[0-9]g)? on "123g" matches
-    123g with capture 12 in PostgreSQL and 123 with capture 123 in Python. Such a difference makes rule_xcheck:<id>
-    fail and leaves rule:<id> not_run (paths_disagree), never a pass. Keeping neighbouring items disjoint, or anchoring
-    a pattern whose match is the whole text, avoids that example's difference, not every difference.
+    123g with capture 12 in PostgreSQL and 123 with capture 123 in Python. When such a difference changes the rule's
+    output (whether a row is flagged, or its numerator or divisor), the two outputs differ, rule_xcheck:<id> fails and
+    rule:<id> is not_run (paths_disagree). A difference that changes no output leaves both outputs equal and the
+    verdict the same under either reading, so it is never a false pass. Keeping neighbouring items disjoint, or
+    anchoring a pattern whose match is the whole text, avoids that example's difference, not every difference.
     Raises PatternError naming the construct, never the pattern."""
     if not isinstance(pattern, str) or not pattern:
         raise PatternError("empty")

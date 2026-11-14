@@ -20,7 +20,8 @@ Covered (spec section 12.2 and more):
   errors 42P22, or for parent and child a snapshot error 42P21, with a collation hint; never a verdict); rule constants with quotes, backslashes, colons, $1, -- and non-ASCII text in the view
   definitions; a reserved word as a column name; a pattern with escaped punctuation in a bracket class;
 - two regular-expression engines: a pattern inside the subset on which PostgreSQL and Python choose different matches
-  is a disagreement, never a pass, while the same row read with disjoint items or an anchored pattern agrees;
+  is a disagreement, never a pass, on a row only Python's reading flags, while the same row read with disjoint items
+  or an anchored pattern agrees; on a row neither reading flags the difference changes no output and no verdict;
 - gates and budgets: NaN and infinity (and an entity pointed at a view that clears them), NULL and duplicate node
   keys, a cycle and a shallow max_depth, NULL edge quantities, long text, an empty edge table, max_export_rows (no rule,
   lookup or export statement runs) and max_rule_rows;
@@ -1980,7 +1981,8 @@ report = { columns = ["line_id"] }
 
 class RegexEnginesTest(_RulesCase):
     """A pattern inside the subset on which PostgreSQL and Python choose different matches is a disagreement, never a
-    pass; keeping the items disjoint or anchoring the pattern makes both paths agree on the same data."""
+    pass, when the difference changes the output (here: the line only Python's reading flags); keeping the items
+    disjoint or anchoring the pattern makes both paths agree on the same data."""
 
     @classmethod
     def setUpClass(cls):
@@ -2004,7 +2006,7 @@ class RegexEnginesTest(_RulesCase):
         self.assertEqual(captures, [["12", "123", "12"]])
         self.assertEqual([f.compile().search("123g").group(1) for f in forms], ["123", "123", "12"])
 
-    def test_a_difference_in_the_chosen_match_is_a_disagreement_never_a_pass(self):
+    def test_a_difference_in_the_chosen_match_that_changes_the_output_is_a_disagreement(self):
         code, console, build = self.p.build()
         self.assertEqual(code, 0, console)
         code, console, res = self.p.data_rules()
@@ -2021,6 +2023,33 @@ class RegexEnginesTest(_RulesCase):
             with self.subTest(rule=rule_id):
                 self.assert_rules(res, {rule_id: ("pass", 1, [("1", numerator, "1", "1")])})
                 self.assertEqual(self.view_rows("sxc_out_regex", rule_id), [("1", numerator, "1", "1")])
+
+
+class RegexSameOutputsTest(_RulesCase):
+    """The same child name 123g on a line with quantity 5, which neither reading of OVERLAP flags (X = 12 in
+    PostgreSQL, X = 123 in Python, rel_tol 0). The engines still choose different matches, but both outputs are empty:
+    the paths compare outputs, not matches, so the difference is not seen and the rule gets the verdict that either
+    reading gives."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        copy_schema("sxc_regex_same", "DELETE FROM sxc_regex_same.bom_line", "DELETE FROM sxc_regex_same.part",
+                    "INSERT INTO sxc_regex_same.part (part_id, name) VALUES ('A', 'Kit'), ('G', '123g')",
+                    "INSERT INTO sxc_regex_same.bom_line (line_id, parent_id, child_id, qty_per) "
+                    "VALUES (1, 'A', 'G', 5)")
+        output_schema("sxc_out_regex_same")
+        cls.p = cls.project("regex_same", "sxc_regex_same", "sxc_out_regex_same", rules=REGEX_RULES)
+
+    def test_a_difference_that_changes_no_output_changes_no_verdict(self):
+        code, console, _build = self.p.build()
+        self.assertEqual(code, 0, console)
+        code, console, res = self.p.data_rules()
+        self.assertEqual(code, 0, console)
+        # ANCHORED reads X = 12 in both engines and flags the line within its tolerance, as in RegexEnginesTest
+        self.assert_rules(res, {"overlap_digits": ("pass", 0, []), "disjoint_digits": ("pass", 0, []),
+                                "anchored_digits": ("pass", 1, [("1", "12", "1", "1")])})
+        self.assertEqual(self.view_rows("sxc_out_regex_same", "overlap_digits"), [])
 
 
 # ---- roles and databases ---------------------------------------------------------------------------------------------

@@ -1620,3 +1620,15 @@ duplicate equijoin cardinalities, NULL keys and aggregate empty/all-NULL rules. 
 arithmetic and PostgreSQL are compared with independently authored literal expectations. Existing one-column
 provenance fixtures remain unchanged. This is not an operational measure oracle or a general SQL evaluator.
 No default dependency, CLI stage or production database workflow is added.
+
+## v0.25.0 disclosed empty comparisons
+
+A pass that compared empty sets is disclosed, never rewritten: `shacl:<id>` and `shacl:pair:<id>` where neither
+pySHACL nor the view flagged a key, `v5:closure:<h>` (and, as before, `v5:defined:<name>`) without a pair or member
+on either side, and a V3 pair test that compared no key (`shape_q.compared_no_key`) carry `empty = true`, the detail
+key V1 uses, and a `not_proven` line (section 7). Statuses, the V4 baseline, the evidence object, its schema and
+`RULE_VERSION` do not change, in either `gold_observation` mode; `report.md` lists the lines with every stage's. An
+`expect` case whose sides are all empty is still not disclosed. The data-rules pattern subset is documented for what
+it guarantees (the same syntax read the same way, the refused constructs) and what it does not (a backtracking bound,
+the same chosen match: [data-rules.md](data-rules.md#pattern-subset-text_quantity)); a difference there stays a
+disagreement (`paths_disagree`).

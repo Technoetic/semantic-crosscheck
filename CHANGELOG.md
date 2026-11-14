@@ -1,5 +1,63 @@
 # Changelog
 
+## [0.25.0] - 2026-11-14
+
+Release notes: [docs/releases/v0.25.0.md](docs/releases/v0.25.0.md).
+
+Disclosure of empty comparisons and documentation corrections. Statuses, check ids, exit codes, the verify `evidence`
+object, its schema and `evidence.RULE_VERSION` do not change, in either `gold_observation` mode.
+
+### Fixed
+
+- Vacuous passes of three generated checks were silent (a known limitation since 0.23.0). A `shacl:<id>` or
+  `shacl:pair:<id>` check where neither pySHACL nor the SQL view flagged a key, a `v5:closure:<h>` check without a
+  closure pair in OWL or in SQL and a V3 pair test that passed without comparing a key (`shape_q.compared_no_key`;
+  with the modes as they are, an unfiltered test whose together answer held no key) now carry `empty: true` in their
+  detail, the key V1 uses for a comparison with no row on either side, and NOT PROVEN lines: one per reason run for
+  the SHACL checks, naming again those whose export held no row at all (`group_rows` 0, for a pair check
+  `rows_exported` 0); one for the closure check; one per verify run for the pair tests. A non-empty pass and a fail
+  are unchanged.
+
+### Changed
+
+- reason and verify print more NOT PROVEN lines when a comparison is empty, so scripts that count them see more: on
+  the clean demo reason prints one more (its three shapes flag no key on clean data), and the whole quick start 19
+  instead of 18. `report.md` "## Not proven" and the not_proven count of the `stage:<name>` details include them;
+  report's console prints no new line of its own.
+- A `v5:defined:<name>` check without members on either side also carries `empty: true`; its line is unchanged.
+
+### Documentation
+
+- data-rules: the `text_quantity` pattern subset was documented as keeping the engines' matches and captures equal.
+  It makes Python's `re` and PostgreSQL read the syntax the same way and refuses the constructs where they differ,
+  but from the leftmost position where a match starts PostgreSQL takes the longest overall match (PostgreSQL 17
+  documentation, 9.7.3.5) and Python the first one its backtracking finds, so the whole match and the captures can
+  differ inside the subset (`([0-9]+)(?:[0-9]g)?` on `123g`: capture `12` in PostgreSQL, `123` in Python). Corrected
+  in the `compile_subset` and `Pattern` docstrings, docs/data-rules.md (a match-choice item, the semantic contract and
+  the "Regex engines" limit), the pitfalls reference and the README limits table, with advice (disjoint neighbouring
+  items, or an anchored pattern when the whole text is the match) that is not claimed to remove every difference.
+  Such a difference stays a failing `rule_xcheck:<id>` and a `not_run` rule (`paths_disagree`), never a pass; a
+  PostgreSQL 17 test pins the case and two controls that agree on the same row.
+- Gold date windows (pitfalls reference): `col BETWEEN CAST(:from AS date) AND CAST(:to AS date)` is right for a
+  `date` column, but on a `timestamp without time zone` column that holds times of day it leaves out the rows after
+  midnight of the last day. The reference now gives `col::date BETWEEN ...` or the half-open
+  `col >= CAST(:from AS date) AND col < CAST(:to AS date) + 1`, which cover the same whole days as the Cube date
+  range.
+- docs/releases/v0.25.0.md corrects the v0.22.0 release notes' sentence on regex capture assignment.
+
+### Upgrading
+
+- Engine code changed, so the engine fingerprint changed: build, reason, cube and verify results made with v0.24.0
+  are stale (`inputs_changed`); rerun the operational stages after upgrading. No configuration needs editing and no
+  dependency changes.
+
+### Not solved
+
+- An `expect` case whose sides are all empty is still not disclosed. A shape whose target is empty while another
+  entity of its value group has rows is named as flagging no key, not as having no row to check.
+
+[0.25.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.25.0
+
 ## [0.24.0] - 2026-11-13
 
 - Add optional `[verify] mutant_observation = "all"`: bounded observations after the first non-pass and a

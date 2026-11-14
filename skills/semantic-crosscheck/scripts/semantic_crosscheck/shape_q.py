@@ -59,7 +59,8 @@ and held in memory for the baseline run. Above the budget the test keeps the sam
 (pair_key_budget). V4 replays every eligible bounded baseline chunk plus the NULL group from retained in-memory
 keys; only tests above the key budget keep the sample. Details hold counts, flags and durations, never totals or keys.
 A pair test that passes without comparing a key (compared_no_key; with the modes as they are, an unfiltered test whose
-together answer held no key) gets empty = true in its detail and a not_proven line from verify; its status stays.
+together answer held no key, while its alone answers may hold keys) gets empty = true in its detail and a not_proven
+line from verify; its status stays.
 
 The additive tests are bounded by the configuration: one per additive measure and cube with the class column that
 Cube can join it to (in a generated model: the node cube of each measure with a node, and the ancestor and
@@ -465,10 +466,12 @@ def compared_no_key(detail: dict) -> bool:
     does not hold says nothing, so it is never read as 0):
       unfiltered  keys = 0: the keys of the together answer, each compared with the alone answers (a key an alone
                   answer lacks is compared with NULL), the NULL key group included
-      sampled     answered_keys = 0: the sampled keys the together and every alone answer held, the only ones compared
-                  (a sampled test passes only when answered_keys equals sampled_keys)
-      chunked     answered_keys = 0 over the chunks and keys = 0 in null_key_group, which is compared unfiltered (a
-                  chunked test passes only when answered_keys reaches compared_keys)
+      sampled     answered_keys = 0: no sampled key was held by the together answer and every alone answer (with
+                  Cube's equals filter only asked keys come back; a sampled test passes only when answered_keys
+                  equals sampled_keys)
+      chunked     answered_keys = 0 over the chunks and keys = 0 in null_key_group, the NULL key group compared
+                  through a notSet filter without an asked list (a chunked test passes only when answered_keys
+                  reaches compared_keys)
     The sampled and chunked modes ask for more than PAIR_KEY_CAP keys, so with the code as it is only an unfiltered
     test can pass without comparing a key. Read for a passing test only."""
     if detail.get("mode") == "chunked":

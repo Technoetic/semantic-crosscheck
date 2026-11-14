@@ -10,8 +10,9 @@ which, per shape, per hierarchy and per defined class.
                       are all compared. Shapes without a SHACL form are listed in not_proven: they are checked only
                       in SQL. A shape whose view build did not produce is not_run; a shape whose value group pySHACL
                       could not validate is error. A pass where neither side flagged a key has empty = true, and one
-                      not_proven line per run names these checks (shacl:pair:<shape> too), saying which of them had
-                      no row to check at all (group_rows 0; rows_exported 0 for a pair check)
+                      not_proven line per run names these checks (shacl:pair:<shape> too; up to MAX_LISTED, then a
+                      count), then those whose export held no row at all (group_rows 0; for a pair check
+                      rows_exported 0, which counts the run's whole pair export)
   shacl:pair:<shape>  optional verify.shacl_pairs: a shape whose sql_violation is exactly t.<a> <op> t.<b> (op > >= < <=)
                       is translated to sh:lessThan or sh:lessThanOrEquals in a pair shapes graph generated here (never
                       in shapes.ttl) and pySHACL's focus nodes on a separate pair export equal the keys in
@@ -283,8 +284,10 @@ def _shacl(conn, cfg, build: dict, planned: list, ttl: str, res: Result) -> int:
 def _no_row(c) -> bool:
     """Whether an empty SHACL comparison had no row to check at all, by its detail: the value group of a shacl:<id>
     check exported no row (group_rows 0: no row of its target entity or of any other entity the group reads), or the
-    pair export of a shacl:pair:<id> check held none (rows_exported 0). A shape whose target is empty while another
-    entity of its value group has rows is not named here: its detail does not say so."""
+    pair export of a shacl:pair:<id> check held none (rows_exported 0: shacl_check.run_pairs counts the rows of every
+    pair entity compared in the run, the same number for each pair check). A shape whose target is empty while another
+    entity of its value group, or for a pair check another compared pair entity, has rows is not named here: its
+    detail does not say so."""
     key = "rows_exported" if c.id.startswith(PAIR_PREFIX) else "group_rows"
     return c.detail.get(key) == 0
 

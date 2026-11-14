@@ -1,12 +1,15 @@
 """Comparisons of empty sets by generated checks are disclosed, and their statuses stay what they were.
 
-Why: a check that compares two empty sets passes without having compared anything. Until 0.24.0 only a defined class
-without members said so; `shacl:<id>` when neither pySHACL nor the SQL view flagged a key, `v5:closure:<h>` when neither
-OWL nor SQL had a closure pair and a V3 pair test that compared no key passed without a word. Since 0.25.0 such a pass
-carries `empty = true` in its detail (the key V1 uses for a comparison with no row on either side) and a not_proven
-line: one per reason run for the SHACL checks (`shacl:pair:<id>` included, which compares two key sets the same way),
-naming those that had no row to check at all; one for the closure check; one per verify run for the pair tests. A
-non-empty pass gets neither, a fail keeps its detail, and the verdicts are the same in both gold_observation modes.
+Why: a check that compares two empty sets passes without having compared anything. Until 0.24.0, among the checks
+between generated layers, only a defined class without members said so (V1 and V2 comparisons with no row, empty
+strata and an empty closure-oracle graph were already disclosed); `shacl:<id>` when neither pySHACL nor the SQL view
+flagged a key, `v5:closure:<h>` when neither OWL nor SQL had a closure pair and a V3 pair test that compared no key
+passed without a word. Since 0.25.0 such a pass carries `empty = true` in its detail (the key V1 uses for a comparison
+with no row on either side; on a pair test, no key of the together answer was compared, while its alone answers may
+hold keys) and a not_proven line: one per reason run for the SHACL checks (`shacl:pair:<id>` included, which compares
+two key sets the same way), naming those that had no row to check at all; one for the closure check; one per verify
+run for the pair tests. A non-empty pass gets neither, a fail keeps its detail, and the verdicts are the same in both
+gold_observation modes.
 
 Unit tests, no database: the stages' own comparison functions, with only what they read mocked (shacl_check.run and
 run_pairs, owl.read and owl.reason, Cube answers through a fake client). tests/test_reason.py runs the SHACL and V5
@@ -115,7 +118,8 @@ class ShaclEmptyTest(unittest.TestCase):
 # ---- reason: shacl:pair:<id> -----------------------------------------------------------------------------
 class ShaclPairEmptyTest(unittest.TestCase):
     """shacl:pair:<id> compares pySHACL's focus-node keys with the view's keys as a set, as shacl:<id> does, so the
-    same rule applies; its own export (rows_exported) says whether it had a row to check."""
+    same rule applies; the pair export (rows_exported, the rows of every pair entity compared in the run, shared by
+    every pair check) says whether there was any row to check."""
 
     def setUp(self):
         self.cfg = demo_cfg()

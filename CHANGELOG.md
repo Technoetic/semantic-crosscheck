@@ -13,10 +13,12 @@ object, its schema and `evidence.RULE_VERSION` do not change, in either `gold_ob
   `shacl:pair:<id>` check where neither pySHACL nor the SQL view flagged a key, a `v5:closure:<h>` check without a
   closure pair in OWL or in SQL and a V3 pair test that passed without comparing a key (`shape_q.compared_no_key`;
   with the modes as they are, an unfiltered test whose together answer held no key) now carry `empty: true` in their
-  detail, the key V1 uses for a comparison with no row on either side, and NOT PROVEN lines: one per reason run for
-  the SHACL checks, naming again those whose export held no row at all (`group_rows` 0, for a pair check
-  `rows_exported` 0); one for the closure check; one per verify run for the pair tests. A non-empty pass and a fail
-  are unchanged.
+  detail and NOT PROVEN lines. The flag is the key V1 uses for a comparison with no row on either side; for a pair
+  test it means that no key of the together answer was compared by value, while the alone answers may hold keys
+  (`alone_only_keys`). The lines: one per reason run for the SHACL checks, naming again those whose export held no
+  row at all (`group_rows` 0, for a pair check `rows_exported` 0, which counts the run's whole pair export); one for
+  the closure check; one per verify run for the pair tests. A line names up to ten checks and counts the rest. A
+  non-empty pass and a fail are unchanged.
 
 ### Changed
 
@@ -56,7 +58,9 @@ object, its schema and `evidence.RULE_VERSION` do not change, in either `gold_ob
 ### Not solved
 
 - An `expect` case whose sides are all empty is still not disclosed. A shape whose target is empty while another
-  entity of its value group has rows is named as flagging no key, not as having no row to check.
+  entity of its value group has rows is named as flagging no key, not as having no row to check. The `rows_exported`
+  of a `shacl:pair:<id>` check counts the run's whole pair export, so a pair check whose own target is empty is named
+  as having no row only when every compared pair entity is empty.
 
 [0.25.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.25.0
 

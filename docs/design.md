@@ -107,9 +107,10 @@ exit 3, so one run lists everything to fix.
   only in SQL, a vacuous defined class, a SHACL or closure comparison of two empty sets, a pair test that compared
   no key, a sampled or chunked pair test, a join path additivity does not apply to, a component that is not
   installed). It does not change the status; `report` shows every line. A passing check that compared empty sets
-  on both sides says so with `empty = true` in its detail: `v1:<gold>` (whose detail always holds `empty`) and,
-  since 0.25.0, `shacl:<id>`, `shacl:pair:<id>`, `v5:closure:<h>`, `v5:defined:<name>` and
-  `v3:pair:<member>+<member>` (which hold the key only when it is true).
+  on both sides says so with `empty = true` in its detail: `v1:<gold>` (whose detail holds `empty` whenever the
+  comparison ran) and, since 0.25.0, `shacl:<id>`, `shacl:pair:<id>`, `v5:closure:<h>`, `v5:defined:<name>` and
+  `v3:pair:<member>+<member>` (which hold the key only when it is true). On a pair test the flag means that no key
+  of the together answer was compared by value; its alone answers may still hold keys (`alone_only_keys`).
 - Since 0.23.0 a verify result also has a top-level `evidence` object (section 8, "Evidence kinds"). It is not a
   field of `Result`: `Result.to_dict` adds it only when a stage set it, and only verify does, so no other stage's
   result changes. It holds counts, check ids, gold ids, Cube member names, facet ids and small enums, never SQL text
@@ -731,12 +732,13 @@ survival verdict. Optional `all` observation retains an earlier non-pass and mar
 [Per-mutant coverage](mutation-coverage.md) records executed and unexecuted items, including early stops.
 
 Since 0.25.0 a pair test that passes without comparing a key carries `empty = true`, and one `not_proven` line per
-run names every such test: `{ids}: no key was compared, so a pass does not show that the measures queried together
-equal the measures queried alone`. `shape_q.compared_no_key` reads the count of each mode: `keys` 0 (unfiltered),
-`answered_keys` 0 (sampled), `answered_keys` 0 and `keys` 0 in `null_key_group` (chunked); a count the detail does
-not hold is never read as 0. With the modes as they are only an unfiltered test can pass that way, when Cube's
-together answer holds no key (its alone answers may hold keys: `alone_only_keys`, which is no failure). The status,
-the V4 baseline and the replays stay as they are, in both `gold_observation` modes.
+run names up to ten such tests and counts the rest (`, and N more`): `{ids}: no key was compared, so a pass does not
+show that the measures queried together equal the measures queried alone`. `shape_q.compared_no_key` reads the
+count of each mode: `keys` 0 (unfiltered), `answered_keys` 0 (sampled), `answered_keys` 0 and `keys` 0 in
+`null_key_group` (chunked); a count the detail does not hold is never read as 0. With the modes as they are only an
+unfiltered test can pass that way, when Cube's together answer holds no key (its alone answers may hold keys:
+`alone_only_keys`, which is no failure). The status, the V4 baseline and the replays stay as they are, in both
+`gold_observation` modes.
 
 **V3 additivity over join paths.** Predefined joins inflate totals when a row matches several rows of the
 joined cube ("Aggregation Consistency Errors in Semantic Layers and How to Avoid Them", HILDA 2023,
@@ -926,12 +928,15 @@ database errors occur before validation and still decide every shape. Each `shac
 `value_group` and `group_rows`; `rows_exported` is the sum over the groups.
 
 Since 0.25.0 a pass where neither pySHACL nor the view flagged a key carries `empty = true` (the key V1 uses for a
-comparison with no row on either side), and one `not_proven` line per run names every such `shacl:<id>` and
-`shacl:pair:<id>` check: `{ids}: neither pySHACL nor the SQL view flagged a key, so a pass shows only that neither
-engine flagged a row of this data, not that both would flag the same violating row`, followed by `; {ids} had no row
-to check at all (no row was exported for the comparison)` for the checks whose `group_rows` (for a pair check
-`rows_exported`) is 0. A shape whose target is empty while another entity of its value group has rows is named only
-in the first part: no detail field says that its own target had no row. Statuses do not change.
+comparison with no row on either side), and one `not_proven` line per run names such `shacl:<id>` and
+`shacl:pair:<id>` checks (up to ten in each part, then `, and N more`): `{ids}: neither pySHACL nor the SQL view
+flagged a key, so a pass shows only that neither engine flagged a row of this data, not that both would flag the same
+violating row`, followed by `; {ids} had no row to check at all (no row was exported for the comparison)` for the
+checks whose `group_rows` (for a pair check `rows_exported`) is 0. A shape whose target is empty while another entity
+of its value group has rows is named only in the first part: no detail field says that its own target had no row.
+Likewise the `rows_exported` of a `shacl:pair:<id>` check counts the run's whole pair export (the rows of every pair
+entity compared in that run, the same number for each pair check), so a pair check whose own target is empty is named
+in the second part only when every compared pair entity is empty. Statuses do not change.
 
 One kind of shape is not compared and is listed in `not_proven` instead ("checked only in SQL"):
 
@@ -1235,7 +1240,7 @@ five demo gold queries free of every match.
 | `v5:witness:<name>` | `structural` | a synthetic graph the engine wrote: it tests templates, not this data |
 | A V4 kill by an authored item that sees the change only through a join | `mutation`, `detection = authored` | the gold rows differed from Cube's |
 | A V2 stratum whose bindings were all empty, a V1 binding with no row | `authored`, listed in `zero_row_checks` (`empty_stratum_zero_row_checks` for a stratum named `empty`) | the kind says who wrote the side; the list says nothing was compared |
-| A `shacl:<id>` or `shacl:pair:<id>` pass with no flagged key, a `v5:closure:<h>` pass without pairs, a `v3:pair:<member>+<member>` pass that compared no key (since 0.25.0) | `generated`, not in the zero-row lists; `empty = true` and a `not_proven` line in its own stage | the kind says what the sides are; the flag and the line say nothing was compared; the evidence object and its rule version are unchanged |
+| A `shacl:<id>` or `shacl:pair:<id>` pass with no flagged key, a `v5:closure:<h>` pass without pairs, a `v3:pair:<member>+<member>` pass that compared no key (since 0.25.0) | `generated`, not in the zero-row lists; `empty = true` and a `not_proven` line in its own stage | the kind says what the sides are; the flag and the line say that no key was flagged (SHACL), that there was no closure pair, or that no key was compared (pair tests); the evidence object and its rule version are unchanged |
 | `v1:<gold>` and `v2:<gold>:<stratum>` of a gold query without parameters | both `authored`; the same binding is compared twice (`comparisons` counts 2) | V1 replays the first binding and V2 the same single binding (`all`); the report.md table says "v1 repeats the first binding of v2" |
 | Optional diagnostics, `data-rules`, `expect` | not counted | they are not report stages |
 
@@ -1625,12 +1630,13 @@ No default dependency, CLI stage or production database workflow is added.
 ## v0.25.0 disclosed empty comparisons
 
 A pass that compared empty sets is disclosed, never rewritten: `shacl:<id>` and `shacl:pair:<id>` where neither
-pySHACL nor the view flagged a key, `v5:closure:<h>` (and, as before, `v5:defined:<name>`) without a pair or member
-on either side, and a V3 pair test that compared no key (`shape_q.compared_no_key`) carry `empty = true`, the detail
-key V1 uses, and a `not_proven` line (section 7). Statuses, the V4 baseline, the evidence object, its schema and
-`RULE_VERSION` do not change, in either `gold_observation` mode; `report.md` lists the lines with every stage's. An
-`expect` case whose sides are all empty is still not disclosed. The data-rules pattern subset is documented for what
-it guarantees (the same syntax read the same way, the refused constructs) and what it does not (a backtracking bound,
-the same chosen match: [data-rules.md](data-rules.md#pattern-subset-text_quantity)); a difference there that changes
-the rule's output stays a disagreement (`paths_disagree`), and one that changes no output leaves the verdict the same
-under either reading.
+pySHACL nor the view flagged a key, `v5:closure:<h>` and `v5:defined:<name>` without a pair or member on either side,
+and a V3 pair test that compared no key (`shape_q.compared_no_key`) carry `empty = true`, the detail key V1 uses (on
+a pair test: no key of the together answer was compared, while the alone answers may hold keys), and a `not_proven`
+line (section 7; `v5:defined:<name>` had its line before). Statuses, the V4 baseline, the evidence object, its
+schema and `RULE_VERSION` do not change, in either `gold_observation` mode; `report.md` lists the lines with every
+stage's. An `expect` case whose sides are all empty is still not disclosed. The data-rules pattern subset is
+documented for what it guarantees (the same syntax read the same way, the refused constructs) and what it does not (a
+backtracking bound, the same chosen match: [data-rules.md](data-rules.md#pattern-subset-text_quantity)); a difference
+there that changes the rule's output stays a disagreement (`paths_disagree`), and one that changes no output leaves
+the verdict the same under either reading.

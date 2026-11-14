@@ -76,10 +76,11 @@ groups together. If validating one group fails (pySHACL returns no results graph
 group's shapes are `error` (`validation_failure`, with the exception type only).
 
 A defined class without members in OWL or in SQL passes vacuously and is listed as not proven. Since 0.25.0 so is
-a `v5:closure:<h>` check without a closure pair on either side, and a `shacl:<id>` or `shacl:pair:<id>` check where
-neither pySHACL nor the SQL view flagged a key: one NOT PROVEN line names those checks (a pass then shows only that
-neither engine flagged a row of this data, not that both would flag the same violating row) and the ones whose
-export held no row at all. These passes carry `empty: true` in their detail; their status stays a pass.
+a `v5:closure:<h>` check without a closure pair on either side, on a NOT PROVEN line of its own, and a `shacl:<id>`
+or `shacl:pair:<id>` check where neither pySHACL nor the SQL view flagged a key: one NOT PROVEN line names these
+SHACL checks, up to ten and then a count (a pass then shows only that neither engine flagged a row of this data, not
+that both would flag the same violating row), and the ones whose export held no row at all. These passes carry
+`empty: true` in their detail; their status stays a pass.
 
 `--synthetic-witnesses` adds separate checks of configured definitions on small synthetic graphs,
 including positive examples and nonmember controls with independently specified expected memberships.

@@ -26,7 +26,8 @@ One Cube process (cube_run.serve on <out>/cube, log in verify/server.log) serves
                         measure / class-column pairs Cube can join that get no additive test (a join path with a
                         one_to_many step) are listed in not_proven (shape_q.not_applicable). A pair test that
                         passes without comparing a key gets empty = true, and one not_proven line per run names
-                        every such test (shape_q.compared_no_key); its status stays a pass in both modes
+                        up to MAX_LISTED such tests and counts the rest (shape_q.compared_no_key); its status stays
+                        a pass in both modes
 Gold and Cube values are compared in the form of the Cube member type of each mapped column (compare.member_kinds of
 the model): text exactly, numbers as exact decimals, dates and timestamps in UTC, booleans as booleans.
 
@@ -610,7 +611,8 @@ class _Verify:
 
     def empty_pair_line(self):
         """One not_proven line naming the V3 pair tests of this run that passed without comparing a key (detail empty
-        = true, shape_q.compared_no_key), in both gold_observation modes; nothing when there is none."""
+        = true, shape_q.compared_no_key; up to MAX_LISTED, then a count), in both gold_observation modes; nothing when
+        there is none."""
         if self.empty_pairs:
             self.res.not_proven.append(f"{_cut(self.empty_pairs)}: {shape_q.empty_note()}")
 

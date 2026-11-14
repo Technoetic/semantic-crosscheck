@@ -58,8 +58,8 @@ python "${CLAUDE_PLUGIN_ROOT}/skills/semantic-crosscheck/scripts/sxc.py" verify 
   queries). The pair test's own status and V4 are unchanged, also when the witness fails; V4 replays run
   no witness. Pair tests of at most 2,000 keys compare every key unfiltered and get no witness check.
   Since 0.25.0 a pair test that passes without comparing a key (an unfiltered test whose together answer held
-  no key) carries `empty: true`, and one NOT PROVEN line names every such test; its status stays a pass, in both
-  `verify.gold_observation` modes.
+  no key; its alone answers may still hold keys) carries `empty: true`, and one NOT PROVEN line names up to ten
+  such tests and counts the rest; its status stays a pass, in both `verify.gold_observation` modes.
 - V4 patches copies of the model and serves each mutant in a fresh Cube process. Only suite items that
   pass against the unmutated model are replayed (V1, the first `verify.mutant_bindings` bindings per
   stratum, V3), and the authoritative result is the first item that does not pass. Default `verify.mutant_observation =

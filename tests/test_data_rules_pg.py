@@ -19,6 +19,8 @@ Covered (spec section 12.2 and more):
   mutants), a nondeterministic collation (collation not_run), and two collations compared with each other (rule
   errors 42P22, or for parent and child a snapshot error 42P21, with a collation hint; never a verdict); rule constants with quotes, backslashes, colons, $1, -- and non-ASCII text in the view
   definitions; a reserved word as a column name; a pattern with escaped punctuation in a bracket class;
+- two regular-expression engines: a pattern inside the subset on which PostgreSQL and Python choose different matches
+  is a disagreement, never a pass, while the same row read with disjoint items or an anchored pattern agrees;
 - gates and budgets: NaN and infinity (and an entity pointed at a view that clears them), NULL and duplicate node
   keys, a cycle and a shallow max_depth, NULL edge quantities, long text, an empty edge table, max_export_rows (no rule,
   lookup or export statement runs) and max_rule_rows;
@@ -1901,6 +1903,124 @@ class LiteralsTest(_RulesCase):
             for value in TRICKY + NEAR[2:4]:
                 if value != QUOTE * 2:
                     self.assertNotIn(value, text)
+
+
+# ---- two regular-expression engines ----------------------------------------------------------------------------------
+# The three patterns read the child's name 123g of one line with quantity 123. Inside the subset, the engines choose
+# different matches for OVERLAP from the same leftmost position: PostgreSQL the longest (123g, capture 12), Python's re
+# the first its backtracking finds (123, capture 123). DISJOINT keeps neighbouring items disjoint and ANCHORED makes
+# the whole text the match; both engines then read the same capture. ANCHORED has a tolerance of ten times X, so the
+# line is flagged whichever of 12 and 123 is read and its view row shows the capture PostgreSQL read. Every example
+# uses names both engines read alike, so the authored examples pass and the disagreement shows on the table only.
+OVERLAP, DISJOINT, ANCHORED = "([0-9]+)(?:[0-9]g)?", "([0-9]+)g", "^([0-9]+)(?:[0-9]g)?$"
+REGEX_RULES = r'''version = 1
+
+[[rule]]
+id = "overlap_digits"
+kind = "text_quantity"
+entity = "bom_line"
+severity = "warning"
+end = "child"
+text = "name"
+pattern = '%s'
+quantity = "qty_per"
+rel_tol = "0"
+report = { columns = ["line_id"] }
+  [[rule.example]]
+  spec = "test suite: a line quantity equal to the number in the child's name, on a name both engines read alike"
+  rows.part = [{ part_id = "P", name = "Pack 5" }]
+  rows.bom_line = [
+    { line_id = 1, parent_id = "A", child_id = "P", qty_per = "5" },
+    { line_id = 2, parent_id = "A", child_id = "P", qty_per = "4" },
+  ]
+  expect = [{ line_id = 1, numerator = "5", divisor = "1", n = 1 }]
+
+[[rule]]
+id = "disjoint_digits"
+kind = "text_quantity"
+entity = "bom_line"
+severity = "warning"
+end = "child"
+text = "name"
+pattern = '%s'
+quantity = "qty_per"
+rel_tol = "0"
+report = { columns = ["line_id"] }
+  [[rule.example]]
+  spec = "test suite: a line quantity equal to the number written before g in the child's name"
+  rows.part = [{ part_id = "P", name = "Pack 5g" }, { part_id = "Q", name = "Pack 5" }]
+  rows.bom_line = [
+    { line_id = 1, parent_id = "A", child_id = "P", qty_per = "5" },
+    { line_id = 2, parent_id = "A", child_id = "Q", qty_per = "5" },
+  ]
+  expect = [{ line_id = 1, numerator = "5", divisor = "1", n = 1 }]
+
+[[rule]]
+id = "anchored_digits"
+kind = "text_quantity"
+entity = "bom_line"
+severity = "warning"
+end = "child"
+text = "name"
+pattern = '%s'
+quantity = "qty_per"
+rel_tol = "10"
+report = { columns = ["line_id"] }
+  [[rule.example]]
+  spec = "test suite: a child named by a number alone, with a tolerance of ten times that number"
+  rows.part = [{ part_id = "P", name = "7" }, { part_id = "Q", name = "Pack 7" }]
+  rows.bom_line = [
+    { line_id = 1, parent_id = "A", child_id = "P", qty_per = "7" },
+    { line_id = 2, parent_id = "A", child_id = "P", qty_per = "100" },
+    { line_id = 3, parent_id = "A", child_id = "Q", qty_per = "7" },
+  ]
+  expect = [{ line_id = 1, numerator = "7", divisor = "1", n = 1 }]
+''' % (OVERLAP, DISJOINT, ANCHORED)
+
+
+class RegexEnginesTest(_RulesCase):
+    """A pattern inside the subset on which PostgreSQL and Python choose different matches is a disagreement, never a
+    pass; keeping the items disjoint or anchoring the pattern makes both paths agree on the same data."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        copy_schema("sxc_regex", "DELETE FROM sxc_regex.bom_line", "DELETE FROM sxc_regex.part",
+                    "INSERT INTO sxc_regex.part (part_id, name) VALUES ('A', 'Kit'), ('G', '123g')",
+                    "INSERT INTO sxc_regex.bom_line (line_id, parent_id, child_id, qty_per) VALUES (1, 'A', 'G', 123)")
+        output_schema("sxc_out_regex")
+        cls.p = cls.project("regex", "sxc_regex", "sxc_out_regex", rules=REGEX_RULES)
+
+    def test_the_engines_capture_differently_inside_the_subset(self):
+        """The forms the two paths use (compile_subset: the ARE form bound in SQL, the Python form searched by the
+        evaluator) on the text alone: PostgreSQL's regexp_match and Python's re.search."""
+        forms = [data_rules.compile_subset(p) for p in (OVERLAP, DISJOINT, ANCHORED)]   # all inside the subset
+        conn = db.connect(CHECK_ENV)
+        try:
+            captures = conn.run("SELECT (regexp_match('123g', :o))[1], (regexp_match('123g', :d))[1], "
+                                "(regexp_match('123g', :a))[1]", o=forms[0].are, d=forms[1].are, a=forms[2].are)
+        finally:
+            conn.close()
+        self.assertEqual(captures, [["12", "123", "12"]])
+        self.assertEqual([f.compile().search("123g").group(1) for f in forms], ["123", "123", "12"])
+
+    def test_a_difference_in_the_chosen_match_is_a_disagreement_never_a_pass(self):
+        code, console, build = self.p.build()
+        self.assertEqual(code, 0, console)
+        code, console, res = self.p.data_rules()
+        self.assertEqual(code, 1, console)
+        checks = by_id(res)
+        rule, xcheck = checks["rule:overlap_digits"], checks["rule_xcheck:overlap_digits"]
+        self.assertEqual((xcheck["status"], xcheck["detail"]["sql_only"], xcheck["detail"]["py_only"],
+                          xcheck["detail"]["sql_outputs"], xcheck["detail"]["py_outputs"]), ("fail", 0, 1, 0, 1))
+        self.assertEqual((rule["status"], rule["detail"]["reason"]), ("not_run", "paths_disagree"))
+        self.assertEqual(checks["rule_example:overlap_digits"]["status"], "pass")
+        self.assertNotEqual(res["status"], "pass")
+        # the controls on the same line agree, and each view row shows the capture PostgreSQL read
+        for rule_id, numerator in (("disjoint_digits", "123"), ("anchored_digits", "12")):
+            with self.subTest(rule=rule_id):
+                self.assert_rules(res, {rule_id: ("pass", 1, [("1", numerator, "1", "1")])})
+                self.assertEqual(self.view_rows("sxc_out_regex", rule_id), [("1", numerator, "1", "1")])
 
 
 # ---- roles and databases ---------------------------------------------------------------------------------------------

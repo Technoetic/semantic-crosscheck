@@ -140,7 +140,8 @@ class Ref:
 
 @dataclass(frozen=True)
 class Pattern:
-    """A text_quantity pattern of the supported subset in its two equivalent forms."""
+    """A text_quantity pattern of the supported subset in its two forms, the same syntax written for each engine; the
+    engines can still choose different matches (compile_subset)."""
     python: str        # Python `re` form; compile with re.DOTALL (compile())
     are: str           # PostgreSQL ARE form
     captures: int
@@ -1065,9 +1066,17 @@ def compile_subset(pattern: str) -> Pattern:
     Refused: alternation, backreferences, lookaround, named groups, inline flags, lazy or possessive quantifiers, any
     other letter escape (\\w \\W \\S \\D \\b \\B ...), POSIX classes, NUL, more than 256 characters, more than 16
     quantifiers, and a repetition (* + {m,} or an upper bound above 1) over a group that contains a quantifier; ?
-    and {0,1} over such a group stay allowed. These rules keep the two engines' matches and captures equal and exclude
-    the nested repetition that makes Python's backtracking exponential; neighbouring quantified items that can match
-    the same characters are still accepted and can backtrack polynomially on a long text that does not match.
+    and {0,1} over such a group stay allowed.
+    What the subset guarantees: both engines read its syntax the same way (a class, an escape, '.', a quantifier and
+    an anchor mean the same in both), and it refuses the constructs above, among them the nested repetition that makes
+    Python's backtracking exponential. It does not bound backtracking: neighbouring quantified items that can match the
+    same characters are accepted and can backtrack polynomially on a long text that does not match. Nor does it make
+    the engines choose the same match: from the leftmost position where a match starts, PostgreSQL takes the longest
+    overall match (PostgreSQL 17 documentation, 9.7.3.5 "Regular Expression Matching Rules") and Python's re the first
+    match its backtracking finds, so the whole match and the captures can differ. ([0-9]+)(?:[0-9]g)? on "123g" matches
+    123g with capture 12 in PostgreSQL and 123 with capture 123 in Python. Such a difference makes rule_xcheck:<id>
+    fail and leaves rule:<id> not_run (paths_disagree), never a pass. Keeping neighbouring items disjoint, or anchoring
+    a pattern whose match is the whole text, avoids that example's difference, not every difference.
     Raises PatternError naming the construct, never the pattern."""
     if not isinstance(pattern, str) or not pattern:
         raise PatternError("empty")

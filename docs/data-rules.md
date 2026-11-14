@@ -171,7 +171,8 @@ decided). `next_safe_action` names the mismatch. Cast every compared column to t
 
 ### Pattern subset (`text_quantity`)
 
-Python `re` and PostgreSQL regular expressions differ, so a pattern must stay inside a subset both read alike:
+Python `re` and PostgreSQL regular expressions differ, so a pattern must stay inside a subset whose syntax both read
+the same way:
 
 - **Allowed:** literal characters (non-ASCII too), a backslash plus ASCII punctuation, `.`, bracket classes with the
   ASCII ranges `0-9`, `a-z` and `A-Z`, `\d` and `\s` (expanded to `[0-9]` and `[ \t\n\r\f\v]`), greedy quantifiers
@@ -186,6 +187,16 @@ Python `re` and PostgreSQL regular expressions differ, so a pattern must stay in
   `[0-9]*.[0-9]*`, since `.` matches a digit too) still backtrack polynomially on a long text that does not match,
   and the Python evaluation has no time limit (`statement_timeout_ms` bounds only the SQL side). Keep neighbouring
   quantified items disjoint, as `\s*([0-9.]+)\s*g` does, and `max_text_length` no larger than the data needs.
+- **Match choice.** The subset makes both engines read the syntax the same way, not choose the same match. From the
+  leftmost position where a match starts, PostgreSQL takes the longest overall match (PostgreSQL 17 documentation,
+  9.7.3.5 "Regular Expression Matching Rules") and Python's `re` takes the first match its backtracking finds, so the
+  whole match and the captures can differ: `([0-9]+)(?:[0-9]g)?` on `123g` matches `123g` with capture `12` in
+  PostgreSQL and `123` with capture `123` in Python. The two outputs of the rule then differ, so `rule_xcheck:<id>`
+  fails and `rule:<id>` is `not_run` (`paths_disagree`), never a pass. Keep neighbouring items disjoint, so that no
+  optional or quantified item can take characters the item before it can take (`([0-9]+)g`; above, `(?:[0-9]g)?`
+  starts with a digit, which `[0-9]+` can take), or anchor the pattern with `^` and `$` when the whole text is the
+  match (`^([0-9]+)(?:[0-9]g)?$` captures `12` in both engines). That avoids the difference of this example; it is
+  not shown to avoid every difference, and a remaining one is still a disagreement.
 - The pattern needs 1 or 2 capturing groups: the amount, and optionally the divisor. Refused examples:
   `(?:[0-9]+)+x`, `(?:ab*){2,3}`.
 
@@ -257,10 +268,11 @@ Both paths implement this contract separately.
    `outside_stored_nonzero` (no edges). A height that `max_depth` cannot bound (a cycle or a deeper chain) makes the
    rule not run (`cycle_or_depth_limit`).
 10. **text_quantity.** The endpoint row must exist and satisfy `where_end`. The pattern is searched leftmost in the
-    endpoint's text. Capture 1 must be a plain decimal numeral X > 0; an optional capture 2 must be digits N > 0, and
-    N = 1 when that group did not take part; anything else is a defined no-match. A row with a non-NULL quantity q is
-    flagged when abs(q * N - X) <= rel_tol * X; the output adds `numerator` = X and `divisor` = N. A text longer than
-    `max_text_length` makes the rule not run (`value_too_long`).
+    endpoint's text (from that position the two engines can choose different matches: see the match choice under
+    [Pattern subset](#pattern-subset-text_quantity)). Capture 1 must be a plain decimal numeral X > 0; an optional
+    capture 2 must be digits N > 0, and N = 1 when that group did not take part; anything else is a defined no-match.
+    A row with a non-NULL quantity q is flagged when abs(q * N - X) <= rel_tol * X; the output adds `numerator` = X
+    and `divisor` = N. A text longer than `max_text_length` makes the rule not run (`value_too_long`).
 11. **Exact arithmetic.** Only addition, subtraction, multiplication and comparison are used: numeric in PostgreSQL,
     Decimal with precision 60 and Inexact trapped in Python. An inexact step is an evaluator error, never a rounded
     answer.
@@ -373,8 +385,11 @@ or the rule file, rerun build and data-rules).
 - **Live views.** The lookup views equal the certified rows only at check time.
 - **Constants in view definitions.** Rule constants are readable in the view definitions and in `build.sql`; row
   values are only in the views, never in results.
-- **Regex engines.** The pattern subset keeps Python and PostgreSQL matches equal for the supported forms; any
-  remaining difference in how captures are assigned shows up as a disagreement (`paths_disagree`), never as a pass.
+- **Regex engines.** The pattern subset makes Python and PostgreSQL read the syntax the same way, but not choose the
+  same match: from the leftmost position PostgreSQL takes the longest match and Python's `re` the first one its
+  backtracking finds, so within the subset the whole match and the captures can differ (`([0-9]+)(?:[0-9]g)?` on
+  `123g`: capture `12` in PostgreSQL, `123` in Python; see [Pattern subset](#pattern-subset-text_quantity)). Such a
+  difference shows up as a disagreement (`paths_disagree`), never as a pass.
 - **Pattern backtracking.** The subset excludes nested repetition but does not bound Python's backtracking over
   neighbouring quantified items that can match the same characters, and the Python evaluation has no time limit. Keep
   such items disjoint (see [Pattern subset](#pattern-subset-text_quantity)).

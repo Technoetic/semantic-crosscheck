@@ -232,10 +232,15 @@ on something the rule's author did not mean.
   or the rule is `not_run` (`non_finite_values`).
 - **Two regular-expression engines.** PostgreSQL's advanced regular expressions and Python's `re` differ: alternation
   can pick another match, `\d`, `\w` and `\s` cover other characters (Python's are Unicode-aware), Python's `$` also
-  matches before a final newline, and captures can be assigned differently. `text_quantity` patterns therefore stay
-  inside a subset both read alike: no alternation or letter escapes, `\d` and `\s` expanded to ASCII classes, `$`
-  written as `\Z` for Python, no repetition over a group that contains a quantifier. A difference that remains
-  shows up as a failing `rule_xcheck:<id>`, never as a pass.
+  matches before a final newline, and from the leftmost position where a match starts PostgreSQL takes the longest
+  overall match while Python takes the first match its backtracking finds, so the whole match and the captures can
+  differ (`([0-9]+)(?:[0-9]g)?` on `123g` captures `12` in PostgreSQL and `123` in Python). `text_quantity` patterns
+  therefore stay inside a subset both read alike: no alternation or letter escapes, `\d` and `\s` expanded to ASCII
+  classes, `$` written as `\Z` for Python, no repetition over a group that contains a quantifier. The subset removes
+  the first three differences, not the last: keep neighbouring items disjoint (`([0-9]+)g`) or anchor the pattern
+  when the whole text is the match (`^([0-9]+)(?:[0-9]g)?$` captures `12` in both), which avoids that example's
+  difference but is not shown to avoid every one. A difference that remains shows up as a failing
+  `rule_xcheck:<id>`, never as a pass.
 - **Overlapping quantifiers backtrack slowly in Python.** The subset excludes nested repetition, not neighbouring
   quantified items that can match the same characters: `([0-9]+)[0-9]*[0-9]*g` is accepted, and Python's `re` tries
   every split of a long digit run that is not followed by `g`, which takes polynomial time with no time limit on the

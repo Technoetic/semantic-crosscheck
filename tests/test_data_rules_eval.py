@@ -715,6 +715,32 @@ pattern = '([0-9]+) g'
 quantity = "qty_per"
 rel_tol = "0"
 """
+OVERLAP = "([0-9]+)(?:[0-9]g)?"   # inside the subset; on 123g PostgreSQL captures 12, Python 123
+OVERLAP_RULES = f"""version = 1
+[[rule]]
+id = "overlap"
+kind = "text_quantity"
+entity = "bom_line"
+severity = "warning"
+end = "child"
+text = "name"
+pattern = '{OVERLAP}'
+quantity = "qty_per"
+rel_tol = "0"
+report = {{ columns = ["line_id"] }}
+
+[[rule]]
+id = "anchored"
+kind = "text_quantity"
+entity = "bom_line"
+severity = "warning"
+end = "child"
+text = "name"
+pattern = '^{OVERLAP}$'
+quantity = "qty_per"
+rel_tol = "0"
+report = {{ columns = ["line_id"] }}
+"""
 
 
 class TextQuantityTest(unittest.TestCase):
@@ -761,6 +787,18 @@ class TextQuantityTest(unittest.TestCase):
         names = {"P": "Big [1 g / 123456789012345678901234567890123456789]"}
         with self.assertRaises(Inexact):
             self.grams(names, [("A", "P", "1234567890123456789012.345678")])
+
+    def test_python_takes_the_first_match_its_backtracking_finds(self):
+        """The subset accepts OVERLAP, but the engines choose different matches on 123g from the same leftmost
+        position: PostgreSQL the longest one, 123g with capture 12 (test_data_rules_pg.RegexEnginesTest), Python's re
+        the first one its backtracking finds, 123 with capture 123. The evaluator reads X = 123, so it flags the line
+        with quantity 123 and not the one with quantity 12. Anchored, the whole text is the match and X = 12."""
+        pattern = data_rules.compile_subset(OVERLAP)
+        self.assertEqual((pattern.captures, pattern.quantifiers), (1, 2))
+        spec = load(OVERLAP_RULES)
+        data = tables(parts=[part("G", name="123g")], lines=lines_of(("A", "G", "123"), ("A", "G", "12")))
+        self.assertEqual(run(spec, "overlap", data), outcome(spec, "overlap", ("1", "123", "1", "1")))
+        self.assertEqual(run(spec, "anchored", data), outcome(spec, "anchored", ("2", "12", "1", "1")))
 
 
 # ---- gates ----------------------------------------------------------------------------------------------

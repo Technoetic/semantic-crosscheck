@@ -4,7 +4,8 @@ Unit tests need no database: the reversible RDF row keys (naming.rdf_node / rdf_
 results), the literal forms of bound values, which shapes are compared, the SQL definitions of the defined classes,
 the stage's prerequisites and, when owlready2 and Java are available, HermiT on a small hand-made hierarchy.
 Integration tests (skipped unless SXC_TEST_ADMIN_DSN is set; the OWL parts also need owlready2 and Java) run build and
-then reason on the clean and the dirty demo, each class in its own throw-away database prefixed sxc_t_reason, and
+then reason on the clean and the dirty demo, and on the clean demo emptied of parts, lines and stock (every comparison
+over empty sets, which passes and is disclosed), each class in its own throw-away database prefixed sxc_t_reason, and
 compare with the demo's independent Python numbers (fx.data["expected"]).
 """
 
@@ -652,6 +653,7 @@ class _ReasonCase(unittest.TestCase):
         cls.fx = pgfixture.PgFixture(cls.database, cls.variant)
         cls.addClassCleanup(cls.fx.teardown)
         cls.fx.setup()
+        cls.prepare()
         tmp = tempfile.TemporaryDirectory()
         cls.addClassCleanup(tmp.cleanup)
         cls.tmp = Path(tmp.name)
@@ -660,6 +662,10 @@ class _ReasonCase(unittest.TestCase):
         stage_build.run(cls.cfg, types.SimpleNamespace(hierarchy=""), cls.out).write(cls.out)
         cls.only = list(stage_reason.PARTS) if HAVE_OWL else ["shacl"]
         cls.res = stage_reason.run(cls.cfg, types.SimpleNamespace(only=cls.only), cls.out)
+
+    @classmethod
+    def prepare(cls):
+        """Changes to the loaded demo rows before build runs (none by default)."""
 
     def setUp(self):
         # another test class may have pointed the check-role DSN at its own database
@@ -705,9 +711,12 @@ class ReasonCleanTest(_ReasonCase):
             rows = exp["bom_lines"] + exp["parts"] + exp["stock_rows"]   # targets and class entity once, as in 0.3.0
             self.assertEqual((c.detail["value_group"], c.detail["group_rows"], c.detail["rows_exported"]),
                              ("main", rows, rows), "no column needs two kinds of value: one group, no extra rows")
+            self.assertIs(c.detail["empty"], True, "clean data: neither side flagged a key")
         self.assertFalse([c for c in self.res.checks if c.id == "shacl:open_le_total"])
         self.assertIn("shacl:open_le_total: no SHACL form (sql_violation); checked only in SQL (shape:open_le_total in build)",
                       self.res.not_proven)
+        self.assertIn("shacl:child_exists, shacl:qty_positive, shacl:stock_nonnegative: " + stage_reason.EMPTY_SHACL_NOTE,
+                      self.res.not_proven, "rows were exported, so no shape is named as having no row to check")
 
     @unittest.skipUnless(HAVE_OWL, "needs owlready2 and Java")
     def test_owl_is_consistent_and_agrees_with_sql(self):
@@ -718,9 +727,12 @@ class ReasonCleanTest(_ReasonCase):
         closure = get_check(self.res, "v5:closure:has_component")
         self.assertEqual((closure.status, closure.detail["owl_pairs"], closure.detail["sql_pairs"], closure.detail["owl_only"],
                           closure.detail["sql_only"]), ("pass", exp["closure_pairs"], exp["closure_pairs"], 0, 0))
+        self.assertNotIn("empty", closure.detail)
+        self.assertFalse([n for n in self.res.not_proven if n.startswith("v5:closure:")])
         for j, d in enumerate(self.cfg.ontology.defined):
             v = get_check(self.res, f"v5:defined:{d.name}")
             self.assertEqual((v.status, v.config_ref, v.detail["owl_only"], v.detail["sql_only"]), ("pass", f"ontology.defined[{j}]", 0, 0))
+            self.assertEqual(v.detail.get("empty"), True if d.name == "ProductUsedAsPart" else None, d.name)
         self.assertGreater(get_check(self.res, "v5:defined:ContainsRaw").detail["owl_members"], 0)
         self.assertIn("v5:defined:ProductUsedAsPart: the class has no members in OWL or in SQL, so the comparison holds "
                       "vacuously", self.res.not_proven)
@@ -838,7 +850,9 @@ class ReasonDirtyTest(_ReasonCase):
             self.assertGreater(n, 0)
             self.assertEqual((c.status, c.detail["violations"], c.detail["shacl_focus_nodes"], c.detail["shacl_only"],
                               c.detail["sql_only"]), ("pass", n, n, 0, 0), sid)
+            self.assertNotIn("empty", c.detail, sid)
         self.assertEqual(get_check(self.res, "shacl:stock_nonnegative").detail["severity"], "warning")
+        self.assertFalse([n for n in self.res.not_proven if stage_reason.EMPTY_SHACL_NOTE in n])
 
     def test_one_group_exports_every_row_once_and_leaves_dangling_references_untyped(self):
         """The demo has no column that needs two kinds of value: one graph, the export 0.3.0 made."""
@@ -880,6 +894,47 @@ class ReasonDirtyTest(_ReasonCase):
         self.assertEqual(code, EXIT_FAIL, console)   # the inconsistent ontology, or without Java the narrowed run
         self.assert_no_row_values(result, console)
         self.assertFalse(re.search(r"P-\d{6}|SO-\d{6}", result))
+
+
+class ReasonEmptySourceTest(_ReasonCase):
+    """The clean demo with every part, BOM line and stock row deleted before build: the SHACL value group exports no
+    row and the hierarchy has no edge, so every comparison of reason is over empty sets. Each passes, as before, and
+    says so: empty = true, the SHACL line naming the shapes that had no row to check, the closure line and the
+    defined-class lines."""
+
+    database = f"{PREFIX}_empty"
+
+    @classmethod
+    def prepare(cls):
+        conn = db.connect("SXC_PG_OWNER_DSN")
+        try:
+            with db.write_tx(conn):
+                for table in ("bom_line", "stock", "part"):
+                    conn.run(f"DELETE FROM sxc_demo.{table}")
+        finally:
+            conn.close()
+
+    def test_every_shacl_comparison_is_empty_with_no_row_to_check(self):
+        ids = [f"shacl:{s.id}" for s in self.cfg.shapes[:3]]
+        for cid in ids:
+            c = get_check(self.res, cid)
+            self.assertEqual((c.status, c.detail["violations"], c.detail["group_rows"], c.detail["rows_exported"],
+                              c.detail["empty"]), ("pass", 0, 0, 0, True), cid)
+        listed = ", ".join(ids)
+        self.assertIn(f"{listed}: {stage_reason.EMPTY_SHACL_NOTE}; {listed} {stage_reason.NO_ROW_NOTE}",
+                      self.res.not_proven)
+
+    @unittest.skipUnless(HAVE_OWL, "needs owlready2 and Java")
+    def test_a_hierarchy_without_edges_has_an_empty_closure_comparison(self):
+        self.assertEqual(get_check(self.res, "owl:consistency").detail["individuals"], 0)
+        c = get_check(self.res, "v5:closure:has_component")
+        self.assertEqual((c.status, c.detail["owl_pairs"], c.detail["sql_pairs"], c.detail["empty"]), ("pass", 0, 0, True))
+        self.assertIn("v5:closure:has_component: the hierarchy has no closure pair in OWL or in SQL, so the comparison "
+                      "holds vacuously", self.res.not_proven)
+        for d in self.cfg.ontology.defined:
+            v = get_check(self.res, f"v5:defined:{d.name}")
+            self.assertEqual((v.status, v.detail["empty"]), ("pass", True), d.name)
+        self.assertEqual(self.res.status, "pass", "disclosure only: every check still passes")
 
 
 @unittest.skipUnless(pgfixture.available() and HAVE_SHACL, "needs SXC_TEST_ADMIN_DSN, rdflib and pyshacl")

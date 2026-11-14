@@ -24,7 +24,9 @@ One Cube process (cube_run.serve on <out>/cube, log in verify/server.log) serves
                         detection bound and the budget. V4 replays every bounded chunk plus the NULL group; only
                         above that key budget is a survivor marked sample_blind_possible; the
                         measure / class-column pairs Cube can join that get no additive test (a join path with a
-                        one_to_many step) are listed in not_proven (shape_q.not_applicable)
+                        one_to_many step) are listed in not_proven (shape_q.not_applicable). A pair test that
+                        passes without comparing a key gets empty = true, and one not_proven line per run names
+                        every such test (shape_q.compared_no_key); its status stays a pass in both modes
 Gold and Cube values are compared in the form of the Cube member type of each mapped column (compare.member_kinds of
 the model): text exactly, numbers as exact decimals, dates and timestamps in UTC, booleans as booleans.
 
@@ -346,6 +348,7 @@ class _Verify:
         self.items: list[tuple[str, str, object]] = []   # V4 suite: (item id, check id, function(client) -> status)
         self.baseline: dict[str, str] = {}               # item id -> status against the unmutated model
         self.suite_tests: list[dict] = []                # V3 tests in the V4 suite
+        self.empty_pairs: list[str] = []                 # passing V3 pair tests that compared no key (empty)
         # why suite items are missing (a survivor of an incomplete suite is not judged)
         self.excluded: set[str] = {"excluded_by_gold"} if len(self.golds) < len(cfg.gold) else set()
         # evidence: facets are judged only when every part ran over every gold query
@@ -479,6 +482,7 @@ class _Verify:
             if "v3" in self.only:
                 for t, gate in tests:
                     self.v3(conn, client, t, gate)
+                self.empty_pair_line()
                 self.res.not_proven.extend(shape_q.not_applicable(self.cfg, self.model))
             if "v4" in self.only:
                 for iid, _cid, fn in self.items:
@@ -587,6 +591,10 @@ class _Verify:
         st, detail = shape_q.run_test(conn, client, self.cfg, self.model, t, budget=self.cfg.verify.pair_key_budget,
                                       **({"witness": witness} if witness is not None else {}))
         self.baseline[cid] = st
+        if st == "pass" and t["kind"] == "pair" and shape_q.compared_no_key(detail):
+            # disclosure only: the status, the V4 baseline and the replays stay as they are
+            detail = {**detail, "empty": True}
+            self.empty_pairs.append(cid)
         self.res.add(cid, st, t.get("config_ref", ""), **detail)
         if "sampled_keys" in detail:
             self.res.not_proven.append(f"{cid}: {shape_q.sample_note(detail)}")
@@ -599,6 +607,12 @@ class _Verify:
             self.res.add(wid, outcome[0], t.get("config_ref", ""), **outcome[1])
             if outcome[1].get("reason") != "pair_error":
                 self.res.not_proven.append(f"{wid}: {shape_q.witness_note()}")
+
+    def empty_pair_line(self):
+        """One not_proven line naming the V3 pair tests of this run that passed without comparing a key (detail empty
+        = true, shape_q.compared_no_key), in both gold_observation modes; nothing when there is none."""
+        if self.empty_pairs:
+            self.res.not_proven.append(f"{_cut(self.empty_pairs)}: {shape_q.empty_note()}")
 
     def v4(self, conn):
         items = [(iid, fn) for iid, _cid, fn in self.items if self.baseline.get(iid) == "pass"]

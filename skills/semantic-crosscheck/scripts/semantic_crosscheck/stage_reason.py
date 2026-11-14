@@ -9,7 +9,9 @@ which, per shape, per hierarchy and per defined class.
                       value group (shacl_check.groups), so shapes needing different kinds of RDF value on one column
                       are all compared. Shapes without a SHACL form are listed in not_proven: they are checked only
                       in SQL. A shape whose view build did not produce is not_run; a shape whose value group pySHACL
-                      could not validate is error.
+                      could not validate is error. A pass where neither side flagged a key has empty = true, and one
+                      not_proven line per run names these checks (shacl:pair:<shape> too), saying which of them had
+                      no row to check at all (group_rows 0; rows_exported 0 for a pair check)
   shacl:pair:<shape>  optional verify.shacl_pairs: a shape whose sql_violation is exactly t.<a> <op> t.<b> (op > >= < <=)
                       is translated to sh:lessThan or sh:lessThanOrEquals in a pair shapes graph generated here (never
                       in shapes.ttl) and pySHACL's focus nodes on a separate pair export equal the keys in
@@ -18,10 +20,12 @@ which, per shape, per hierarchy and per defined class.
                       PostgreSQL); off, nothing of it runs and every other output is unchanged
   owl:consistency     HermiT finds the ontology of owl.py consistent (detail: individuals, edges, hermit_ms)
   v5:closure:<h>      the OWL closure pairs equal the closure table. not_run unless build's closure:<h> passed with no
-                      cycle edges dropped: otherwise the table describes another graph than the one OWL reasons on
+                      cycle edges dropped: otherwise the table describes another graph than the one OWL reasons on.
+                      A hierarchy without closure pairs on either side passes vacuously (empty = true) and is listed
+                      in not_proven
   v5:defined:<name>   the members of a defined class equal its SQL definition (owl.defined_sql); contains_class reads
                       the closure table and has the same precondition as v5:closure. A class without members on either
-                      side passes vacuously and is listed in not_proven
+                      side passes vacuously (empty = true) and is listed in not_proven
   v5:witness:<name>   optional --synthetic-witnesses: configured HermiT and SQL translations each match independently
                       specified members of a small synthetic graph. Source-data vacuity remains not_proven; controls
                       mean absence of entailment, not negative OWL facts
@@ -50,6 +54,10 @@ PAIR_PREFIX = "shacl:pair:"
 PAIR_NOTE = ("shacl:pair: a pass means pySHACL and the SQL view flag the same keys on this snapshot for a predicate "
              "t.<a> <op> t.<b> over smallint, integer, bigint or numeric columns without NaN, infinities or repeated "
              "keys; it does not show that the rule itself is right, and Jena does not run in reason")
+EMPTY_SHACL_NOTE = ("neither pySHACL nor the SQL view flagged a key, so a pass shows only that neither engine flagged "
+                    "a row of this data, not that both would flag the same violating row")
+NO_ROW_NOTE = "had no row to check at all (no row was exported for the comparison)"
+MAX_LISTED = 10                    # ids named in one not_proven line; the rest are counted
 WHY = {   # why the closure table cannot be compared with OWL ({h}: the hierarchy)
     "closure_not_passed": "closure:{h} did not pass in build",
     "cycle_edges_dropped": "build left the edges inside cycles out of the closure of {h} (on_cycle = report), while OWL "
@@ -96,6 +104,7 @@ def run(cfg, args, out: Path) -> Result:
             exported = _shacl(conn, cfg, build, planned, ttl, res) if shacl_ready else 0
             if pairs_ready:
                 _shacl_pairs(conn, cfg, build, out, pairs, pair_ttl, exported, res)
+            _empty_shacl_note(res)
             if use_owl:
                 _owl(conn, cfg, build, java, res, args)
                 if getattr(args, "synthetic_witnesses", False):
@@ -209,6 +218,18 @@ def _db_error(e: Exception) -> str:
     return code
 
 
+def _empty(*sides) -> dict:
+    """{"empty": True} for a comparison of sets that are all empty (a pass that compared nothing), else {}: the detail
+    key V1 uses for a comparison with no row on either side. It never changes a status."""
+    return {} if any(sides) else {"empty": True}
+
+
+def _cut(ids: list) -> str:
+    """Ids for a line: at most MAX_LISTED, then how many more."""
+    text = ", ".join(ids[:MAX_LISTED])
+    return text + (f", and {len(ids) - MAX_LISTED} more" if len(ids) > MAX_LISTED else "")
+
+
 # ---- SHACL ------------------------------------------------------------------------------------------------
 def _shacl_not_proven(cfg, skipped: dict, res: Result) -> None:
     if not cfg.shapes:
@@ -255,8 +276,28 @@ def _shacl(conn, cfg, build: dict, planned: list, ttl: str, res: Result) -> int:
         res.add(f"shacl:{s.id}", "pass" if flagged == viewed else "fail", ref, violations=len(viewed),
                 shacl_focus_nodes=len(flagged), shacl_only=len(flagged - viewed), sql_only=len(viewed - flagged),
                 severity=s.severity, kind=shapes.kind(s), rows_exported=got["rows"], value_group=got["group"],
-                group_rows=got["group_rows"], view=naming.shape_view(cfg, s.id))
+                group_rows=got["group_rows"], view=naming.shape_view(cfg, s.id), **_empty(flagged, viewed))
     return next(iter(compared.values()))["rows"] if compared else 0
+
+
+def _no_row(c) -> bool:
+    """Whether an empty SHACL comparison had no row to check at all, by its detail: the value group of a shacl:<id>
+    check exported no row (group_rows 0: no row of its target entity or of any other entity the group reads), or the
+    pair export of a shacl:pair:<id> check held none (rows_exported 0). A shape whose target is empty while another
+    entity of its value group has rows is not named here: its detail does not say so."""
+    key = "rows_exported" if c.id.startswith(PAIR_PREFIX) else "group_rows"
+    return c.detail.get(key) == 0
+
+
+def _empty_shacl_note(res: Result) -> None:
+    """One not_proven line for every shacl:<id> and shacl:pair:<id> check of this run that passed with no key flagged
+    by either side (detail empty = true), naming those that had no row to check at all."""
+    empty = [c for c in res.checks if c.id.startswith("shacl:") and c.id != META_ID and c.detail.get("empty")]
+    if not empty:
+        return
+    no_row = [c.id for c in empty if _no_row(c)]
+    res.not_proven.append(f"{_cut([c.id for c in empty])}: {EMPTY_SHACL_NOTE}"
+                          + (f"; {_cut(no_row)} {NO_ROW_NOTE}" if no_row else ""))
 
 
 # ---- property pairs (verify.shacl_pairs) -------------------------------------------------------------------
@@ -332,7 +373,7 @@ def _shacl_pairs(conn, cfg, build: dict, out: Path, pairs: list, pair_ttl: str, 
             res.add(cid, "pass" if flagged == viewed else "fail", ref, **base, column_types=got["column_types"],
                     violations=len(viewed), shacl_focus_nodes=len(flagged), shacl_only=len(flagged - viewed),
                     sql_only=len(viewed - flagged), rows_exported=got["rows"], severity=s.severity,
-                    view=naming.shape_view(cfg, s.id))
+                    view=naming.shape_view(cfg, s.id), **_empty(flagged, viewed))
             a, op, b = shapes.pair_form(s)
             old = f"shacl:{s.id}: no SHACL form (sql_violation); checked only in SQL (shape:{s.id} in build)"
             new = (f"shacl:{s.id}: no SHACL form in build/shapes.ttl (sql_violation); its predicate t.{a} {op} t.{b} "
@@ -406,7 +447,11 @@ def _owl(conn, cfg, build: dict, java: str, res: Result, args=None) -> None:
         res.not_proven.append(f"{cid}: not compared ({WHY[why].format(h=h.name)})")
     else:
         res.add(cid, "pass" if r.closure == sql_pairs else "fail", ref, owl_pairs=len(r.closure), sql_pairs=len(sql_pairs),
-                owl_only=len(r.closure - sql_pairs), sql_only=len(sql_pairs - r.closure))
+                owl_only=len(r.closure - sql_pairs), sql_only=len(sql_pairs - r.closure),
+                **_empty(r.closure, sql_pairs))
+        if not r.closure and not sql_pairs:
+            res.not_proven.append(f"{cid}: the hierarchy has no closure pair in OWL or in SQL, so the comparison holds "
+                                  "vacuously")
     for (cid, ref), d in zip(_v5_ids(cfg)[1:], cfg.ontology.defined):
         if d.name not in sql_members:
             res.add(cid, "not_run", ref, reason=why, kind=d.kind)
@@ -416,7 +461,7 @@ def _owl(conn, cfg, build: dict, java: str, res: Result, args=None) -> None:
         found, defined = r.members[d.name], sql_members[d.name]
         res.add(cid, "pass" if found == defined else "fail", ref, kind=d.kind, owl_members=len(found),
                 sql_members=len(defined), owl_only=len(found - defined), sql_only=len(defined - found),
-                outside_node_table=r.outside[d.name])
+                outside_node_table=r.outside[d.name], **_empty(found, defined))
         if not found and not defined:
             res.not_proven.append(f"{cid}: the class has no members in OWL or in SQL, so the comparison holds vacuously")
 

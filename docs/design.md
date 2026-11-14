@@ -104,9 +104,12 @@ exit 3, so one run lists everything to fix.
   `<python>` and `<plugin>`, which `sxc.py` expands only when it prints, so a printed hint works from any
   directory while result files stay path-free (a `--home` directory the user typed is repeated as typed).
 - `res.not_proven` lists what the run could not prove (an empty stratum, an equivalent mutant, a shape compared
-  only in SQL, a vacuous defined class, a sampled or chunked pair test, a join path additivity does not apply to, a
-  component that is not installed). It does not
-  change the status; `report` shows every line.
+  only in SQL, a vacuous defined class, a SHACL or closure comparison of two empty sets, a pair test that compared
+  no key, a sampled or chunked pair test, a join path additivity does not apply to, a component that is not
+  installed). It does not change the status; `report` shows every line. A passing check that compared empty sets
+  on both sides says so with `empty = true` in its detail: `v1:<gold>` (whose detail always holds `empty`) and,
+  since 0.25.0, `shacl:<id>`, `shacl:pair:<id>`, `v5:closure:<h>`, `v5:defined:<name>` and
+  `v3:pair:<member>+<member>` (which hold the key only when it is true).
 - Since 0.23.0 a verify result also has a top-level `evidence` object (section 8, "Evidence kinds"). It is not a
   field of `Result`: `Result.to_dict` adds it only when a stage set it, and only verify does, so no other stage's
   result changes. It holds counts, check ids, gold ids, Cube member names, facet ids and small enums, never SQL text
@@ -236,7 +239,7 @@ parameters are ignored.
 | `cube_client` | `CubeClient.load(query) -> list[dict]` (polls "Continue wait", explicit limit 50,000, never `renewQuery`, no proxies; accepts only Cube's load envelope, a JSON object whose `data` is a list of row objects, and raises `CubeResponseError`, a `CubeError`, for any other HTTP 2xx answer without an `error` member instead of returning no rows), `meta()` |
 | `compare` | `run_binding(conn, client, cfg, gold, params, cache=None, types=None)`, `cube_rows(client, gold, params)` (a row without every mapped member raises `MissingMember`, a `CubeResponseError`), `compare_rows(gold, g_rows, c_rows, types=None)`, `member_kinds(model)`, `gold_kinds(gold, kinds)`, `error_detail(e)` (`cube`: `timeout`, `row_limit`, `invalid_response`, `query_error`) |
 | `sweep` | `bindings(conn, cfg, gold)`, `strata_names(gold)`, `md5_order(column)` |
-| `shape_q` | `tests(cfg, model)`, `run_test(..., budget=None, witness=None)` (the baseline V3 run passes `verify.pair_key_budget` and, with `verify.existence_witness`, a `PairWitness` of each pair test), `pair_keys(conn, cfg, test, budget=None, witness=None)`, `PairWitness(conn, cfg, test)` (`result(pair_status)`), `witness_id(test)`, `witness_note()`, `sampled(test)`, `d95_keys(sampled, total)`, `sample_note(detail)`, `chunk_note(detail)`, `PAIR_KEY_CAP = 2000` (defined in `config`), `join_path(cubes, measure_cube, dim_cube)`, `additive_path(steps)`, `null_group_sql(cfg, test)`, `not_applicable(cfg, model)` |
+| `shape_q` | `tests(cfg, model)`, `run_test(..., budget=None, witness=None)` (the baseline V3 run passes `verify.pair_key_budget` and, with `verify.existence_witness`, a `PairWitness` of each pair test), `pair_keys(conn, cfg, test, budget=None, witness=None)`, `PairWitness(conn, cfg, test)` (`result(pair_status)`), `witness_id(test)`, `witness_note()`, `sampled(test)`, `d95_keys(sampled, total)`, `sample_note(detail)`, `chunk_note(detail)`, `compared_no_key(detail)`, `empty_note()`, `PAIR_KEY_CAP = 2000` (defined in `config`), `join_path(cubes, measure_cube, dim_cube)`, `additive_path(steps)`, `null_group_sql(cfg, test)`, `not_applicable(cfg, model)` |
 | `mutate` | `OPERATORS`, `CLOSURE_OPERATORS`, `OUTCOMES`, `selected(cfg)`, `run_mutants(cfg, out, conn, model, suite, closure=None, sampled_items=())`, `verdict(status, item)`, `closure_status(cfg, out)` |
 | `demo` | `build(dirty, seed, scale) -> {"parts","edges","orders","stock","malformed","expected"}`, `load(conn, data)`, `reference(expected, variant, seed, scale)`, `TABLES`, `TableMismatch` |
 | `cube_replay` | `run(None, args, out) -> Result('cube_replay')`: actual model generation, named mutation, original/gold agreement and mutant/gold disagreement on owned synthetic schemas; hash-bound replay and scoped cleanup |
@@ -362,9 +365,9 @@ configuration ids; `<member>` is a Cube member (`cube.member`); `<stratum>` is a
 | data-rules | `rule_subjects:lookup` | with `views = true` and a rule naming a subject: `v_rules_subjects` equals the Python roll-up of the agreed outputs (subject, severity, rule count, rule ids) in order | `fail` (`lookup_only`, `agreed_only`, `order_differs`); `not_run` (`incomplete`, `excluded_by_option`, `build_missing`, `view_not_built`, `view_stale`, `view_missing`); `error` (SQLSTATE) |
 | data-rules | `scope:rules` | never passes | `not_run` (`excluded_by_option`, `rules_excluded`): the rules `--rule` left out |
 | data-rules | `data_rules:inputs` | error check only | `error` (`inputs_changed`): crosscheck.toml or the rule file changed while the stage ran |
-| reason | `shacl:<id>` | pySHACL's focus nodes equal the keys in `v_shape_<id>` | `fail` (`shacl_only`, `sql_only`); `error` (SQLSTATE or `validation_failure`); `not_run` (`shape_not_built`, `view_missing`, `resource_limit`) |
+| reason | `shacl:<id>` | pySHACL's focus nodes equal the keys in `v_shape_<id>`; since 0.25.0 a pass where neither side flagged a key has `empty = true` and is listed in `not_proven` | `fail` (`shacl_only`, `sql_only`); `error` (SQLSTATE or `validation_failure`); `not_run` (`shape_not_built`, `view_missing`, `resource_limit`) |
 | reason | `shacl:meta:generated` | since 0.10.0, generated shapes conform to the pinned shacl-shacl syntax subset before source export | `fail` for nonconformance, sanitized `error` for parse/engine/report failure; affected comparisons `not_run` (`generated_shapes_invalid`), independent OWL may proceed |
-| reason | `shacl:pair:<id>` | since 0.11.0, opt-in `verify.shacl_pairs`: for a shape whose `sql_violation` is exactly `t.<a> <op> t.<b>`, pySHACL's focus nodes for the generated `sh:lessThan` or `sh:lessThanOrEquals` property shape equal the keys in `v_shape_<id>` | `fail` (`shacl_only`, `sql_only`); `error` (SQLSTATE or `validation_failure`); `not_run` (`generated_shapes_invalid`, `shape_not_built`, `view_stale`, `view_missing`, `column_type`, `non_finite_values`, `duplicate_keys`, `resource_limit`) |
+| reason | `shacl:pair:<id>` | since 0.11.0, opt-in `verify.shacl_pairs`: for a shape whose `sql_violation` is exactly `t.<a> <op> t.<b>`, pySHACL's focus nodes for the generated `sh:lessThan` or `sh:lessThanOrEquals` property shape equal the keys in `v_shape_<id>`; since 0.25.0 a pass where neither side flagged a key has `empty = true` and is listed in `not_proven` | `fail` (`shacl_only`, `sql_only`); `error` (SQLSTATE or `validation_failure`); `not_run` (`generated_shapes_invalid`, `shape_not_built`, `view_stale`, `view_missing`, `column_type`, `non_finite_values`, `duplicate_keys`, `resource_limit`) |
 | reason | `owl:consistency` | HermiT finds the ontology consistent | `fail`; `error` (SQLSTATE or `reasoner_error`); `not_run` (`resource_limit`) |
 | reason | `owl:explanation` | requested same-HermiT explanation completed all retained-deletion checks over generated axiom groups; original consistency failure remains; since 0.14.0, detail `uniqueness` is `unique` only when removing each retained group alone from the full set is consistent, `not_unique` when one removal stays inconsistent | `not_run` on caps, deadline, initial-consistent disagreement or reasoner/worker errors; no independent or global-minimum proof; `uniqueness` stays `not_proven` when its checks hit caps, deadline or errors, or a repeated `ontology.no_children` value or edge would generate one axiom twice |
 | grain | `grain:c` | composition prefix only; never emitted as a standalone check | Adding an ordinal and obligation produces the contract/evidence families below |
@@ -379,8 +382,8 @@ configuration ids; `<member>` is a Cube member (`cube.member`); `<stratum>` is a
 | shacl-repair | `fixture:<case>:immutable` | declared immutable predicate/triple facts are preserved exactly | `fail` on missing obligations or changed hard facts |
 | shacl-repair | `fixture:<case>:edits` | finite add/remove costs recorded separately from hard obligations | descriptive pass only; never overrides any other failed gate |
 | shacl-repair | `fixture:execution` | never passes | `error` on incomplete real pySHACL execution or output validation |
-| reason | `v5:closure:<h>` | the OWL closure pairs equal the closure table | `fail`; `not_run` (`closure_not_passed`, `cycle_edges_dropped`, `closure_table_missing`, `inconsistent`, `owl_not_run`, `resource_limit`) |
-| reason | `v5:defined:<name>` | the members of the defined class equal its SQL definition (a class without members on either side passes and is listed in `not_proven`) | `fail`; `not_run` (as `v5:closure:<h>`; `contains_class` reads the closure table) |
+| reason | `v5:closure:<h>` | the OWL closure pairs equal the closure table (since 0.25.0 a hierarchy without a pair on either side passes with `empty = true` and is listed in `not_proven`) | `fail`; `not_run` (`closure_not_passed`, `cycle_edges_dropped`, `closure_table_missing`, `inconsistent`, `owl_not_run`, `resource_limit`) |
+| reason | `v5:defined:<name>` | the members of the defined class equal its SQL definition (a class without members on either side passes, since 0.25.0 with `empty = true`, and is listed in `not_proven`) | `fail`; `not_run` (as `v5:closure:<h>`; `contains_class` reads the closure table) |
 | reason | `v5:witness:<name>` | opt-in synthetic expected memberships agree with both HermiT and the configured SQL translation; includes nonmember controls under open-world semantics | `fail` on any disagreement; `error` on execution failure; `not_run` for a configuration gap, an impossible positive, inconsistent synthetic ontology or resource limit; `<name>` is `scope` when no definitions are configured |
 | reason | `scope:shacl`, `scope:owl` | never passes | `not_run` (`excluded_by_only`): the part `--only` left out |
 | cube | `cube:model` | the model was generated (a generator error is exit 2 instead) | none |
@@ -390,7 +393,7 @@ configuration ids; `<member>` is a Cube member (`cube.member`); `<stratum>` is a
 | verify | `v2:<gold>:<stratum>` | every binding of the stratum matches exactly; an empty stratum passes (`empty_stratum`) and is listed in `not_proven` | `fail`; `error` (binding errors counted by type under `errors` and by SQLSTATE under `sqlstates`, without `side`, HTTP status or `cube`; a gold query that could not be planned gives the plan problem as in `v1:<gold>`: `members_not_in_model`, or `bindings_failed` with its error type and any SQLSTATE); `not_run` (`closure_not_passed`) |
 | verify | `v3:total:<member>` | the Cube total equals SQL computed from the configuration (or the closure table) | `fail`; `error`; `not_run` (`closure_not_passed`) |
 | verify | `v3:additive:<member>:<member>` | the groups of the measure by the ontology class column of a cube joined through many_to_one / one_to_one steps only, the NULL group included, add up to its total, and the NULL group equals independent SQL over the measure source (`null_group_equal`: an anti-join, or the matched rows without a class when Cube roots the query at the dimension's cube) | as `v3:total:<member>`; a join path with a one_to_many or unknown step gets no check, only a `not_proven` line (not applicable) |
-| verify | `v3:pair:<member>+<member>` | the two measures queried together equal the same measures queried alone, per key | as `v3:total:<member>`; since 0.9.0 also `not_run` (`keys_not_answered`): a chunked test whose Cube answers left out keys it asked for |
+| verify | `v3:pair:<member>+<member>` | the two measures queried together equal the same measures queried alone, per key; since 0.25.0 a pass that compared no key has `empty = true` and is listed in `not_proven` | as `v3:total:<member>`; since 0.9.0 also `not_run` (`keys_not_answered`): a chunked test whose Cube answers left out keys it asked for |
 | verify | `v3w:pair_witness:<member>+<member>` | since 0.11.0, opt-in (`verify.existence_witness`), for a sampled or chunked `v3:pair:<member>+<member>` test: every asked key the together answer holds but an alone answer leaves out has no row satisfying the measure's `cube_gen.where_sql` in two PostgreSQL reads that bracket Cube's queries, and its together value is NULL (`absent_no_facts`); passes with nothing absent when every key was answered | `fail` (`absent_with_facts`: a row in both reads, for the closure `qty` a closure row; `witness_value_mismatch`: no row but a non-empty together value); `not_run` (`witness_incomplete`: a key missing from the together answer, a failed cast or statement, a change between the two reads; `pair_error`: the witnessed pair test is an `error` after its key read). The pair test's own status, detail and V4 role are unchanged, also when the witness fails; an unfiltered pair test (or one whose key read failed) gets no witness, not even when it errors |
 | verify | `v3:closure_oracle:<h>` | raw edges independently recomputed in Python match every stored closure pair's exact quantity, logical path count and minimum/maximum depth in one read-only REPEATABLE READ snapshot | `fail` on differences, error-mode cycles or an exceeded configured depth; `error` on query failure or an internal oracle defect (`scc_removal_left_cycle`); `not_run` for a failed build gate, unsupported keys/quantities or exceeded resource bounds. In `on_cycle = report` mode the oracle removes the edges inside strongly connected components itself and records `cycle_handling`, `dropped_cycle_edges` and `cycle_nodes` (informational, never compared with build's statistics); a pass that removed edges is listed in `not_proven` |
 | verify | `v4:<operator>:<target>` | the mutant was killed: a replayed suite item failed against it (`killed_by`). The item can be a gold item or a V3 item; `detection` says which kind (`authored` only when a gold item a person wrote failed). With `verify.gold_observation = "require"` only an `authored` kill passes, or a kill `verify.accepted_gaps` lists | `fail` (it survived; in require mode also a kill whose `detection` is `generated_only` or `unattributed`, with that `reason` and `killed_by` kept); `error` (`suite_error`, `startup`, `cube`, `write`, `model_mismatch`, `witness`); `not_run` (`closure_not_passed`, `suite_incomplete`: a survivor of a suite with items left out, and in require mode also such a kill). Equivalent and not applicable mutants get no check, only a `not_proven` line |
@@ -727,6 +730,14 @@ limits logical items per mutant. Without an earlier non-pass, exhaustion is `not
 survival verdict. Optional `all` observation retains an earlier non-pass and marks later exhaustion partial.
 [Per-mutant coverage](mutation-coverage.md) records executed and unexecuted items, including early stops.
 
+Since 0.25.0 a pair test that passes without comparing a key carries `empty = true`, and one `not_proven` line per
+run names every such test: `{ids}: no key was compared, so a pass does not show that the measures queried together
+equal the measures queried alone`. `shape_q.compared_no_key` reads the count of each mode: `keys` 0 (unfiltered),
+`answered_keys` 0 (sampled), `answered_keys` 0 and `keys` 0 in `null_key_group` (chunked); a count the detail does
+not hold is never read as 0. With the modes as they are only an unfiltered test can pass that way, when Cube's
+together answer holds no key (its alone answers may hold keys: `alone_only_keys`, which is no failure). The status,
+the V4 baseline and the replays stay as they are, in both `gold_observation` modes.
+
 **V3 additivity over join paths.** Predefined joins inflate totals when a row matches several rows of the
 joined cube ("Aggregation Consistency Errors in Semantic Layers and How to Avoid Them", HILDA 2023,
 arXiv 2307.00417). An `additive` test exists for every sum/count measure (each configuration measure with `agg`
@@ -914,6 +925,14 @@ groups are still compared. The row cap and
 database errors occur before validation and still decide every shape. Each `shacl:<id>` check names its
 `value_group` and `group_rows`; `rows_exported` is the sum over the groups.
 
+Since 0.25.0 a pass where neither pySHACL nor the view flagged a key carries `empty = true` (the key V1 uses for a
+comparison with no row on either side), and one `not_proven` line per run names every such `shacl:<id>` and
+`shacl:pair:<id>` check: `{ids}: neither pySHACL nor the SQL view flagged a key, so a pass shows only that neither
+engine flagged a row of this data, not that both would flag the same violating row`, followed by `; {ids} had no row
+to check at all (no row was exported for the comparison)` for the checks whose `group_rows` (for a pair check
+`rows_exported`) is 0. A shape whose target is empty while another entity of its value group has rows is named only
+in the first part: no detail field says that its own target had no row. Statuses do not change.
+
 One kind of shape is not compared and is listed in `not_proven` instead ("checked only in SQL"):
 
 - `sql_violation`: any shape with an `sql_violation` predicate, also when it has `class` or bounds as well
@@ -985,6 +1004,10 @@ HermiT runs with `infer_property_values=True` in a private temporary directory t
 Pellet reasoner bundled with owlready2 is never called. The OWL closure is the inferred `<h>_plus` values united
 with the asserted `<h>` edges. `v5:closure:<h>` and `contains_class` need build's `closure:<h>` to have passed
 with no cycle edges dropped; an inconsistent ontology entails everything, so the V5 checks are then `not_run`.
+A `v5:closure:<h>` pass with no pair in OWL or in SQL carries `empty = true` and the `not_proven` line
+`v5:closure:<h>: the hierarchy has no closure pair in OWL or in SQL, so the comparison holds vacuously` (since
+0.25.0); a defined class without members on either side carries `empty = true` and its line `v5:defined:<name>: the
+class has no members in OWL or in SQL, so the comparison holds vacuously`.
 Above `verify.owl_max_individuals`, `owl:consistency` and every configured V5 comparison are `not_run` with
 `reason=resource_limit`. Size limits never turn a selected engine into a successful untested part of a run.
 
@@ -1212,6 +1235,7 @@ five demo gold queries free of every match.
 | `v5:witness:<name>` | `structural` | a synthetic graph the engine wrote: it tests templates, not this data |
 | A V4 kill by an authored item that sees the change only through a join | `mutation`, `detection = authored` | the gold rows differed from Cube's |
 | A V2 stratum whose bindings were all empty, a V1 binding with no row | `authored`, listed in `zero_row_checks` (`empty_stratum_zero_row_checks` for a stratum named `empty`) | the kind says who wrote the side; the list says nothing was compared |
+| A `shacl:<id>` or `shacl:pair:<id>` pass with no flagged key, a `v5:closure:<h>` pass without pairs, a `v3:pair:<member>+<member>` pass that compared no key (since 0.25.0) | `generated`, not in the zero-row lists; `empty = true` and a `not_proven` line in its own stage | the kind says what the sides are; the flag and the line say nothing was compared; the evidence object and its rule version are unchanged |
 | `v1:<gold>` and `v2:<gold>:<stratum>` of a gold query without parameters | both `authored`; the same binding is compared twice (`comparisons` counts 2) | V1 replays the first binding and V2 the same single binding (`all`); the report.md table says "v1 repeats the first binding of v2" |
 | Optional diagnostics, `data-rules`, `expect` | not counted | they are not report stages |
 
@@ -1479,6 +1503,12 @@ or the checks it exercises without being reported). See `commands/xc-demo.md` fo
   `tests/test_config.py` (the two keys), `tests/test_report_evidence.py` (report section, lines and keys, the
   compatibility goldens without them) and `tests/test_docs_evidence.py` (the line texts, codes and tables of these
   documents against the code).
+- Empty comparisons (since 0.25.0): `tests/test_empty_passes.py` (no database: `empty = true` and the `not_proven`
+  lines of `shacl:<id>`, `shacl:pair:<id>`, `v5:closure:<h>`, `v5:defined:<name>` and the V3 pair tests in every
+  mode, unchanged non-empty passes and fails, the same verdicts in both `gold_observation` modes) and
+  `tests/test_reason.py` (the clean demo's shapes and a demo emptied of parts, lines and stock, on PostgreSQL). The
+  regular-expression match choice of the data rules: `RegexEnginesTest` in `tests/test_data_rules_pg.py` and
+  `tests/test_data_rules_eval.py`.
 
 
 ## Opt-in structured and finite-domain counterexample search

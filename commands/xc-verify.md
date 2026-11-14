@@ -57,6 +57,9 @@ python "${CLAUDE_PLUGIN_ROOT}/skills/semantic-crosscheck/scripts/sxc.py" verify 
   is read in PostgreSQL with the measure's `where_sql` (in the key-read snapshot and again after the Cube
   queries). The pair test's own status and V4 are unchanged, also when the witness fails; V4 replays run
   no witness. Pair tests of at most 2,000 keys compare every key unfiltered and get no witness check.
+  Since 0.25.0 a pair test that passes without comparing a key (an unfiltered test whose together answer held
+  no key) carries `empty: true`, and one NOT PROVEN line names every such test; its status stays a pass, in both
+  `verify.gold_observation` modes.
 - V4 patches copies of the model and serves each mutant in a fresh Cube process. Only suite items that
   pass against the unmutated model are replayed (V1, the first `verify.mutant_bindings` bindings per
   stratum, V3), and the authoritative result is the first item that does not pass. Default `verify.mutant_observation =
@@ -108,7 +111,8 @@ disclosed as having no nonempty coverage.
 Exit code 0: every check passed (`v1:<gold>`, `v2:<gold>:<stratum>`, `v3:total:<member>`,
 `v3:additive:<member>:<member>`, `v3:pair:<member>+<member>`, `v4:<operator>:<target>`) and none was left
 out. A pass means only what these checks prove on this data. Always show the NOT PROVEN lines (empty
-strata, equivalent mutants, sampled or chunked pair tests, join paths additivity does not apply to, kills by checks
+strata, equivalent mutants, sampled or chunked pair tests, pair tests that compared no key, join paths additivity
+does not apply to, kills by checks
 between generated layers only, facets without authored evidence, gold queries that compared no row, gold SQL with
 generated text) next to the verdict. A full verify that passes still says nothing about which mutants a gold query
 detected: read `detection` in the V4 details, or the `  EVIDENCE  ` lines of [/xc-report](xc-report.md).

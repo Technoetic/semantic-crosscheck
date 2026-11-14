@@ -108,6 +108,11 @@ class VerifyRun(unittest.TestCase):
     def _run_mutants(self, cfg, out, conn, model, suite, closure=None, sampled_items=(), coverage=None):
         return self.mutants
 
+    def _run_test(self, conn, client, cfg, model, test, budget=None, witness=None):
+        """A V3 test's (status, detail): a pass with an empty detail, which holds no count (a subclass may answer
+        otherwise)."""
+        return "pass", {}
+
     def verify(self, only=None, gold=None, closure_status: str | None = "pass", closure_cubes: bool = True) -> Result:
         if not (self.out / "cube" / "model.json").is_file():
             self.write_stages(closure_status, closure_cubes)
@@ -115,7 +120,7 @@ class VerifyRun(unittest.TestCase):
                 mock.patch.object(stage_verify.sweep, "bindings", self._bindings), \
                 mock.patch.object(stage_verify.cube_run, "serve", lambda *a, **k: contextlib.nullcontext("client")), \
                 mock.patch.object(stage_verify.compare, "run_binding", self._run_binding), \
-                mock.patch.object(stage_verify.shape_q, "run_test", lambda *a, **k: ("pass", {})), \
+                mock.patch.object(stage_verify.shape_q, "run_test", self._run_test), \
                 mock.patch.object(stage_verify.shape_q, "replay_test", lambda *a, **k: ("pass", {})), \
                 mock.patch.object(stage_verify.closure_oracle, "run", lambda *a, **k: ("pass", {})), \
                 mock.patch.object(stage_verify.mutate, "run_mutants", self._run_mutants):

@@ -124,7 +124,8 @@ plugin's `requirements/` files). The roles come from
    configuration entry named in `config_ref` (for data rules, the rule in the `[data_rules]` rule file), the
    gold SQL, or the source data.
 2. **A pass means only what the checks prove.** Show the NOT PROVEN lines with every verdict: empty
-   strata, equivalent mutants, shapes compared only in SQL, vacuous defined classes, sampled or chunked
+   strata, equivalent mutants, shapes compared only in SQL, vacuous defined classes, SHACL and closure
+   comparisons of empty sets and pair tests that compared no key (`empty: true`), sampled or chunked
    pair tests, components that are not installed. A `not_run` check is not a pass, and a stage that was
    never run is not a pass. Do not describe an unproven part as verified.
 3. **A narrowed run is not a result.** `--only`, `--gold` and `--hierarchy` leave `not_run` checks

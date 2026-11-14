@@ -58,6 +58,8 @@ duplicates within one chunk. Every key up to the budget is read in one statement
 and held in memory for the baseline run. Above the budget the test keeps the sample and its detail names the budget
 (pair_key_budget). V4 replays every eligible bounded baseline chunk plus the NULL group from retained in-memory
 keys; only tests above the key budget keep the sample. Details hold counts, flags and durations, never totals or keys.
+A pair test that passes without comparing a key (compared_no_key; with the modes as they are, an unfiltered test whose
+together answer held no key) gets empty = true in its detail and a not_proven line from verify; its status stays.
 
 The additive tests are bounded by the configuration: one per additive measure and cube with the class column that
 Cube can join it to (in a generated model: the node cube of each measure with a node, and the ancestor and
@@ -456,6 +458,30 @@ def chunk_note(detail: dict) -> str:
     return (f"{note}; the key set comes from one REPEATABLE READ snapshot at the start, and each Cube query (the "
             "together query and every alone query of every chunk and of the NULL key group) reads its own snapshot, "
             "shared with no other query and not with SQL")
+
+
+def compared_no_key(detail: dict) -> bool:
+    """Whether the detail of a pair test says that no key was compared by value, read per mode (a count the detail
+    does not hold says nothing, so it is never read as 0):
+      unfiltered  keys = 0: the keys of the together answer, each compared with the alone answers (a key an alone
+                  answer lacks is compared with NULL), the NULL key group included
+      sampled     answered_keys = 0: the sampled keys the together and every alone answer held, the only ones compared
+                  (a sampled test passes only when answered_keys equals sampled_keys)
+      chunked     answered_keys = 0 over the chunks and keys = 0 in null_key_group, which is compared unfiltered (a
+                  chunked test passes only when answered_keys reaches compared_keys)
+    The sampled and chunked modes ask for more than PAIR_KEY_CAP keys, so with the code as it is only an unfiltered
+    test can pass without comparing a key. Read for a passing test only."""
+    if detail.get("mode") == "chunked":
+        return detail.get("answered_keys") == 0 and (detail.get("null_key_group") or {}).get("keys") == 0
+    if "sampled_keys" in detail:
+        return detail.get("answered_keys") == 0
+    return detail.get("keys") == 0
+
+
+def empty_note() -> str:
+    """The not_proven text after the ids of the pair tests that passed without comparing a key (compared_no_key)."""
+    return ("no key was compared, so a pass does not show that the measures queried together equal the measures "
+            "queried alone")
 
 
 # per key: asked_keys, incomplete_keys, undecided_keys, together_absent; the other labels per key and measure whose

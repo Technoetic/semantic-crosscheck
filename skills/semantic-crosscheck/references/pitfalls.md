@@ -75,8 +75,13 @@ gold SQL and `crosscheck.toml` avoid them too.
   `timestamp without time zone` column compared in a session whose `TimeZone` is not UTC shifts the
   window by the offset, so a day can drop out or slip in at either end. The generator exposes such
   columns as `(col::timestamp AT TIME ZONE 'UTC')`, which selects whole calendar days whatever the
-  session time zone is. Write gold date windows as inclusive dates (`BETWEEN CAST(:from AS date) AND
-  CAST(:to AS date)`).
+  session time zone is. Write the gold date window so that it covers the same whole days, the last one
+  included. On a `date` column that is an inclusive range:
+  `col BETWEEN CAST(:from AS date) AND CAST(:to AS date)`. On a `timestamp without time zone` column
+  that holds times of day the same form ends at midnight at the start of the last day, so the rows later
+  that day are left out (a row at 12:00 on the last day is not counted). Compare the date instead,
+  `col::date BETWEEN CAST(:from AS date) AND CAST(:to AS date)`, or write the window half-open,
+  `col >= CAST(:from AS date) AND col < CAST(:to AS date) + 1`.
 - **Read-only sessions come from `PGOPTIONS`.** The check role can write to the output schema, so Cube
   is not read-only by privilege alone. The runner removes every inherited `PG*`, `CUBEJS_*` and `SXC_*`
   variable, `NODE_OPTIONS` and every variable holding a `postgres://` URL, and sets

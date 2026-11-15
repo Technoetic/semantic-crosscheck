@@ -156,3 +156,151 @@ def require_stage(out_dir: str | Path, stage: str) -> dict:
     if r is None:
         raise StageError(f"run `sxc.py {stage}` first (no {stage}/result.json in the output directory)", EXIT_CONFIG)
     return r
+
+
+_MAX_OWN_VERDICT_BYTES = 4 * 1024 * 1024
+
+
+def argv_option(argv, names: tuple[str, ...]) -> str | None:
+    """Extract the last value of an option in `names` from raw CLI tokens without invoking argparse."""
+    tokens = list(argv or ())
+    if "--" in tokens:
+        tokens = tokens[:tokens.index("--")]
+    found = None
+    for index, token in enumerate(tokens):
+        if not isinstance(token, str):
+            continue
+        opt, sep, val = token.partition("=")
+        if opt in names:
+            if sep:
+                found = val
+            elif index + 1 < len(tokens) and isinstance(tokens[index + 1], str) and not tokens[index + 1].startswith("-"):
+                found = tokens[index + 1]
+    return found
+
+
+def _is_linked(path: Path) -> bool:
+    try:
+        return path.is_symlink() or bool(getattr(path, "is_junction", lambda: False)())
+    except OSError:
+        return True
+
+
+def _real_existing_dir(path: Path) -> bool:
+    try:
+        cur = path.absolute()
+        if not cur.exists() or _is_linked(cur) or not cur.is_dir():
+            return False
+        for parent in cur.parents:
+            if _is_linked(parent):
+                return False
+        return True
+    except OSError:
+        return False
+
+
+def _protected_resolved_set(protected_paths, config_hint) -> tuple[set[Path], bytes]:
+    resolved: set[Path] = set()
+    items = list(protected_paths or ())
+    if config_hint is not None:
+        items.append(config_hint)
+    for item in items:
+        if not item:
+            continue
+        try:
+            p = Path(item)
+            resolved.add(p.resolve())
+            resolved.add(p.absolute())
+        except (OSError, RuntimeError, TypeError, ValueError):
+            continue
+    cfg_bytes = b""
+    if config_hint is not None:
+        try:
+            cp = Path(config_hint)
+            if not _is_linked(cp) and cp.is_file():
+                st = cp.stat()
+                if st.st_size <= _MAX_OWN_VERDICT_BYTES:
+                    cfg_bytes = cp.read_bytes()
+        except OSError:
+            cfg_bytes = b"result.json report.json report.md"
+    return resolved, cfg_bytes
+
+
+def _unlinked_regular_bytes(target: Path, protected: set[Path]) -> bytes | None:
+    import stat as stat_mod
+    try:
+        if _is_linked(target):
+            return None
+        if target.resolve() in protected or target.absolute() in protected:
+            return None
+        st = os.lstat(target)
+        if not stat_mod.S_ISREG(st.st_mode) or st.st_nlink != 1:
+            return None
+        if st.st_size <= 0 or st.st_size > _MAX_OWN_VERDICT_BYTES:
+            return None
+        return target.read_bytes()
+    except OSError:
+        return None
+
+
+def discard_own_verdict(out_dir: str | Path | None, stage: str, *, protected_paths=(), config_hint=None) -> bool:
+    """Remove <out>/<stage>/result.json only when it is an unlinked, non-aliased v1 Result receipt for `stage`."""
+    if not out_dir or not stage:
+        return False
+    out_path = Path(out_dir)
+    stage_dir = out_path / stage
+    if not _real_existing_dir(out_path) or not _real_existing_dir(stage_dir):
+        return False
+    protected, cfg_bytes = _protected_resolved_set(protected_paths, config_hint)
+    if b"result.json" in cfg_bytes:
+        return False
+    target = stage_dir / "result.json"
+    raw = _unlinked_regular_bytes(target, protected)
+    if raw is None:
+        return False
+    try:
+        doc = json.loads(raw.decode("utf-8"))
+        if not isinstance(doc, dict) or doc.get("schema_version") != SCHEMA_VERSION:
+            return False
+        if not isinstance(doc.get("provenance"), dict) or not isinstance(doc.get("runtime_evidence"), dict):
+            return False
+        decode_result(raw.decode("utf-8"), expected_stage=stage)
+    except (UnicodeError, ValueError, TypeError, ResultContractError):
+        return False
+    try:
+        target.unlink()
+        return True
+    except OSError:
+        return False
+
+
+def discard_own_report(out_dir: str | Path | None, *, protected_paths=(), config_hint=None) -> None:
+    """Remove prior own report.json, report.md and report/result.json when non-aliased and unlinked."""
+    if not out_dir:
+        return
+    out_path = Path(out_dir)
+    if not _real_existing_dir(out_path):
+        return
+    protected, cfg_bytes = _protected_resolved_set(protected_paths, config_hint)
+    if b"report.json" not in cfg_bytes:
+        rj = out_path / "report.json"
+        raw = _unlinked_regular_bytes(rj, protected)
+        if raw is not None:
+            try:
+                doc = json.loads(raw.decode("utf-8"))
+                req_keys = {"status", "stages", "required", "trusted_sql", "provenance", "runtime_evidence"}
+                if isinstance(doc, dict) and req_keys <= set(doc):
+                    rj.unlink()
+            except (UnicodeError, ValueError, TypeError, OSError):
+                pass
+    if b"report.md" not in cfg_bytes:
+        rm = out_path / "report.md"
+        raw = _unlinked_regular_bytes(rm, protected)
+        if raw is not None:
+            try:
+                txt = raw.decode("utf-8")
+                if txt.startswith("# semantic-crosscheck report\n") and "\n| Stage | Status |" in txt:
+                    rm.unlink()
+            except (UnicodeError, OSError):
+                pass
+    discard_own_verdict(out_path, "report", protected_paths=protected_paths, config_hint=config_hint)

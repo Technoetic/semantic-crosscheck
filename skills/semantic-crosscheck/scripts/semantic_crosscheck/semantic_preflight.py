@@ -224,14 +224,29 @@ def _publish(res, inputs, out):
         raise
 
 
+def _candidate_out(argv):
+    from .result import argv_option
+    explicit = argv_option(argv, ('--out',))
+    if explicit:
+        return Path(explicit)
+    cfg_arg = argv_option(argv, ('--config',))
+    return Path(cfg_arg).parent / '.sxc' if cfg_arg else Path.cwd() / '.sxc'
+
+
 def cli(argv, _parser, summary):
     """Dedicated route; parse errors/unsafe inputs perform no output mutations."""
+    from .result import argv_option, discard_own_verdict
     inputs, out, res = [], None, None
+    cleared_prior = False
+    cfg_hint = argv_option(argv, ('--config',))
     try:
         args = _arguments(argv)
     except SystemExit as exc:
+        if exc.code:
+            discard_own_verdict(_candidate_out(argv), STAGE, protected_paths=argv, config_hint=cfg_hint)
         return exc.code
     except Exception:
+        discard_own_verdict(_candidate_out(argv), STAGE, protected_paths=argv, config_hint=cfg_hint)
         sys.stderr.write('[sxc semantic_preflight] ERROR invalid_arguments\n')
         return EXIT_CONFIG
     try:
@@ -240,6 +255,7 @@ def cli(argv, _parser, summary):
         _protect(inputs, out)
         # A prior verdict may be cleared only for the exact verified input bytes.
         (out / STAGE / 'result.json').unlink(missing_ok=True)
+        cleared_prior = True
         try:
             cfg = config.loads(inputs[0].raw, inputs[0].path)
             res = business_contracts.evaluate(cfg, _decode(inputs[1].raw), _decode(inputs[2].raw))
@@ -254,6 +270,9 @@ def cli(argv, _parser, summary):
         res._suppress_paths = True
         _publish(res, inputs, out)
     except Exception:
+        if not cleared_prior:
+            cand = Path(args.out) if getattr(args, 'out', None) else _candidate_out(argv)
+            discard_own_verdict(cand, STAGE, protected_paths=argv, config_hint=getattr(args, 'config', None) or cfg_hint)
         sys.stderr.write('[sxc semantic_preflight] ERROR invalid_input\n')
         return EXIT_CONFIG
     print(summary(res, None, bool(args.quiet)))

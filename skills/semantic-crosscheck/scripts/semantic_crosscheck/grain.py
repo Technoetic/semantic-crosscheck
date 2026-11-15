@@ -368,6 +368,8 @@ def run(cfg, args, out: Path) -> Result:
         # Bind completion to exactly the files checked at startup.
         if hashlib.sha256(_read(source)).hexdigest() != spec['spec_sha256'] or hashlib.sha256(Path(cfg.path).read_bytes()).hexdigest() != config_sha:
             raise ValueError('input changed')
+    except StageError as exc:
+        raise StageError('grain: database environment unavailable', exc.exit_code) from None
     except Exception:  # no SQL diagnostics, identifiers, keys, paths or DSN text
         result.add('grain:execution', 'error', reason='execution_incomplete')
     finally:

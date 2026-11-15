@@ -320,12 +320,26 @@ def _publish(result, inputs, out):
         raise
 
 
+def _candidate_out(argv):
+    from .result import argv_option
+    explicit = argv_option(argv, ('--out',))
+    if explicit:
+        return Path(explicit)
+    sql_arg = argv_option(argv, ('--sql',))
+    return Path(sql_arg).parent / '.sxc' if sql_arg else None
+
+
 def cli(argv, _parser_factory, summary):
+    from .result import discard_own_verdict
+    cleared_prior = False
     try:
         args = _arguments(argv)
     except SystemExit as exc:
+        if exc.code:
+            discard_own_verdict(_candidate_out(argv), STAGE, protected_paths=argv)
         return exc.code
     except Exception:
+        discard_own_verdict(_candidate_out(argv), STAGE, protected_paths=argv)
         sys.stderr.write('[sxc sql_structure] ERROR invalid_arguments\n')
         return EXIT_CONFIG
     try:
@@ -333,6 +347,7 @@ def cli(argv, _parser_factory, summary):
         out = Path(args.out).absolute() if args.out else inputs[0].path.parent / '.sxc'
         _protect(inputs, out)
         (out / STAGE / 'result.json').unlink(missing_ok=True)
+        cleared_prior = True
         try:
             result = evaluate(inputs[0].raw.decode('utf-8-sig'), guarded._decode(inputs[1].raw))
         except Exception:
@@ -346,6 +361,9 @@ def cli(argv, _parser_factory, summary):
         result._suppress_paths = True
         _publish(result, inputs, out)
     except Exception:
+        if not cleared_prior:
+            cand = Path(args.out) if getattr(args, 'out', None) else _candidate_out(argv)
+            discard_own_verdict(cand, STAGE, protected_paths=argv)
         sys.stderr.write('[sxc sql_structure] ERROR invalid_input\n')
         return EXIT_CONFIG
     print(summary(result, None, bool(args.quiet)))

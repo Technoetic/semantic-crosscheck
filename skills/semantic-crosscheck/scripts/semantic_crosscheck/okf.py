@@ -575,8 +575,13 @@ def run(cfg, args, out):
 
 def cli(argv, parser, summary):
     """Separate guarded dispatch: no all-gold fingerprint or revision probe."""
+    from .result import argv_option, discard_own_verdict
     res, out, cfg, cfg_sha, selected, bundle, args = _result(), None, None, None, [], None, None
     exit_code = None
+    cleared_prior = False
+    cfg_hint = argv_option(argv, ('--config',))
+    cand_out = Path(argv_option(argv, ('--out',))) if argv_option(argv, ('--out',)) else (
+        Path(cfg_hint).parent / '.sxc' if cfg_hint else Path.cwd() / '.sxc')
     try:
         args = parser(audit_errors=True).parse_args(argv)
         if not args.config or (args.export and not args.select) or (args.import_preview and args.select):
@@ -604,9 +609,12 @@ def cli(argv, parser, summary):
             raise _Issue('configuration_changed')
         protect(cfg, selected, out, bundle, bool(args.export))
         discard(out, 'okf')
+        cleared_prior = True
         res = run(cfg, args, out)
     except BaseException as exc:
         if isinstance(exc, SystemExit):
+            if exc.code and not cleared_prior:
+                discard_own_verdict(cand_out, 'okf', protected_paths=argv, config_hint=cfg_hint)
             return exc.code
         if isinstance(exc, KeyboardInterrupt):
             res = _failure(res, _Issue('interrupted'))
@@ -637,5 +645,7 @@ def cli(argv, parser, summary):
             path = res.write(out)
         except Exception:
             _failure(res, _Issue('protected_output_unavailable'))
+    if path is None and not cleared_prior:
+        discard_own_verdict(cand_out, 'okf', protected_paths=argv, config_hint=cfg_hint)
     print(summary(res, path, bool(args and args.quiet)))
     return exit_code if exit_code is not None else res.exit_code()

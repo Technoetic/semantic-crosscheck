@@ -36,7 +36,10 @@ from pathlib import Path  # noqa: E402
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from semantic_crosscheck import VERSION, config, mutation_coverage, provenance  # noqa: E402
-from semantic_crosscheck.result import EXIT_CONFIG, EXIT_FAIL, Result, StageError, discard, inputs_fingerprint  # noqa: E402
+from semantic_crosscheck.result import (  # noqa: E402
+    EXIT_CONFIG, EXIT_FAIL, Result, StageError, argv_option, discard,
+    discard_own_report, discard_own_verdict, inputs_fingerprint,
+)
 
 STAGES = {
     "doctor": "doctor",
@@ -541,22 +544,25 @@ def _diagnostic_write(res, out, args=None):
         return None
 
 
-def _diagnostic_usage_failure(args):
+def _diagnostic_usage_failure(args, raw_argv=()):
+    stage_name = args.stage.replace("-", "_")
+    candidate = _diagnostic_output(args)
     if args.stage == 'boundary-schema':
-        # Unsupported argv may conceal an input path. No output mutation is
-        # justified until a complete parse has established the declared inputs.
+        # Unsupported argv may conceal an input path. Remove only an unlinked,
+        # non-aliased own v1 receipt; perform no new writes.
+        discard_own_verdict(candidate, 'boundary_schema', protected_paths=raw_argv, config_hint=args.config)
         res = Result('boundary_schema')
         res.add('stage', 'error', reason='invalid_diagnostic_arguments')
         print(_summary(res, None, args.quiet), file=sys.stderr)
         return EXIT_CONFIG
     out = None
     try:
-        candidate = _diagnostic_output(args)
         _diagnostic_prepare(args, candidate)
         out = candidate
-        discard(out, args.stage.replace("-", "_"))
+        discard(out, stage_name)
     except Exception:
-        # An unverified alias must never delete or overwrite an input.
+        # An unverified alias must never delete or overwrite an input; clean only a verified own receipt.
+        discard_own_verdict(candidate, stage_name, protected_paths=raw_argv, config_hint=args.config)
         out = None
     res = Result(args.stage.replace("-", "_"))
     res.add("stage", "error", "", reason="invalid_diagnostic_arguments")
@@ -634,8 +640,20 @@ def main(argv=None) -> int:
     try:
         args = (parser(audit_errors=True) if audit_inputs is not None or diagnostic_inputs is not None else cli).parse_args(argv)
     except _AuditUsageError:
-        return (_diagnostic_usage_failure(diagnostic_inputs) if diagnostic_inputs is not None
+        return (_diagnostic_usage_failure(diagnostic_inputs, argv) if diagnostic_inputs is not None
                 else _audit_usage_failure(audit_inputs))
+    except SystemExit as exc:
+        if exc.code:
+            known = next((tok for tok in argv if tok in STAGES), None)
+            if known:
+                cfg_opt = argv_option(argv, ("--config",))
+                out_opt = argv_option(argv, ("--out",))
+                cand = Path(out_opt) if out_opt else (Path(cfg_opt).parent / ".sxc" if cfg_opt else Path.cwd() / ".sxc")
+                if known == "report":
+                    discard_own_report(cand, protected_paths=argv, config_hint=cfg_opt)
+                else:
+                    discard_own_verdict(cand, known.replace("-", "_"), protected_paths=argv, config_hint=cfg_opt)
+        raise
     stage = args.stage
     if stage == 'boundary-schema':
         args._boundary_inputs = diagnostic_inputs._boundary_inputs
@@ -651,6 +669,7 @@ def main(argv=None) -> int:
     cfg = None
     diagnostic_cfg = diagnostic_cfg_sha = None
     expect_cfg = expect_cfg_sha = None
+    expect_legacy_error = False
     report_cfg = report_cfg_sha = None
     out = Path(args.out) if args.out else None
     try:
@@ -661,12 +680,36 @@ def main(argv=None) -> int:
             try:
                 mutation_coverage.discard_matrix(out, args.config or DEFAULT_CONFIG)
             except StageError:
+                discard_own_verdict(out, result_name, protected_paths=argv, config_hint=args.config or DEFAULT_CONFIG)
                 out = None  # An unsafe diagnostic alias must not redirect an error-result write.
                 raise
         if stage == 'expect':
+            cand_expect_out = out if out is not None else (
+                Path(args.config).resolve().parent / '.sxc' if args.config else Path.cwd() / '.sxc'
+            )
+            expect_legacy_error = True
+            cfg_file = config_path('expect', args.config)
+            expect_legacy_error = False
+            legacy_candidate = False
+            try:
+                if not cfg_file.is_symlink() and not getattr(cfg_file, 'is_junction', lambda: False)():
+                    raw_expect = cfg_file.read_bytes()
+                    if len(raw_expect) <= 1024 * 1024 and b'spec_source' not in raw_expect:
+                        legacy_candidate = True
+            except OSError:
+                pass
             try:
                 expect_cfg, expect_cfg_sha, out, cfg_file = _expect_prepare(args, out)
+            except StageError:
+                discard_own_verdict(cand_expect_out, result_name, protected_paths=argv, config_hint=cfg_file)
+                if legacy_candidate:
+                    expect_legacy_error = True
+                    out = None
+                    raise
+                out = None
+                raise StageError('expect: invalid_or_protected_inputs', EXIT_CONFIG) from None
             except Exception:
+                discard_own_verdict(cand_expect_out, result_name, protected_paths=argv, config_hint=cfg_file)
                 out = None
                 raise StageError('expect: invalid_or_protected_inputs', EXIT_CONFIG) from None
         if diagnostic_mode:
@@ -674,6 +717,7 @@ def main(argv=None) -> int:
             try:
                 diagnostic_cfg, diagnostic_cfg_sha = _diagnostic_prepare(args, out)
             except Exception:
+                discard_own_verdict(out, result_name, protected_paths=argv, config_hint=args.config)
                 out = None
                 raise StageError("invalid diagnostic inputs", EXIT_CONFIG) from None
         if audit_mode:
@@ -704,6 +748,7 @@ def main(argv=None) -> int:
                 report_cfg_sha = hashlib.sha256(report_raw).hexdigest()
                 contract_evidence.preflight_configuration(report_raw, cfg_file, out)
             except Exception:
+                discard_own_report(out, protected_paths=argv, config_hint=cfg_file)
                 out = None
                 raise StageError('report: invalid_or_protected_inputs', EXIT_CONFIG) from None
             # Legacy parse/validation errors still clear old PASS summaries.
@@ -714,6 +759,7 @@ def main(argv=None) -> int:
                 if hashlib.sha256(cfg_file.read_bytes()).hexdigest() != report_cfg_sha:
                     raise StageError('report: configuration_changed', EXIT_CONFIG)
             except Exception:
+                discard_own_report(out, protected_paths=argv, config_hint=cfg_file)
                 out = None
                 raise StageError('report: invalid_or_protected_inputs', EXIT_CONFIG) from None
         if stage == 'expect' and not _expect_verified(expect_cfg, expect_cfg_sha):
@@ -789,14 +835,14 @@ def main(argv=None) -> int:
             res.add("stage", "error", "", reason="invalid_constraint_audit_inputs")
         elif diagnostic_mode:
             res.add("stage", "error", "", reason="diagnostic_environment_missing" if e.exit_code == 3 else "invalid_diagnostic_inputs")
-        elif stage == 'expect' and not _expect_legacy(expect_cfg, expect_cfg_sha):
+        elif stage == 'expect' and not expect_legacy_error and not _expect_legacy(expect_cfg, expect_cfg_sha):
             res._suppress_paths = True
             res.add('stage', 'error', '', reason='expect_environment_unavailable' if e.exit_code == 3 else 'invalid_expect_inputs')
         else:
             res.add("stage", "error", "", message=str(e))
         res.next_safe_action = "fix the configuration or environment named in the message, then rerun this stage"
         path = (_report_write(res, out, cfg or report_cfg) if stage == 'report' else
-                _expect_write(res, out, expect_cfg, expect_cfg_sha) if stage == 'expect' else
+                (_write(res, out) if expect_legacy_error and expect_cfg is None else _expect_write(res, out, expect_cfg, expect_cfg_sha)) if stage == 'expect' else
                 _diagnostic_write(res, out, args) if diagnostic_mode else _write(res, out))
         print(_summary(res, path, args.quiet), file=sys.stderr)
         return e.exit_code

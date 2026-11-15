@@ -208,7 +208,16 @@ Cube는 항상 Tesseract SQL 플래너(`CUBEJS_TESSERACT_SQL_PLANNER=true`)로 �
 /plugin install semantic-crosscheck@semantic-crosscheck
 ```
 
-기본 브랜치를 따라가는 설치입니다. 릴리스를 고정하려면 해당 태그를 clone한 뒤 `/plugin marketplace add <path to the clone>`으로 등록합니다.
+기본 브랜치를 따라가는 설치입니다. 특정 릴리스 태그로 고정하려면 해당 태그를 복제한 뒤 로컬 경로를 등록합니다.
+
+```bash
+git clone --branch v0.25.0 --depth 1 https://github.com/Technoetic/semantic-crosscheck.git
+```
+
+```text
+/plugin marketplace add /path/to/semantic-crosscheck
+/plugin install semantic-crosscheck@semantic-crosscheck
+```
 
 추가되는 명령은 아래와 같습니다. 이름은 `/xc-<단계>`이며, `/xc-install`은 `cube-install` 단계를, `/xc-preflight`는 `semantic-preflight` 단계를 실행합니다.
 

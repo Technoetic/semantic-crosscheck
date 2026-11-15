@@ -153,6 +153,15 @@ def bare_example_paths(text: str, link_prefix: str) -> list[str]:
             if not text[:m.start()].endswith(allowed)]
 
 
+def bare_plugin_paths(text: str, link_prefix: str) -> list[str]:
+    """Mentions of `examples/`, `requirements/` or `docs/setup-roles.sql` in command docs that neither start at the
+    plugin root nor appear as a Markdown link label/target."""
+    allowed = ("${CLAUDE_PLUGIN_ROOT}/", "<plugin root>/", "](" + link_prefix, "[")
+    rx = re.compile(r"(?:examples/|requirements/|docs/setup-roles\.sql)")
+    return [text[max(0, m.start() - 30):m.end() + 30] for m in rx.finditer(text)
+            if not text[:m.start()].endswith(allowed)]
+
+
 def parse_cli(argv: list[str]):
     """sxc.parser().parse_args(argv), turning argparse's exit into an assertion with its message."""
     err = io.StringIO()
@@ -236,6 +245,7 @@ class ManifestTest(unittest.TestCase):
             self.assertTrue(manifest["author"]["name"])
         self.assertEqual(codex["interface"]["developerName"], "Technoetic")
         self.assertIn(f"v{VERSION}", codex["interface"]["longDescription"])
+        self.assertLessEqual(len(codex["interface"]["longDescription"]), 1200)
 
     def test_marketplaces_point_at_this_repository(self):
         market = load_json(".claude-plugin/marketplace.json")
@@ -322,6 +332,18 @@ class CommandDocumentTest(unittest.TestCase):
         self.assertTrue(any("${CLAUDE_PLUGIN_ROOT}/examples/" in read(path) for path in command_files()))
         self.assertEqual(len(bare_example_paths("--spec examples/a.json and [x](../examples/b.md) and "
                                                 "\"${CLAUDE_PLUGIN_ROOT}/examples/c.json\"", "../")), 1)
+        for path in command_files():
+            with self.subTest(command=path.name, check="plugin_paths"):
+                self.assertEqual(bare_plugin_paths(read(path), "../"), [])
+            with self.subTest(command=path.name, check="codex_note"):
+                self.assertIn("](../skills/semantic-crosscheck/references/codex.md)", read(path))
+
+    def test_sxc_module_docstring_lists_every_stage(self):
+        m = re.search(r"Stages:\s*([^.]+)\.", sxc.__doc__ or "", re.S)
+        self.assertIsNotNone(m, "sxc.py docstring has no Stages: sentence")
+        listed = [item.strip() for item in m.group(1).replace("\n", " ").split(",") if item.strip()]
+        self.assertEqual(set(listed), set(sxc.STAGES))
+        self.assertEqual(len(listed), len(sxc.STAGES))
 
 
 class DocumentTest(unittest.TestCase):
@@ -375,6 +397,7 @@ class DocumentTest(unittest.TestCase):
         refs = {line.strip() for line in readme.split("\n")
                 if line.startswith("codex plugin marketplace add Technoetic/")}
         self.assertEqual(refs, {f"codex plugin marketplace add Technoetic/{NAME} --ref v{VERSION}"})
+        self.assertIn(f"git clone --branch v{VERSION} --depth 1 {REPO_URL}.git", readme)
         self.assertRegex(read(ROOT / "CHANGELOG.md"), rf"(?m)^## \[{re.escape(VERSION)}\] - \d{{4}}-\d{{2}}-\d{{2}}$")
         self.assertTrue((ROOT / "docs" / "releases" / f"v{VERSION}.md").is_file())
         major, minor, _patch = VERSION.split(".")
@@ -382,7 +405,7 @@ class DocumentTest(unittest.TestCase):
 
     def test_no_machine_paths_or_inline_credentials(self):
         files = docs() + [ROOT / rel for rel in MANIFESTS] + [WORKFLOW, ROOT / "docs" / "setup-roles.sql",
-                                                             ROOT / "requirements" / "core.txt", ROOT / "requirements" / "reason.txt"]
+                                                             ROOT / "requirements" / "core.txt", ROOT / "requirements" / "reason.txt", ROOT / "requirements" / "witness.txt", ROOT / "requirements" / "sql-structure.txt"]
         patterns = {
             "drive path": re.compile(r"\b[A-Za-z]:[\\/]"),
             "home path": re.compile(r"(?:/Users|/home)/[A-Za-z]"),
@@ -448,14 +471,20 @@ class LicenseAndRequirementsTest(unittest.TestCase):
     def test_requirement_pins_agree(self):
         core, core_includes, core_bad = pins(ROOT / "requirements" / "core.txt")
         reason, reason_includes, reason_bad = pins(ROOT / "requirements" / "reason.txt")
-        self.assertEqual(core_bad + reason_bad, [])
+        witness, witness_includes, witness_bad = pins(ROOT / "requirements" / "witness.txt")
+        sql_struct, sql_struct_includes, sql_struct_bad = pins(ROOT / "requirements" / "sql-structure.txt")
+        self.assertEqual(core_bad + reason_bad + witness_bad + sql_struct_bad, [])
         self.assertEqual(core_includes, [])
         self.assertEqual(reason_includes, ["core.txt"])
+        self.assertEqual(witness_includes, ["core.txt"])
+        self.assertEqual(sql_struct_includes, [])
         self.assertIn("pg8000", core)
+        self.assertIn("z3-solver", witness)
+        self.assertIn("pglast", sql_struct)
         self.assertEqual(set(core) & set(reason), set())
         self.assertLessEqual({"owlready2", "pyshacl", "rdflib"}, set(reason))
         rows = table_rows(read(THIRD_PARTY))
-        for name, version in {**core, **reason}.items():
+        for name, version in {**core, **reason, **witness, **sql_struct}.items():
             with self.subTest(package=name):
                 self.assertTrue(any(r[0].lower() == name and version in r for r in rows),
                                 f"THIRD_PARTY.md has no row for {name} {version}")

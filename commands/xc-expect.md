@@ -79,3 +79,6 @@ someone holding the result and the schema can confirm guessed fixture rows: keep
 live in the operational `crosscheck.toml`, so editing one makes earlier `build`, `reason`, `cube` and `verify`
 results stale for `report` until they are rerun. `SXC_CUBE_DEBUG=1` can write fixture values to `expect/server.log`
 and `expect/cube/server.log`.
+
+Codex: replace `${CLAUDE_PLUGIN_ROOT}` as described in
+[references/codex.md](../skills/semantic-crosscheck/references/codex.md).

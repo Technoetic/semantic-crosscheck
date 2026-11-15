@@ -10,7 +10,7 @@ code: pass each one as its own argument and never splice them into a shell strin
 
 - After [/xc-build](xc-build.md), and again after changing `shapes` or `ontology` in
   `crosscheck.toml` (and after every build: `report` counts an older reason result as stale).
-- It needs `requirements/reason.txt` (owlready2, pySHACL, rdflib) and, for the OWL part, Java 11 or
+- It needs `${CLAUDE_PLUGIN_ROOT}/requirements/reason.txt` (owlready2, pySHACL, rdflib) and, for the OWL part, Java 11 or
   later (`SXC_JAVA`, or `java` on `PATH`).
 
 ## Command

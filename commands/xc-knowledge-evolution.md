@@ -21,3 +21,6 @@ retirement calls actual empty-case expect and stales original synthetic receipts
 PASS checks synthetic harness behavior only. No DB, network, model, subprocess,
 engine execution or operational result generation occurs; semantic coverage is
 not measured. Required report gates stay unchanged. See [scope and matrix](../docs/knowledge-evolution.md).
+
+Codex: replace `${CLAUDE_PLUGIN_ROOT}` as described in
+[references/codex.md](../skills/semantic-crosscheck/references/codex.md).

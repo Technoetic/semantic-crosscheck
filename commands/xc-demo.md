@@ -84,7 +84,7 @@ untouched when build refuses the cyclic closure, and verify does not trust it); 
   never drops a table: use another database, or drop them yourself.
 - `demo:load` is `error`: the load was rolled back and the detail has the SQLSTATE. The `next:` line
   names the cause: `42501` the loader role lacks a privilege (it must own the demo tables, and while they
-  are missing own or be allowed to create `sxc_demo`; fix the roles with `docs/setup-roles.sql` instead
+  are missing own or be allowed to create `sxc_demo`; fix the roles with `${CLAUDE_PLUGIN_ROOT}/docs/setup-roles.sql` instead
   of using a superuser), `0A000` a foreign key from another table blocks `TRUNCATE`, `23xxx` a constraint
   added to the demo tables (such as one from `fk_review.sql`) rejects the dirty rows, `40P01`, `55P03` or
   `57014` another session was using the tables; anything else, check the server log.

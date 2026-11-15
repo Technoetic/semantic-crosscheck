@@ -20,3 +20,6 @@ python "${CLAUDE_PLUGIN_ROOT}/skills/semantic-crosscheck/scripts/sxc.py" cube-re
 Install the existing pinned Cube adapter with `cube-install` first. The stage compiles actual original/mutant models and compares actual Cube answers against independently authored gold SQL on frozen synthetic data. Missing engines, startup failures, malformed or unstable answers, and cleanup failures cannot pass. Normal results contain only counts, identifiers and hashes; generated input rows belong only in the labelled local fixture artifact.
 
 This fixed synthetic coverage is separate from real-data V4. It does not demonstrate that a production configuration, a supplied business query, or an arbitrary mutation has been verified. See [the replay contract](../docs/cube-replay.md).
+
+Codex: replace `${CLAUDE_PLUGIN_ROOT}` as described in
+[references/codex.md](../skills/semantic-crosscheck/references/codex.md).

@@ -39,3 +39,6 @@ gates stay unchanged by default; explicit paired `[semantic_preflight]` sidecars
 opt report into current matching preflight evidence (see [report binding](../docs/contract-report.md)). New Python
 engine code changes the existing fingerprint, so rerun operational stages after
 upgrading. See [schema, limits and examples](../docs/semantic-preflight.md).
+
+Codex: replace `${CLAUDE_PLUGIN_ROOT}` as described in
+[references/codex.md](../skills/semantic-crosscheck/references/codex.md).

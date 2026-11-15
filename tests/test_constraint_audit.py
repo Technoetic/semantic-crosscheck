@@ -5,6 +5,7 @@ import hashlib
 import io
 import json
 from pathlib import Path
+import os
 import tempfile
 from types import SimpleNamespace
 import unittest
@@ -13,6 +14,18 @@ from unittest.mock import patch
 import pgfixture  # noqa: F401
 import sxc
 from semantic_crosscheck import constraints, counterexample as ce, witness
+
+
+try:
+    import z3 as _z3  # noqa: F401
+    HAS_Z3 = True
+except ImportError:
+    HAS_Z3 = False
+
+requires_z3 = unittest.skipUnless(
+    HAS_Z3 or os.environ.get("SXC_TEST_FULLSTACK") == "1",
+    "z3-solver is not installed",
+)
 
 
 class AuditInputs(unittest.TestCase):
@@ -78,6 +91,7 @@ class ConstraintAuditTest(AuditInputs):
         self.assertEqual(self.run_fake(legacy).status, 'not_run')
         self.assertFalse(self.artifact().exists())
 
+    @requires_z3
     def test_not_null_masks_mismatch_and_outside_only_is_diagnostic(self):
         result = self.run_fake()
         self.assertEqual(result.status, 'not_run')
@@ -89,6 +103,7 @@ class ConstraintAuditTest(AuditInputs):
         self.assertTrue(any(row[1] is None for row in payload['tables']['items']))
         self.assertFalse(self.artifact('declared').exists())
 
+    @requires_z3
     def test_declared_disagreement_is_fail_and_identical_sql_is_never_pass(self):
         self.assertEqual(self.run_fake(answer=lambda *_a, **_kw: {'equal': False}).status, 'fail')
         result = self.run_fake(answer=lambda *_a, **_kw: {'equal': True})
@@ -172,6 +187,7 @@ class ConstraintAuditTest(AuditInputs):
                 self.assertNotIn(forbidden, summary)
             self.assertIn('r0001', summary)
 
+    @requires_z3
     def test_two_non_none_profiles_equal_limits_and_outside_shrink_invariant(self):
         from semantic_crosscheck import constraint_audit
         actual = witness.generate
@@ -190,6 +206,7 @@ class ConstraintAuditTest(AuditInputs):
         payload = json.loads(self.artifact().read_text())
         self.assertTrue(any(row[1] is None for row in payload['tables']['items']))
 
+    @requires_z3
     def test_solver_incomplete_and_query_errors_never_become_witnesses(self):
         for reason in ('solver_timeout', 'solver_unavailable', 'solver_unknown'):
             with patch.object(witness, 'generate', return_value=witness.Generation((), reason, 1)):
@@ -207,6 +224,7 @@ class ConstraintAuditTest(AuditInputs):
         self.assertNotIn('SECRET', json.dumps(result.to_dict()))
         self.assertFalse(self.artifact().exists())
 
+    @requires_z3
     def test_every_input_revalidated_even_after_no_witness_and_stale_fixtures_removed(self):
         for filename in ('reference.sql', 'candidate.sql', 'schema.json', 'constraints.json', 'audit.json'):
             self.setUp()
@@ -223,6 +241,7 @@ class ConstraintAuditTest(AuditInputs):
             self.assertEqual(result.status, 'error', filename)
             self.assertFalse(self.artifact().exists())
 
+    @requires_z3
     def test_replay_twice_and_all_binding_mismatches_fail_before_connection(self):
         self.run_fake()
         original = self.artifact().read_bytes()
@@ -250,6 +269,7 @@ class ConstraintAuditTest(AuditInputs):
             ce.run(None, self.args(constraint_audit=None, replay=str(self.artifact())), self.root)
         connect.assert_not_called()
 
+    @requires_z3
     def test_original_row_bounds_and_finite_domain_revalidated_on_replay(self):
         spec = json.loads((self.root / 'schema.json').read_text())
         spec['tables']['items']['rows'] = [2, 2]
@@ -279,6 +299,7 @@ class ConstraintAuditTest(AuditInputs):
             result = json.loads((self.root / 'counterexample/result.json').read_text())
             self.assertIn('constraint_audit', result['inputs'])
 
+    @requires_z3
     def test_empty_projected_profile_still_uses_c_collation_and_retains_schema(self):
         self.profile({'version': 1, 'tables': {'items': {'not_null': ['qty']}}},
                      ['/tables/items/not_null/0'], ['/tables/items/not_null/0'])
@@ -292,6 +313,7 @@ class ConstraintAuditTest(AuditInputs):
         self.assertTrue(all(p is not None for p in profiles))
         self.assertEqual(profiles[-1].not_null, ())
 
+    @requires_z3
     def test_pending_witness_is_confirmed_after_both_arms(self):
         seen_declared = 0
         started_relaxed = False
@@ -308,6 +330,7 @@ class ConstraintAuditTest(AuditInputs):
         self.assertEqual(result.status, 'error')
         self.assertFalse(self.artifact('declared').exists())
 
+    @requires_z3
     def test_actual_changed_inputs_reject_replay_before_connection(self):
         self.run_fake()
         original = self.artifact().read_bytes()
@@ -331,6 +354,7 @@ class ConstraintAuditTest(AuditInputs):
         connect.assert_not_called()
         self.assertEqual(target.read_bytes(), raw)
 
+    @requires_z3
     def test_no_witness_and_incomplete_have_distinct_classifications(self):
         result = self.run_fake(answer=lambda *_a, **_kw: {'equal': True})
         self.assertTrue(all(c.detail['classification'] == 'bounded_no_witness' for c in result.checks))
@@ -350,6 +374,7 @@ class ConstraintAuditTest(AuditInputs):
         self.assertEqual(projected['tables']['items']['not_null'], ['qty'])
         self.assertEqual(projected['checks'], [{'table': 'items', 'column': 'qty', 'op': 'le', 'value': 1}])
 
+    @requires_z3
     def test_domain_change_during_no_witness_invalidates_audit(self):
         def answer(*_a, **_kw):
             path = self.root / 'counterexample/audit/relaxed-constraints.json'
@@ -375,6 +400,7 @@ class ConstraintAuditTest(AuditInputs):
         profile = constraints.load(self.root / 'counterexample/audit/relaxed-constraints.json', witness.load(self.args().witness_schema).schema)
         self.assertEqual(profile.checks[0][3][0], Decimal('12345678901234567890123456789.0001'))
 
+    @requires_z3
     def test_replay_rejects_structured_metadata_and_changed_budgets(self):
         self.run_fake()
         original = self.artifact().read_bytes()
@@ -391,6 +417,7 @@ class ConstraintAuditTest(AuditInputs):
             ce.run(None, self.args(replay=str(self.artifact())), self.root)
         connect.assert_not_called()
 
+    @requires_z3
     def test_shrink_query_errors_never_publish_a_witness(self):
         def answer(_c, fixture, *_a, **_kw):
             count = len(fixture['items'])
@@ -436,6 +463,7 @@ class ConstraintAuditTest(AuditInputs):
         self.assertEqual(caught.exception.code, 2)
         self.assertIn('ORDINARY-PARSER-VALUE', output.getvalue())
 
+    @requires_z3
     def test_cli_preflight_and_parser_failure_clear_all_prior_witness_outputs(self):
         manifest = str(self.root / 'audit.json')
         for audit_option in (['--constraint-audit', manifest], ['--constraint-audit=' + manifest],
@@ -480,6 +508,7 @@ class ConstraintAuditTest(AuditInputs):
         self.assertEqual(ordinary.read_bytes(), source)
         self.assertNotIn('PRIVATE', output.getvalue())
 
+    @requires_z3
     def test_cli_same_output_replay_survives_early_cleanup(self):
         self.run_fake()
         argv = ['counterexample', '--constraint-audit', str(self.root / 'audit.json'), '--constraints', str(self.root / 'constraints.json'),

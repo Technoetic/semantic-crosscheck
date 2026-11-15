@@ -20,7 +20,7 @@ argument. This tool is separate from the configured build/reason/cube/verify pip
 - `--shrink-strategy structured` opts into reverse-FK dependency group deletion and non-key value
   simplification; `rows` remains the default. One `--max-shrink-steps` budget covers all trials.
 - `--witness-schema FILE` replaces `--scenario` with a declared typed finite-domain schema. Install
-  `requirements/witness.txt` first; `--constraints FILE` then refers to those declared columns.
+  `${CLAUDE_PLUGIN_ROOT}/requirements/witness.txt` first; `--constraints FILE` then refers to those declared columns.
   `--solver-timeout-ms` is the total solver generation budget, default 3000, range 1..60000.
   No database schema is inferred and SQL conditions are not encoded in Z3. Missing solver,
   exhaustion, UNSAT and timeout never establish equivalence or PASS.
@@ -93,3 +93,6 @@ Operator-directed results are synthetic SQL evidence only. Selecting an operator
 that the supplied SQL came from that Cube mutation, and does not update the configured V4 checks.
 No disagreement within the search budget is not proof of equivalence. Replay binds the operator,
 generator, SQL files (including gold when supplied) and integrity profile.
+
+Codex: replace `${CLAUDE_PLUGIN_ROOT}` as described in
+[references/codex.md](../skills/semantic-crosscheck/references/codex.md).

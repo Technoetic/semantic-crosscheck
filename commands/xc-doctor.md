@@ -58,7 +58,7 @@ using a more privileged role.
 | Check | What to do |
 |---|---|
 | `python` | Use Python 3.11 or later. `sxc.py` refuses older versions itself, with exit 3, before doctor runs. |
-| `pg8000` | Run the command on the `next:` line: it installs `requirements/core.txt` from the plugin directory into the interpreter that runs doctor, both by absolute path. |
+| `pg8000` | Run the command on the `next:` line: it installs `${CLAUDE_PLUGIN_ROOT}/requirements/core.txt` into the interpreter that runs doctor, both by absolute path. |
 | `dsn`, `connect` | Set `SXC_PG_DSN` to `postgresql://user@host:port/database` (TLS settings such as `?sslmode=verify-full` go in the DSN); the password goes in the URL (percent-encoded) or in `PGPASSWORD`. The detail `reason` is `bad_dsn` (malformed: percent-encode reserved characters such as `/ # ? @ : %` in the user name and password), `rejected` (the server refused it; see the SQLSTATE) or `unreachable`. Never put a DSN or password in `crosscheck.toml` (the configuration refuses credentials). |
 | `pg_version` | PostgreSQL 17 or later is required (`MERGE ... WHEN NOT MATCHED BY SOURCE`, `merge_action()`, `COPY ... ON_ERROR`). There is no fallback for older servers. |
 | `privileges:temporary` | Grant the check role `TEMPORARY` on the database (`GRANT TEMPORARY ON DATABASE <database> TO <check role>`; [docs/setup-roles.sql](../docs/setup-roles.sql) does). |
@@ -66,7 +66,7 @@ using a more privileged role.
 | `privileges:no_write:<entity>` | The check role could change a source table: the detail lists `held` privileges, `member_of_owner`, `schema_owner` and `schema_create`. Revoke `INSERT`, `UPDATE`, `DELETE`, `TRUNCATE` and `TRIGGER` and `CREATE` on the schema, make another role own the tables and the schema (and remove the check role's membership in those owners), or point `source.dsn_env` at a read-only role, before running any other stage. It is `not_run` (`table_missing`) while the table does not exist. |
 | `output_schema` | The check role must own (or have `CREATE` and `USAGE` on) `source.output_schema`, or be allowed to create it; the schema must differ from the source schemas. |
 | `database` | `error`: a catalog query failed; the detail has the SQLSTATE. Check the server log. |
-| `reason:*` | Run the pip command doctor prints (`requirements/reason.txt` by absolute path). Install Java 11 or later and put `java` on `PATH`, or set `SXC_JAVA` to the absolute path of the `java` executable (a relative path is refused). |
+| `reason:*` | Run the pip command doctor prints (`${CLAUDE_PLUGIN_ROOT}/requirements/reason.txt` by absolute path). Install Java 11 or later and put `java` on `PATH`, or set `SXC_JAVA` to the absolute path of the `java` executable (a relative path is refused). |
 | `cube:*` | Install Node.js 22 or later and put `node` on `PATH`, then run [/xc-install](xc-install.md). `cube:adapter` with `reason=adapter_files_changed` means the plugin was updated after the install: rerun /xc-install (no `--force` needed). An install made with `cube-install --home DIR` is found only when `SXC_CUBE_HOME` is set to that directory. |
 
 - A failed or `not_run` check gives exit code 1; the `next:` line names the first thing to fix.

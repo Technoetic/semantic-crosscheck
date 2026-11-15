@@ -33,3 +33,6 @@ Exit 0 means the supported schema was derived and checked. Exit 1 includes an
 artifact or stability failure; exit 2 is invalid input or arguments. Unsafe
 aliases and unparsed arguments suppress output writes; check the exit code
 before trusting an older result file.
+
+Codex: replace `${CLAUDE_PLUGIN_ROOT}` as described in
+[references/codex.md](../skills/semantic-crosscheck/references/codex.md).

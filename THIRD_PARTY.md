@@ -2,8 +2,8 @@
 
 semantic-crosscheck vendors no third-party code. Its dependencies are installed by the user:
 
-- Python packages from PyPI through `requirements/core.txt`, `requirements/reason.txt` and the optional
-  `requirements/witness.txt` (direct
+- Python packages from PyPI through `requirements/core.txt`, `requirements/reason.txt`, and the optional
+  `requirements/witness.txt` and `requirements/sql-structure.txt` (direct
   dependencies pinned to exact versions; their own dependencies are resolved by pip);
 - the Cube adapter's npm packages, installed by `sxc.py cube-install` into a per-user directory with
   `npm ci --ignore-scripts` from the committed `package-lock.json`;
@@ -97,6 +97,7 @@ background. See [fixture scope](docs/provenance-fixtures.md).
 | pySHACL | 0.40.1 | Apache-2.0 | SHACL validation (`reason`) |
 | rdflib | 7.6.0 | BSD-3-Clause | RDF graphs for SHACL (`reason`) |
 | z3-solver | 4.15.3.0 | MIT | Optional finite-domain integrity-valid synthetic inputs (`--witness-schema`) |
+| pglast | 7.22 | GPL-3.0-or-later | Optional offline PostgreSQL 17 SQL AST check (`sql-structure`, imported only by that stage) |
 
 Structured reduction is an original implementation informed by
 [Vulcan (2023)](https://doi.org/10.1145/3586049) and [Perses](https://github.com/uw-pluverse/perses).

@@ -25,3 +25,6 @@ scoped export/preview completion. Runtime execution, cross-layer correctness,
 bundle authenticity and import application remain `not_proven`. This diagnostic
 does not change required operational report stages. Unsupported profile fields
 do not establish invalidity of general OKF. See [profile and filesystem limits](../docs/okf.md).
+
+Codex: replace `${CLAUDE_PLUGIN_ROOT}` as described in
+[references/codex.md](../skills/semantic-crosscheck/references/codex.md).

@@ -9,7 +9,7 @@ a SQL file and a separately authored version 1 expectation JSON file:
 python "${CLAUDE_PLUGIN_ROOT}/skills/semantic-crosscheck/scripts/sxc.py" sql-structure --sql FILE --expect FILE --out DIR --quiet
 ```
 
-The optional pinned `requirements/sql-structure.txt` dependency must be installed
+The optional pinned `${CLAUDE_PLUGIN_ROOT}/requirements/sql-structure.txt` dependency must be installed
 separately. Do not automatically install it or rewrite/generate SQL. No database,
 network, model or operational configuration is used by this command. A missing or
 incompatible parser is `not_run` (exit 3). Supported mismatches fail; unsupported
@@ -25,3 +25,6 @@ infer its expectation from business prose or a semantic-preflight plan.
 
 Report only status, fixed IDs, counts and hashes. Do not echo SQL, local paths,
 identifiers, literals or parser exceptions into commentary or external services.
+
+Codex: replace `${CLAUDE_PLUGIN_ROOT}` as described in
+[references/codex.md](../skills/semantic-crosscheck/references/codex.md).

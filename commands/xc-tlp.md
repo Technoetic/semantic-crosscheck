@@ -36,3 +36,6 @@ count-gap direction. These signatures do not identify the same optimizer bug.
 Replay rechecks the original, every accepted step and an independent final
 evaluation; it does not reclaim deletion minimality or replay rejected trials.
 Errors, instability and signature switches cannot be accepted as witnesses.
+
+Codex: replace `${CLAUDE_PLUGIN_ROOT}` as described in
+[references/codex.md](../skills/semantic-crosscheck/references/codex.md).

@@ -4,8 +4,8 @@
     python sxc.py <stage> [--config crosscheck.toml] [--out DIR] [options]
 
 Stages: doctor, demo, build, reason, cube, verify, report, cube-install, counterexample,
-cube-replay, tlp, shacl-corpus, expect, shacl-repair, grain, boundary-schema, semantic-preflight, sql-structure,
-data-rules.
+cube-replay, tlp, shacl-corpus, expect, shacl-repair, grain, okf, boundary-schema, semantic-preflight,
+sql-structure, knowledge-evolution, data-rules.
 Each stage writes <out>/<stage>/result.json (counts and check ids only, never row values) and exits with
 0 pass, 1 a check failed or could not run, 2 configuration or usage error, 3 environment missing.
 

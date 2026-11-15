@@ -2,6 +2,7 @@
 import contextlib
 import io
 import json
+import os
 from pathlib import Path
 import tempfile
 from types import SimpleNamespace
@@ -11,6 +12,18 @@ from unittest.mock import patch
 import pgfixture  # noqa: F401
 import sxc
 from semantic_crosscheck import counterexample as ce
+
+
+try:
+    import z3 as _z3  # noqa: F401
+    HAS_Z3 = True
+except ImportError:
+    HAS_Z3 = False
+
+requires_z3 = unittest.skipUnless(
+    HAS_Z3 or os.environ.get("SXC_TEST_FULLSTACK") == "1",
+    "z3-solver is not installed",
+)
 
 
 class SearchExtensionsTest(unittest.TestCase):
@@ -55,6 +68,7 @@ class SearchExtensionsTest(unittest.TestCase):
         self.assertIn("VALUE-'quote", params.values())
         self.assertIn('numeric(8,2)', sql)
 
+    @requires_z3
     def test_schema_search_writes_bound_replay_and_no_values_in_result(self):
         args = self.args(witness_schema=str(self.spec()))
         def answer(_conn, fixture, *_a, **_kw):
@@ -71,6 +85,7 @@ class SearchExtensionsTest(unittest.TestCase):
             args.replay = str(path)
             self.assertEqual(ce.run(None, args, self.root).status, 'fail')
 
+    @requires_z3
     def test_replay_rejects_new_original_domain_value_before_connect(self):
         args = self.args(witness_schema=str(self.spec()))
         with patch.object(ce.db, 'connect', return_value=SimpleNamespace(close=lambda: None)), patch.object(ce, 'evaluate', return_value={'equal': False}):
@@ -110,6 +125,7 @@ class SearchExtensionsTest(unittest.TestCase):
         self.assertTrue(result.not_proven)
         self.assertFalse((self.root / 'counterexample/fixture.json').exists())
 
+    @requires_z3
     def test_reduction_keeps_declared_row_and_value_bounds(self):
         from semantic_crosscheck import witness
         for strategy in ('rows', 'structured'):

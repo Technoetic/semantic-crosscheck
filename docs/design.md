@@ -31,7 +31,7 @@ python skills/semantic-crosscheck/scripts/sxc.py --version
 | `reason` | SHACL against SQL, OWL consistency, OWL against SQL (V5) | `--only shacl,owl` (default both) | `reason/result.json` |
 | `cube` | generates the Cube model, serves it, checks gold members and metadata | none | `cube/result.json`, `cube/model/*.yml`, `cube/model.json`, `cube/server.log` |
 | `verify` | V1 strict compare, V2 strata sweep, V3 query shapes, V4 mutation tests | `--only v1,v2,v3,v4` (default all), `--gold ID` (repeatable) | `verify/result.json`, `verify/server.log`, `verify/mutants/<operator>__<target>/` (`model/*.yml`, `model.json`, `server.log`) |
-| `report` | summary of every stage | none | `report/result.json`, `report.md`, `report.json` |
+| `report` | summary of every stage | `--require-doctor` | `report/result.json`, `report.md`, `report.json` |
 | `cube-install` | installs the pinned Cube adapter once per user | `--home DIR`, `--native-file PATH`, `--force` | `cube_install/result.json`, `cube_install/npm-ci.log`, `cube_install/smoke.log` |
 | `counterexample` | optional synthetic SQL mismatch search and reduction, or BOM metamorphic relations (and, with `--scenario bom_exhaustive`, the exact closure oracle over a bounded-exhaustive enumeration) for one closure SQL | `--reference-sql`, `--candidate-sql`, `--metamorphic-sql`, `--scenario`, `--seed`, `--max-examples`, `--max-shrink-steps`, `--dsn-env`, `--statement-timeout-ms`, `--constraints`, `--replay` | `counterexample/result.json`, `counterexample/fixture.json` |
 | `cube-replay` | optional actual original/mutant Cube replay against independent gold SQL on owned synthetic tables | required `--mutation-operator`, `--allow-scratch-schema`, `--seed` (7), `--dsn-env` (`SXC_CUBE_REPLAY_DSN`), `--statement-timeout-ms` (10000), `--replay` | `cube_replay/result.json`, successful bound `cube_replay/fixture.json` |
@@ -159,16 +159,18 @@ exit 3, so one run lists everything to fix.
   `CUBEJS_DB_QUERY_TIMEOUT=<cube.query_timeout_s>`. Cube's Postgres driver sets `statement_timeout` from the
   latter on every connection (its default is 10 minutes, and it is also the queue's execution timeout), so a
   query the client gave up on stops in PostgreSQL as well.
-- **The Cube child's environment** is the inherited one minus every `CUBEJS_*`, `PG*` and `SXC_*` variable,
-  `NODE_OPTIONS`, every variable whose value contains `postgres://` or `postgresql://` and the configured DSN
-  variable names; plus the connection parsed from the Cube DSN, a random per-run API secret, development mode
+- **The Cube child's environment** starts from an explicit allowlist of OS and locale variables
+  (`cube_run.INHERITED_ENV_ALLOWLIST`: `PATH`, `PATHEXT`, `SYSTEMROOT`, `WINDIR`, `COMSPEC`, `TEMP`, `TMP`,
+  `TMPDIR`, `HOME`, `USERPROFILE`, `APPDATA`, `LOCALAPPDATA`, `HOMEDRIVE`, `HOMEPATH`, `LANG`, `LC_ALL`,
+  `LC_CTYPE`, `TZ`), minus any configured DSN variable name and any value containing `postgres://` or
+  `postgresql://`; plus the connection parsed from the Cube DSN, a random per-run API secret, development mode
   and telemetry off, `CUBEJS_LOG_LEVEL=error`, `CUBEJS_TESSERACT_SQL_PLANNER=true`, TLS settings from the DSN's
   `sslmode`, `SXC_PORT`, `SXC_MODEL_DIR` and, only when it is `1`, `SXC_CUBE_DEBUG`. `node` is looked up on
   `PATH` only.
 - **The Cube SQL planner is pinned and recorded.** Cube 1.8.3 picks its SQL planner from
   `CUBEJS_TESSERACT_SQL_PLANNER` (default `true`, the Tesseract planner; `false` selects the legacy planner, which
   Cube warns it will remove). The runner sets `true` itself (`cube_run.PLANNER_ENV`), so neither Cube's implicit
-  default nor an inherited value (dropped with every other `CUBEJS_*` variable) decides which planner serves a
+  default nor an inherited value (excluded because `CUBEJS_*` is outside `INHERITED_ENV_ALLOWLIST`) decides which planner serves a
   result. The legacy-planner SQL injection GHSA-cfx6-94gc-h774 affected Cube 1.7.x and earlier, not the pinned
   1.8.3; pinning the planner keeps a later Cube move from silently changing it. `serve` records the Cube version
   and the planner the child was started with (`cube_run.runtime_facts`: `cube_version`, `sql_planner`), the cube
@@ -1104,7 +1106,9 @@ output-schema views, as in `v_shape_<id>`; rule constants appear as literals in 
 never touches the database.
 
 - **Required stages** are `build`, `cube` and `verify`, plus `reason` when the configuration has an `[ontology]`
-  or any `[[shapes]]`. A required stage without a result is `stage:<name>` `not_run` (`reason=missing`).
+  or any `[[shapes]]`, plus `semantic_preflight` when `[semantic_preflight]` is configured, and (since 0.26.0)
+  `doctor` when `[verify] doctor_observation = "require"` or `sxc.py report --require-doctor` is set. A required
+  stage without a result is `stage:<name>` `not_run` (`reason=missing`).
 - **Staleness.** Dependencies: `build` after `demo`; `reason` and `cube` after `build`; `verify` after `build`
   and `cube`. A stage that started before a dependency finished its latest run is stale (`why=newer`), so is a
   stage that depends on a stale one (`stale_dependency`) and one whose run times cannot be read
@@ -1115,9 +1119,12 @@ never touches the database.
   `why=cube_runtime_changed`); one whose `cube:meta` lacks either value is stale too (`why=cube_runtime_missing`,
   for example a result from a release that did not pin the planner). verify then follows as `stale_dependency`. A
   cube result without `cube:meta` (the stage stopped before Cube answered) is left to its own error.
-- **Optional stages** (`doctor`, `demo`): a present result that passed, failed or errored is mirrored (a failing
-  doctor or demo fails the report); one that is `not_run` or stale gets only a `not_proven` line. A missing
-  `doctor` adds the `not_proven` line that the check role's privileges were not verified.
+- **Optional stages** (`doctor` unless required by `doctor_observation = "require"` or `--require-doctor`, and
+  `demo`): when optional, a present result that passed, failed or errored is mirrored (a failing doctor or demo
+  fails the report); one that is `not_run` or stale gets only a `not_proven` line, and a missing `doctor` adds
+  the `not_proven` line that the check role's privileges were not verified. When `doctor` is required, a missing,
+  `not_run`, configless or stale `doctor` (`config_sha256` or `engine_sha256` mismatch) counts as `not_run` and
+  prevents `report` from passing.
 - **Data rules** are not a report stage. When the configuration has `[data_rules]`, report adds one `not_proven`
   line (data rules run in the separate data-rules stage; report does not read `data_rules/result.json`, so data-rule
   findings do not change its verdict). Required stages, inputs and staleness rules are unchanged, and a configuration

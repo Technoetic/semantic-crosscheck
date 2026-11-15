@@ -66,7 +66,10 @@ The DSN's `sslmode` decides TLS for the Python stages (pg8000) and for the Cube 
 Any other `sslmode`, an `sslrootcert` that cannot be loaded as a PEM file, and the parameters
 `sslcert`, `sslkey`, `sslpassword`, `sslcrl`, `sslcrldir` and `sslcertmode` are refused with exit 3: client
 certificates and revocation lists are not implemented. A relative `sslrootcert` is resolved against the
-current directory. Use `verify-full` (or `verify-ca`) whenever the connection leaves the database host.
+current directory. Because `NODE_EXTRA_CA_CERTS` and `SSL_CERT_FILE` are outside the Cube child
+environment allowlist, pass any custom PostgreSQL root CA through the DSN's `sslrootcert` parameter
+(forwarded to Cube as `CUBEJS_DB_SSL_CA`). Use `verify-full` (or `verify-ca`) whenever the connection
+leaves the database host.
 
 ## Out of scope and known limits
 

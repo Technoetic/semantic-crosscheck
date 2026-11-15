@@ -15,7 +15,7 @@ Scope is undated preaggregate-to-node measures. The declared source/group/output
 
 All source reads use one read-only repeatable-read snapshot, bounded row guards and statement deadlines. Results contain counts, hashes, opaque ids and fixed reasons; no row/aggregate values. This does not independently certify Cube runtime, aggregate values, business intent or future snapshots. Configuration/gold/revision/manifest aliases are protected before result cleanup. Unsafe aliases suppress artifact writes; use the exit code to avoid trusting an older result file.
 
-Output is `<out>/grain/result.json`. This stage is outside the required default report pipeline. Exit0 requires all selected obligations;1 includes failure/incomplete checks;2 is invalid inputs. See [schema, scope and synthetic examples](../docs/grain.md).
+Output is `<out>/grain/result.json`. This stage is outside the required default report pipeline. Exit 0 requires all selected obligations; 1 includes failure/incomplete checks; 2 is invalid inputs; 3 is a missing DSN or unreachable database environment. See [schema, scope and synthetic examples](../docs/grain.md).
 
 Codex: replace `${CLAUDE_PLUGIN_ROOT}` as described in
 [references/codex.md](../skills/semantic-crosscheck/references/codex.md).

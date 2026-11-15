@@ -9,10 +9,9 @@
   after an upgrade that changes server.js or the lockfile, an old install would otherwise keep serving the old adapter.
 - cube_home() is absolute: the adapter runs with the run directory as working directory, where a relative
   SXC_CUBE_HOME would point somewhere else.
-- Environment for the child: inherited variables minus every CUBEJS_* / PG* setting, NODE_OPTIONS (it can open a
-  debugger port or preload code), every variable whose value holds a postgres:// URL (the loader's DSN, a test admin
-  DSN) and every SXC_* variable (the adapter reads only SXC_PORT, SXC_MODEL_DIR and SXC_CUBE_DEBUG, set here); plus
-  the connection parsed from the Cube DSN variable, a random per-run API secret, development mode and telemetry off,
+- Environment for the child: only the OS and locale variables in INHERITED_ENV_ALLOWLIST (minus any configured DSN
+  variable name and any value holding a postgres:// or postgresql:// URL; CUBEJS_*, PG*, SXC_* and NODE_OPTIONS are
+  never inherited), plus the connection parsed from the Cube DSN variable, a random per-run API secret, development mode and telemetry off,
   the Tesseract SQL planner, TLS settings from the DSN's sslmode, and a statement timeout of cube.query_timeout_s, so
   a query the client gave up on also stops in PostgreSQL instead of running on and holding Cube's queue. The timeout is set twice because Cube's Postgres driver runs `SET statement_timeout` from
   CUBEJS_DB_QUERY_TIMEOUT (default 10 minutes, also its queue's execution timeout) on every connection, overriding the

@@ -195,6 +195,8 @@ def judge(gold, case, gold_rows: list[dict], cube_rows: list[dict], types: dict 
               "cube_rows": len(cube_rows), "gold_equals_expected": gold_ok, "cube_equals_expected": cube_ok,
               "gold_equals_cube": agree, "gold_vs_expected": _pair(gold_side, "gold", "expected"),
               "cube_vs_expected": _pair(cube_side, "expected", "cube"), "gold_vs_cube": _pair(both, "gold", "cube")}
+    if reason is None and len(case.rows) == 0:
+        detail["empty"] = True
     if reason:
         detail["reason"] = reason
     if reason == "expected_duplicate_keys":
@@ -443,6 +445,12 @@ def _run_cases(res: Result, conn, fcfg, env: str, work: Path, planned: list, kin
     res.not_proven.append(FIXTURE_NOTE)
     fixture.update(relations=len(relations), rows=start["rows"], locked=locked)
     if end == start and start["fixture_sha256"] == source["fixture_sha256"]:
+        for c in ran:
+            if c.status == "pass" and c.detail.get("empty"):
+                res.not_proven.append(
+                    f"{c.id} matched 0 expected and 0 returned rows (empty = true), "
+                    "so non-empty row agreement for this case is not proven"
+                )
         res.add("expect:fixture", "pass", "", **fixture)
         return
     reason = "fingerprint_failed" if end is None else "fixture_changed"

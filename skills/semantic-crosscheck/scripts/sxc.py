@@ -126,7 +126,9 @@ def parser(*, audit_errors=False) -> argparse.ArgumentParser:
     s.add_argument("--only", type=_csv, default=["v1", "v2", "v3", "v4"], help="subset of v1,v2,v3,v4 (default: all)")
     s.add_argument("--gold", action="append", default=[], help="limit to this gold query id (repeatable)")
 
-    sub.add_parser("report", parents=[common], help="summarise every stage result into report.md and report.json")
+    s = sub.add_parser("report", parents=[common], help="summarise every stage result into report.md and report.json")
+    s.add_argument("--require-doctor", action="store_true",
+                   help="require a current passing doctor result recorded for this configuration")
 
     s = sub.add_parser("cube-install", parents=[common], help="install the pinned Cube adapter (npm ci --ignore-scripts + SHA-256-pinned native module)")
     s.add_argument("--home", default="", help="install directory (default: per-user cache, or SXC_CUBE_HOME); the other "

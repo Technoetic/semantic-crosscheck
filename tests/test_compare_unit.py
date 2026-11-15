@@ -351,7 +351,7 @@ class BindingsTest(unittest.TestCase):
         g = gold_of(self.cfg, "q01_explosion")
         h = self.cfg.hierarchy()
         with_closure = sweep.strata_sql(self.cfg, h, ["deep"], True)
-        self.assertIn("sxc_out.has_component_closure", with_closure)
+        self.assertIn('"sxc_out"."has_component_closure"', with_closure)
         self.assertTrue(with_closure.startswith("WITH "))
         self.assertIn("d.height DESC NULLS LAST", with_closure)
         without = sweep.strata_sql(self.cfg, h, ["deep"], False)

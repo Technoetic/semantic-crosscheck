@@ -122,7 +122,7 @@ def strata_sql(cfg, h, strata: list[str], has_closure: bool) -> str:
     ]
     recursive = "deep" in strata and not has_closure
     if "deep" in strata and has_closure:
-        ctes.append(f"d AS (SELECT ancestor AS id, max(max_depth) AS height FROM {naming.closure_table(cfg, h.name)}"
+        ctes.append(f"d AS (SELECT ancestor AS id, max(max_depth) AS height FROM {ident.qualified(naming.closure_table(cfg, h.name))}"
                     " GROUP BY ancestor)")
     elif recursive:
         ctes.append("up(id, height) AS (SELECT id, 0 FROM f WHERE parents > 0 AND children = 0"

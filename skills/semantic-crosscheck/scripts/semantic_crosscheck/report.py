@@ -120,10 +120,14 @@ def counts(r: dict) -> dict:
     return out
 
 
-def required_stages(cfg) -> list[str]:
-    """build, cube and verify; reason too when the configuration has an [ontology] or [[shapes]] (or is unknown)."""
+DOCTOR_INPUTS = ("config_sha256", "engine_sha256", "revision_query_sha256")
+
+
+def required_stages(cfg, *, require_doctor: bool = False) -> list[str]:
+    """build, cube and verify; reason with [ontology] or [[shapes]] (or unknown cfg); doctor when opted in."""
     reason = cfg is None or bool(cfg.ontology.hierarchy) or bool(cfg.shapes)
-    required = [s for s in PIPELINE if s in ALWAYS_REQUIRED or (s == "reason" and reason)]
+    need_doc = require_doctor or (cfg is not None and getattr(cfg.verify, "doctor_observation", "disclose") == "require")
+    required = [s for s in PIPELINE if s in ALWAYS_REQUIRED or (s == "reason" and reason) or (s == "doctor" and need_doc)]
     if cfg is not None and cfg.semantic_preflight is not None:
         required.append(contract_evidence.STAGE)
     return required
@@ -163,7 +167,8 @@ def cube_runtime_staleness(r: dict, current: dict) -> str | None:
 
 
 def staleness(results: dict, current_inputs: dict | None = None, current_provenance: dict | None = None,
-              current_runtime: dict | None = None, current_cube: dict | None = None) -> dict:
+              current_runtime: dict | None = None, current_cube: dict | None = None, *,
+              require_doctor: bool = False) -> dict:
     """{stage: {"after": dependency, "why": key of STALE_WHY}} for every stale stage, decided in pipeline order so
     that a stage depending on a stale stage is stale too. With current_inputs (result.inputs_fingerprint of the
     current configuration), a stage that recorded different or no inputs is stale as well. current_cube is the Cube
@@ -177,7 +182,8 @@ def staleness(results: dict, current_inputs: dict | None = None, current_provena
             continue
         if current_inputs:
             recorded = results[stage].get("inputs") or {}
-            changed = [k for k in INPUTS.get(stage, ()) if recorded.get(k) != current_inputs.get(k)]
+            expected_keys = DOCTOR_INPUTS if (stage == "doctor" and require_doctor) else INPUTS.get(stage, ())
+            changed = [k for k in expected_keys if recorded.get(k) != current_inputs.get(k)]
             if changed:
                 stale[stage] = {"after": _INPUT_NAMES[changed[0]], "why": "inputs_changed"}
                 continue
@@ -435,7 +441,10 @@ def run(cfg, args, out: Path) -> Result:
         contract_evidence.preflight(cfg, out)
     res = Result("report")
     results = read_results(out)
-    required = required_stages(cfg)
+    need_doctor = bool(getattr(args, "require_doctor", False)) or (
+        cfg is not None and getattr(cfg.verify, "doctor_observation", "disclose") == "require"
+    )
+    required = required_stages(cfg, require_doctor=need_doctor)
     evidence = contract_evidence.inspect(cfg, out) if contract_evidence.STAGE in required else None
     try:
         current = provenance.current_probe(cfg)
@@ -453,7 +462,7 @@ def run(cfg, args, out: Path) -> Result:
     if current_runtime['binding'] != 'unbound':
         res.not_proven.append(runtime_provenance.BOUND_NOTE)
     cube_version = cfg.cube.version if cfg is not None else config.CUBE_VERSION
-    stale = staleness(results, inputs_fingerprint(cfg), current, current_runtime, cube_run.runtime_facts(cube_version))
+    stale = staleness(results, inputs_fingerprint(cfg), current, current_runtime, cube_run.runtime_facts(cube_version), require_doctor=need_doctor)
     if evidence is not None:
         evidence.refresh()
         if evidence.result is not None:

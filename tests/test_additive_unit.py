@@ -205,7 +205,7 @@ class NullGroupTest(unittest.TestCase):
 
     def test_closure_null_group_sql_is_an_anti_join_on_the_configured_key(self):
         sql = shape_q.null_group_sql(self.cfg, self.tests[CLOSURE_ADDITIVE[0]])
-        self.assertIn('FROM sxc_out.has_component_closure t', sql)
+        self.assertIn('FROM "sxc_out"."has_component_closure" t', sql)
         self.assertIn('FILTER (WHERE NOT EXISTS (SELECT 1 FROM "sxc_demo"."part" d WHERE d."part_id" = t."ancestor" '
                       'AND d."part_class" IS NOT NULL))', sql, "Cube roots the query at the closure: orphans are NULL")
         self.assertIn('NOT EXISTS (SELECT 1 FROM "sxc_demo"."part" d WHERE d."part_id" = t."ancestor" '

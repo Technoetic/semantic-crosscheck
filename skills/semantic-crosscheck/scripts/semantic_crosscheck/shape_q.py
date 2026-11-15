@@ -316,7 +316,7 @@ def measure_total_sql(cfg, m) -> str:
 
 def closure_total_sql(cfg, h: str, column: str) -> str:
     agg = f"sum({ident.quote('qty')})" if column == "qty" else "count(*)"
-    return f"SELECT {agg} FROM {naming.closure_table(cfg, h)}"
+    return f"SELECT {agg} FROM {ident.qualified(naming.closure_table(cfg, h))}"
 
 
 def null_group_sql(cfg, test: dict) -> str:
@@ -350,7 +350,7 @@ def null_group_sql(cfg, test: dict) -> str:
         table = ident.qualified(cfg.entity(m.entity, f"measures.{m.name}").table)
         value, where = f"{m.agg}(t.{ident.quote(m.column)})", f" WHERE {cube_gen.where_sql(m)}"
     else:
-        table, where = naming.closure_table(cfg, src["hierarchy"]), ""
+        table, where = ident.qualified(naming.closure_table(cfg, src["hierarchy"])), ""
         value = f"sum(t.{ident.quote('qty')})" if src["closure_column"] == "qty" else "count(*)"
     return (f"SELECT {value} FILTER (WHERE {null_group}), count(*) FILTER (WHERE {null_group}), "
             f"count(*) FILTER (WHERE NOT EXISTS ({matched})) FROM {table} t{where}")

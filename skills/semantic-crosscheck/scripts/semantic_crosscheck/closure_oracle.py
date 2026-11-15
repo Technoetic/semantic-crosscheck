@@ -331,7 +331,7 @@ def run(conn, cfg, h, *, limits=None):
     """Read both inputs in one snapshot and compare them; safe sanitized errors use existing compare conventions."""
     limits = limits or Limits()
     edge = cfg.entity(h.edge, f"hierarchies.{h.name}").table
-    target = naming.closure_table(cfg, h.name)
+    target = ident.qualified(naming.closure_table(cfg, h.name))
     try:
         with db.read_only(conn, timeout_ms=cfg.source.statement_timeout_ms, isolation="repeatable read"):
             if not _supported_keys(conn, edge, h):

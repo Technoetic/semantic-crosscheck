@@ -29,6 +29,7 @@ DATA_RULES_KEYS = ("file", "views", "require_examples", "max_export_rows", "max_
 DATA_RULES_MAX_ROWS = 2000000    # upper bound of max_export_rows and max_rule_rows
 EXPECT_SOURCES = ("authored", "captured")
 GOLD_OBSERVATION = ("disclose", "require")   # verify.gold_observation: disclosure only (default) or check statuses
+DOCTOR_OBSERVATION = ("disclose", "require") # verify.doctor_observation: optional disclosure (default) or required in report
 EXPECT_KEYS = ("source", "spec", "params", "rows", "partial", "fixture_sha256", "spec_source")
 NULL_CELL = {"null": True}       # TOML has no NULL: an expected cell written { null = true } is SQL NULL
 _SCALARS = (str, int, float, datetime.date, datetime.time)   # bool is an int and datetime a date: both accepted
@@ -233,6 +234,7 @@ class Verify:
     existence_witness: bool = False       # opt-in v3w:pair_witness checks of sampled and chunked pair tests
     accepted_gaps: list = field(default_factory=list)   # elements, facets or V4 check ids with known gaps (evidence)
     gold_observation: str = "disclose"    # "require" (opt-in): missing authored evidence changes check statuses
+    doctor_observation: str = "disclose"  # "require" (opt-in): report requires a current passing doctor result
 
 
 @dataclass
@@ -552,6 +554,8 @@ def _parse(text: str, p: Path) -> Config:
         _err("verify.existence_witness", "must be a boolean (true or false)")
     if not isinstance(verify.gold_observation, str) or verify.gold_observation not in GOLD_OBSERVATION:
         _err("verify.gold_observation", 'use "disclose" or "require"')
+    if not isinstance(verify.doctor_observation, str) or verify.doctor_observation not in DOCTOR_OBSERVATION:
+        _err("verify.doctor_observation", 'use "disclose" or "require"')
     ops = verify.mutation_operators
     if ops != "default" and not (isinstance(ops, list) and all(isinstance(op, str) for op in ops)):
         _err("verify.mutation_operators", 'use "default" or a list of operator names')

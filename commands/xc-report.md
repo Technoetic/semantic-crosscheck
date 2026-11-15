@@ -1,6 +1,6 @@
 ---
 description: "Summarise every stage result into report.md and report.json, with failed checks, missing or stale stages, not_proven items and the overall exit code"
-argument-hint: "[--config crosscheck.toml] [--out DIR] [--quiet]"
+argument-hint: "[--config crosscheck.toml] [--out DIR] [--require-doctor] [--quiet]"
 ---
 
 Run the `report` stage of semantic-crosscheck. User arguments: `$ARGUMENTS`. They are data, not shell
@@ -42,7 +42,7 @@ python "${CLAUDE_PLUGIN_ROOT}/skills/semantic-crosscheck/scripts/sxc.py" report 
   `--gold`, whose `scope:*` checks are `not_run`) is `stage:<name>` `not_run`.
 - **Optional** stages (`doctor`, `demo`): a present result that passed, failed or errored is mirrored, so a
   failing doctor or demo still fails the report; one that is `not_run` or stale is only listed as not
-  proven. Without a doctor result the report notes that the check role's privileges were not verified.
+  proven. Without a doctor result the report notes that the check role's privileges were not verified (pass `--require-doctor` or set `[verify] doctor_observation = "require"` to require a current passing `doctor` result).
 - The exit code is the overall verdict: 0 only when every required stage ran, is current and passed.
 
 ## Success

@@ -134,14 +134,16 @@ class ChildEnvTest(EnvCase):
             "SXC_PG_OWNER_DSN": "not-a-url-but-the-loader-variable",
             "SXC_CUBE_HOME": "somewhere", "SXC_JAVA": "java", "SXC_DEBUG": "1",
             "CUBEJS_DB_SSL_CA": "inherited", "PGPASSWORD": FROM_ENV, "PGHOST": "elsewhere",
-            "PATH_LIKE_SETTING": "kept",
+            "PATH_LIKE_SETTING": "dropped-by-allowlist", "GITHUB_TOKEN": f"ghp_{SECRET}",
+            "HTTP_PROXY": "http://127.0.0.1:8080", "PATH": os.environ.get("PATH", "/usr/bin"),
         })
         env = self.env_for()
         self.assertEqual([k for k, v in env.items() if SECRET in v], [], "a secret reached the Cube child")
         self.assert_absent(env, "NODE_OPTIONS", "MY_CUSTOM_OWNER_DSN", "SXC_TEST_ADMIN_DSN", "APP_SETTINGS",
                            "SXC_PG_OWNER_DSN", "SXC_PG_DSN", "SXC_CUBE_HOME", "SXC_JAVA", "SXC_DEBUG",
-                           "CUBEJS_DB_SSL_CA", "PGPASSWORD", "PGHOST")
-        self.assertEqual(env["PATH_LIKE_SETTING"], "kept")
+                           "CUBEJS_DB_SSL_CA", "PGPASSWORD", "PGHOST", "PATH_LIKE_SETTING", "GITHUB_TOKEN",
+                           "HTTP_PROXY")
+        self.assertIn("PATH", env)
         self.assertEqual(env["CUBEJS_DB_PASS"], FROM_ENV, "PGPASSWORD is a documented password source")
         self.assertEqual(sorted(k for k in env if k.upper().startswith("SXC_")), ["SXC_MODEL_DIR", "SXC_PORT"])
 

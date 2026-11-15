@@ -144,9 +144,17 @@ def runtime_facts(version: str, env: dict | None = None) -> dict:
     return {"cube_version": version, "sql_planner": sql_planner(PLANNER_ENV if env is None else env)}
 
 
+INHERITED_ENV_ALLOWLIST = frozenset({
+    "PATH", "PATHEXT", "SYSTEMROOT", "WINDIR", "COMSPEC",
+    "TEMP", "TMP", "TMPDIR",
+    "HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "HOMEDRIVE", "HOMEPATH",
+    "LANG", "LC_ALL", "LC_CTYPE", "TZ",
+})
+
+
 def _inherited(name: str, value: str, dropped: set) -> bool:
     upper = name.upper()
-    if upper.startswith(("CUBEJS_", "PG", "SXC_")) or upper == "NODE_OPTIONS" or upper in dropped:
+    if upper not in INHERITED_ENV_ALLOWLIST or upper in dropped:
         return False
     return not _DSN_VALUE.search(value)
 

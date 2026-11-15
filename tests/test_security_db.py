@@ -208,7 +208,7 @@ class ConnectTest(DsnCase):
     def test_connection_arguments(self):
         conn = self.connect_with(f"postgresql://u:{SHORT}@db.example.org:6543/name?sslmode=disable")
         self.assertEqual(conn.kwargs, {"user": "u", "password": SHORT, "host": "db.example.org", "port": 6543,
-                                       "database": "name", "ssl_context": False})
+                                       "database": "name", "ssl_context": False, "timeout": db.CONNECT_TIMEOUT_S})
 
     def test_connection_failure_message_is_redacted(self):
         class Refusing(FakeConnection):

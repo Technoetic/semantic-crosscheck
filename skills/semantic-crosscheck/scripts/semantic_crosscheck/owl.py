@@ -28,6 +28,7 @@ owlready2 is imported lazily: only the reason stage needs it.
 import contextlib
 import os
 import shutil
+import subprocess
 import tempfile
 import time
 import types
@@ -398,22 +399,32 @@ def build(cfg, graph: Graph, *, active_axioms: set[str] | None = None, _axiom_or
     return _Model(world, closure, defined, keys, node_iris)
 
 
+HERMIT_TIMEOUT_S = 60
+
+
 def hermit(world, java: str) -> tuple[bool, int]:
     """(consistent, milliseconds) of one HermiT run in a private temporary directory, removed afterwards."""
     import owlready2
+    import owlready2.reasoning as reasoning
     previous = owlready2.JAVA_EXE, tempfile.tempdir
+    has_kargs = hasattr(reasoning, "_subprocess_kargs")
+    prev_kargs = dict(getattr(reasoning, "_subprocess_kargs", {}))
     private = tempfile.mkdtemp(prefix="sxc_hermit_")
     owlready2.JAVA_EXE, tempfile.tempdir = java, private
+    if has_kargs:
+        reasoning._subprocess_kargs = {**prev_kargs, "timeout": HERMIT_TIMEOUT_S}
     started = time.monotonic()
     try:
         owlready2.sync_reasoner_hermit(world, infer_property_values=True, debug=0)
         consistent = True
     except owlready2.OwlReadyInconsistentOntologyError:
         consistent = False
-    except (owlready2.OwlReadyJavaError, OSError) as e:
+    except (owlready2.OwlReadyJavaError, subprocess.TimeoutExpired, OSError) as e:
         raise ReasonerError(type(e).__name__) from e
     finally:
         owlready2.JAVA_EXE, tempfile.tempdir = previous
+        if has_kargs:
+            reasoning._subprocess_kargs = prev_kargs
         shutil.rmtree(private, ignore_errors=True)
     return consistent, int((time.monotonic() - started) * 1000)
 

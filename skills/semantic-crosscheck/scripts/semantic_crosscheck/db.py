@@ -23,6 +23,7 @@ from .result import EXIT_ENV, StageError
 
 SSLMODES = ("disable", "allow", "prefer", "require", "verify-ca", "verify-full")
 UNSUPPORTED_SSL = ("sslcert", "sslkey", "sslpassword", "sslcrl", "sslcrldir", "sslcertmode")
+CONNECT_TIMEOUT_S = 30
 MIN_SERVER_VERSION = 170000   # MERGE ... RETURNING merge_action(), WHEN NOT MATCHED BY SOURCE, COPY ON_ERROR
 _BAD_PERCENT = re.compile(r"%(?![0-9A-Fa-f]{2})|%00")
 _MALFORMED = ("holds a malformed DSN: use postgresql://user[:password]@host[:port]/database and percent-encode "
@@ -153,6 +154,7 @@ def connect(env_name: str, require_pg17: bool = True):
     if not dsn:
         raise StageError(f"environment variable {env_name} is not set (PostgreSQL DSN)", EXIT_ENV)
     kwargs = _parse(dsn, env_name)
+    kwargs.setdefault("timeout", CONNECT_TIMEOUT_S)
     try:
         import pg8000.native
     except ImportError as e:

@@ -10,7 +10,7 @@
 PostgreSQL 17 이상의 부모·자식 계층 데이터(예: BOM)에 대한 데이터 규칙·OWL 분류·Cube 시맨틱 레이어를 설정 하나로 정의하고,<br/>
 이 계층들이 같은 답을 내는지 확인하려는 팀과 그 검증을 맡은 코딩 에이전트(Claude Code · Codex)를 위한 검증 도구입니다.
 
-[![Release](https://img.shields.io/badge/Release-v0.25.0-0D9488?style=for-the-badge)](docs/releases/v0.25.0.md)
+[![Release](https://img.shields.io/badge/Release-v0.26.0-0D9488?style=for-the-badge)](docs/releases/v0.26.0.md)
 [![CI](https://img.shields.io/github/actions/workflow/status/Technoetic/semantic-crosscheck/tests.yml?branch=main&style=for-the-badge&label=CI&logo=github)](https://github.com/Technoetic/semantic-crosscheck/actions/workflows/tests.yml)
 [![MIT](https://img.shields.io/badge/License-MIT-8B5CF6?style=for-the-badge)](LICENSE)
 [![Claude Code](https://img.shields.io/badge/Claude_Code-Plugin-191919?style=for-the-badge&logo=anthropic&logoColor=white)](#claude-code)
@@ -211,7 +211,7 @@ Cube는 항상 Tesseract SQL 플래너(`CUBEJS_TESSERACT_SQL_PLANNER=true`)로 �
 기본 브랜치를 따라가는 설치입니다. 특정 릴리스 태그로 고정하려면 해당 태그를 복제한 뒤 로컬 경로를 등록합니다.
 
 ```bash
-git clone --branch v0.25.0 --depth 1 https://github.com/Technoetic/semantic-crosscheck.git
+git clone --branch v0.26.0 --depth 1 https://github.com/Technoetic/semantic-crosscheck.git
 ```
 
 ```text
@@ -232,7 +232,7 @@ git clone --branch v0.25.0 --depth 1 https://github.com/Technoetic/semantic-cros
 릴리스 태그를 고정해 등록합니다.
 
 ```text
-codex plugin marketplace add Technoetic/semantic-crosscheck --ref v0.25.0
+codex plugin marketplace add Technoetic/semantic-crosscheck --ref v0.26.0
 codex plugin add semantic-crosscheck@semantic-crosscheck-local
 ```
 
@@ -249,7 +249,7 @@ Windows PowerShell에서 실행 정책 때문에 `codex.ps1`이 거부되면 두
    python -m pip install -r "<plugin root>/requirements/reason.txt"
    ```
 
-   `<plugin root>` 예: `~/.claude/plugins/cache/semantic-crosscheck/semantic-crosscheck/0.25.0` 또는 `~/.codex/plugins/cache/semantic-crosscheck-local/semantic-crosscheck/0.25.0`. 패키지가 없으면 `/xc-doctor`가 실제 경로에 맞는 설치 명령을 안내합니다.
+   `<plugin root>` 예: `~/.claude/plugins/cache/semantic-crosscheck/semantic-crosscheck/0.26.0` 또는 `~/.codex/plugins/cache/semantic-crosscheck-local/semantic-crosscheck/0.26.0`. 패키지가 없으면 `/xc-doctor`가 실제 경로에 맞는 설치 명령을 안내합니다.
 2. psql을 사용하는 superuser가 `docs/setup-roles.sql`로 **loader·check 역할**을 만듭니다.
 3. Java를 `PATH`에 추가하거나 `SXC_JAVA`를 지정합니다.
 4. Node.js와 npm을 준비하고 `/xc-install` 또는 `sxc.py cube-install`로 **Cube 어댑터**를 한 번 설치합니다.
@@ -802,7 +802,7 @@ Cube의 기본 오류 로그에는 오류 클래스·코드·대략적인 범주
 | 증명하지 못한 범위 | 이유 |
 |---|---|
 | 빈 층 | 해당 종류의 데이터가 없어 V2 비교 대상 없음 |
-| 0행 비교 | 양쪽 모두 0행인 V1·V2 비교는 통과함. 0.23.0부터 그런 검사를 모두 verify와 report의 `evidence`에, 그중 authored 검사를 report의 `EVIDENCE` 0행 줄에 나열하고, 실행한 모든 비교가 0행인 gold 질의에는 `not_proven` 줄을 남김. 0.25.0부터는 생성 계층끼리의 빈 비교도 알림: pySHACL과 SQL 뷰가 모두 위반 키를 찾지 않은 `shacl:<id>`·`shacl:pair:<id>`(내보낸 행이 하나도 없던 검사는 따로 적음), OWL과 SQL 모두 폐포 쌍이 없는 `v5:closure:<h>`, 키를 하나도 비교하지 않은 `v3:pair:<member>+<member>`는 그대로 통과하되 `detail`에 `empty: true`를 남기고 `not_proven` 줄에 나열함. `verify.gold_observation = "require"`에서도 판정은 같음. 모든 쪽이 비어 있는 `expect` 사례는 아직 알리지 않음. 그래도 비교한 행이 있는 바인딩·층·파라미터를 더하는 일은 사용자 몫임 |
+| 0행 비교 | 양쪽 모두 0행인 V1·V2 비교는 통과함. 0.23.0부터 그런 검사를 모두 verify와 report의 `evidence`에, 그중 authored 검사를 report의 `EVIDENCE` 0행 줄에 나열하고, 실행한 모든 비교가 0행인 gold 질의에는 `not_proven` 줄을 남김. 0.25.0부터는 생성 계층끼리의 빈 비교도 알림: pySHACL과 SQL 뷰가 모두 위반 키를 찾지 않은 `shacl:<id>`·`shacl:pair:<id>`(내보낸 행이 하나도 없던 검사는 따로 적음), OWL과 SQL 모두 폐포 쌍이 없는 `v5:closure:<h>`, 키를 하나도 비교하지 않은 `v3:pair:<member>+<member>`는 그대로 통과하되 `detail`에 `empty: true`를 남기고 `not_proven` 줄에 나열함. `verify.gold_observation = "require"`에서도 판정은 같음. 0.26.0부터는 기대 행·gold·Cube가 모두 0행인 `expect` 통과 사례도 `empty: true`와 `not_proven` 줄을 남김. 그래도 비교한 행이 있는 바인딩·층·파라미터를 더하는 일은 사용자 몫임 |
 | 동등 변이 | 현재 데이터에서 모델을 바꿔도 결과가 같아 V4로 구분 불가. 증인 0은 모델의 공개 멤버에 대한 어떤 Cube 질의도 답이 같을 때만 나와야 하므로 `closure_join_swap` 증인은 폐포 쌍의 두 끝이 서로 다른 지표 행에 붙는 쌍을 셈(두 값이 같아도 셈). 0.13.0까지는 두 끝의 값만 비교해(`sum`·`count`는 행이 없으면 0) 부품마다 값이 같은 갈래·다이아몬드나 한 끝 0·다른 끝 행 없음을 동등으로 보고 실행하지 않았음. Cube는 폐포의 `many_to_one` 조인으로 닿은 지표를 그룹마다 지표 cube의 서로 다른 기본키로 집계하므로 갈래·다이아몬드는 값이 같아도 그룹별 합계가 달라짐. 한 끝 0·다른 끝 행 없음은 `zero_if_null`이 아니면 V1이 NULL과 0을 구분해 드러나고, 끝을 공유하는 다른 쌍이 없고 두 끝 값이 같은 쌍은 공개 차원인 지표 `key`로만 드러남. 이제는 실행해 살아남으면 V4 실패로 보고함 |
 | SQL에서만 비교한 규칙 | `sql_violation` 제약. 한 shape에 class와 범위가 함께 있는 제약은 `sh:class` 속성 shape와, 같은 열 값을 리터럴로 담은 값 술어(`<entity>.<column>/value`)의 범위 속성 shape 두 개로 SHACL과 비교함(0.5.0까지는 SQL에서만 비교). 같은 열에 서로 다른 RDF 값 유형이 필요한 shapes(class와 범위, 서로 다른 class)는 값 그룹별 데이터 그래프로 나눠 SHACL과 비교함. 0.11.0부터 `verify.shacl_pairs = true`를 켜면 다른 제약 없이 전체가 정확히 `t.<a> <op> t.<b>`(`>`·`>=`·`<`·`<=`)인 `sql_violation`만 `sh:lessThan`·`sh:lessThanOrEquals`로 바꿔 `shacl:pair:<id>`로 따로 비교함. 두 열이 NaN·무한대 없는 기본형 `smallint`·`integer`·`bigint`·`numeric`이고(이 형식 위의 도메인은 `column_type`) 대상 키가 중복되지 않을 때만 비교하며, 아니면 `not_run`. `not_run`인 쌍 검사가 있으면 reason과 report는 통과할 수 없으니 열 형식이나 데이터를 고치거나 `verify.shacl_pairs = false`로 꺼야 함. 주석·형 변환·식·`=`·`<>`는 계속 SQL에서만 비교함. 통과는 이 스냅샷에서 pySHACL과 SQL 뷰가 같은 행을 가리킨다는 뜻이며 규칙의 옳음은 증명하지 않음 |
 | 비어 있는 정의 클래스 | OWL과 SQL 양쪽 모두 멤버가 없어 비교가 공허하게 성립(0.25.0부터 `detail`에 `empty: true`) |
@@ -836,23 +836,23 @@ Cube의 기본 오류 로그에는 오류 클래스·코드·대략적인 범주
 <a id="development"></a>
 ## 🧪 검증 근거와 개발
 
-| v0.25.0의 확인 근거 | 범위 |
+| v0.26.0의 확인 근거 | 범위 |
 |---|---|
-| [릴리스 검증 JSON](https://github.com/Technoetic/semantic-crosscheck/releases/download/v0.25.0/verification.json) | 실행 후 실제 공개 소스 커밋, 원시 CI 로그의 테스트·제외·실패·오류, 독립 검증, archive SHA-256 기록 |
+| [릴리스 검증 JSON](https://github.com/Technoetic/semantic-crosscheck/releases/download/v0.26.0/verification.json) | 실행 후 실제 공개 소스 커밋, 원시 CI 로그의 테스트·제외·실패·오류, 독립 검증, archive SHA-256 기록 |
 | [GitHub Actions](https://github.com/Technoetic/semantic-crosscheck/actions/workflows/tests.yml) | 6개 OS/Python 단위 작업 + PostgreSQL·HermiT·Cube 통합 + 보안 검사 = 8개 작업 |
 | 엄격한 통합 runner | 미실행 검사·빈 suite·실패·오류가 있으면 CI 실패 |
 | 실제 runtime 선택 모드 | 완전 실행 환경의 성공·설정 변경·근거 누락 시 PASS 차단을 실행하는 통합 CI |
 | 새 릴리스 브랜치 전체 검증 | 릴리스 메타데이터를 포함한 새 전체 로컬 실행과 공개 CI의 실제 결과를 검증 JSON에 각각 기록하며, 실행 전 성공 집계를 선언하지 않음 |
 | 이번 경계 보강 검증 | 최종 고정 소스의 전체 로컬 실행·독립 검토·공개 CI를 각각 실행한 뒤 실제 결과를 기록한다. 이전 릴리스의 테스트 집계를 이번 버전의 근거로 사용하지 않는다. |
 | 데이터 규칙 | 엄격한 PostgreSQL 17 통합 작업의 데이터 규칙 시험이 모든 규칙 종류와 원자의 컴파일 SQL을 실행하고 독립 Python 평가·직접 쓴 기대 결과와 대조하며, SQL 변이가 `rule_xcheck:<id>` 실패로 드러나는지 확인한다. 실제 실행 결과는 검증 JSON에 기록하며 실행 전에 성공을 선언하지 않는다. |
-| 릴리스 배포 파일 | [소스 ZIP](https://github.com/Technoetic/semantic-crosscheck/releases/download/v0.25.0/semantic-crosscheck-0.25.0.zip) · [SHA256SUMS](https://github.com/Technoetic/semantic-crosscheck/releases/download/v0.25.0/SHA256SUMS) |
+| 릴리스 배포 파일 | [소스 ZIP](https://github.com/Technoetic/semantic-crosscheck/releases/download/v0.26.0/semantic-crosscheck-0.26.0.zip) · [SHA256SUMS](https://github.com/Technoetic/semantic-crosscheck/releases/download/v0.26.0/SHA256SUMS) |
 
-최종 공개 커밋·CI 작업 URL·실제 집계는 실행 후 릴리스와 함께 제공하는 **v0.25.0 검증 JSON**에서 확인합니다. 원시 CI 로그에서 읽은 집계만 공개 커밋의 근거로 사용하며, 이전 구현 단계 검증·새 전체 로컬 검증·전체 엔진 통합 CI를 구분합니다.
+최종 공개 커밋·CI 작업 URL·실제 집계는 실행 후 릴리스와 함께 제공하는 **v0.26.0 검증 JSON**에서 확인합니다. 원시 CI 로그에서 읽은 집계만 공개 커밋의 근거로 사용하며, 이전 구현 단계 검증·새 전체 로컬 검증·전체 엔진 통합 CI를 구분합니다.
 
 릴리스 ZIP은 태그에서 `git archive`로 만듭니다. 명령에 적힌 태그가 있는 clone에서 아래 명령을 실행하면 게시된 ZIP과 대조할 파일이 나옵니다. ZIP에는 커밋 시각이 현지 시각으로 기록되므로 시간대를 UTC+9로 맞추며(`TZ=KST-9`), 압축 수준 `-9`나 `--prefix`를 바꿔도 해시가 달라집니다. 다른 git·zlib 버전에서의 바이트 동일성은 주장하지 않습니다.
 
 ```bash
-TZ=KST-9 git archive --format=zip -9 --prefix=semantic-crosscheck-0.25.0/ -o semantic-crosscheck-0.25.0.zip v0.25.0
+TZ=KST-9 git archive --format=zip -9 --prefix=semantic-crosscheck-0.26.0/ -o semantic-crosscheck-0.26.0.zip v0.26.0
 ```
 
 확인 기록(2026-11-11, v0.22.0 자산): git 2.55.0(Windows), 시간대 UTC+9에서 버전이 0.22.0인 위 명령의 결과는 게시된 `semantic-crosscheck-0.22.0.zip`과 바이트 단위로 같았고, SHA-256이 같은 릴리스의 SHA256SUMS 값과 일치했습니다. 이 기록은 그 자산 하나에 대한 것이며, 위 명령의 버전을 바꿀 때 함께 바꾸지 않습니다.
@@ -863,7 +863,7 @@ TZ=KST-9 git archive --format=zip -9 --prefix=semantic-crosscheck-0.25.0/ -o sem
 python -m unittest discover -s tests -v
 ```
 
-단위 테스트에는 DB가 필요하지 않습니다. Python 패키지는 `requirements/core.txt`와 `requirements/witness.txt`가 필요하며, `witness.txt`의 `z3-solver`가 없으면 일부 테스트가 건너뛰지 않고 실패합니다([CONTRIBUTING.md](CONTRIBUTING.md)). 통합 테스트는 전용 PostgreSQL 17 서버의 superuser 연결을 `SXC_TEST_ADMIN_DSN`으로 지정할 때 실행합니다. 테스트 역할 암호가 필요하면 `SXC_TEST_ROLE_PASSWORD`를 사용합니다. OWL에는 Java와 reason 패키지, Cube에는 이 checkout에서 설치한 어댑터가 필요합니다. `SXC_CUBE_HOME`을 지정하거나 기본 캐시를 쓰고, 어댑터 파일을 바꾸면 `sxc.py cube-install`로 갱신합니다.
+단위 테스트에는 DB가 필요하지 않습니다. `requirements/core.txt`만으로 핵심 단위 테스트가 실행되며, 선택 패키지(`witness.txt`의 `z3-solver`, `sql-structure.txt`의 `pglast`, `reason.txt`)가 필요한 테스트는 패키지가 없을 때 건너뛰고 `SXC_TEST_FULLSTACK=1`에서는 실패합니다([CONTRIBUTING.md](CONTRIBUTING.md)). 통합 테스트는 전용 PostgreSQL 17 서버의 superuser 연결을 `SXC_TEST_ADMIN_DSN`으로 지정할 때 실행합니다. 테스트 역할 암호가 필요하면 `SXC_TEST_ROLE_PASSWORD`를 사용합니다. OWL에는 Java와 reason 패키지, Cube에는 이 checkout에서 설치한 어댑터가 필요합니다. `SXC_CUBE_HOME`을 지정하거나 기본 캐시를 쓰고, 어댑터 파일을 바꾸면 `sxc.py cube-install`로 갱신합니다.
 
 문서 테스트는 README·명령 안내·CI와 실제 CLI, 버전, 데모 출력의 일치를 확인합니다.
 
@@ -912,20 +912,20 @@ CI는 전체 이력을 가진 clone의 작업 트리·이력을 일반 패턴과
 
 **MIT** · [LICENSE](LICENSE). 런타임 의존성을 저장소에 포함하지 않으며 의존성 라이선스는 [THIRD_PARTY.md](THIRD_PARTY.md)에 정리했습니다.
 
-[설계 문서](docs/design.md) · [설정 레퍼런스](skills/semantic-crosscheck/references/config.md) · [데이터 규칙](docs/data-rules.md) · [문제와 함정](skills/semantic-crosscheck/references/pitfalls.md) · [변경 이력](CHANGELOG.md) · [v0.25.0 릴리스 노트](docs/releases/v0.25.0.md)
+[설계 문서](docs/design.md) · [설정 레퍼런스](skills/semantic-crosscheck/references/config.md) · [데이터 규칙](docs/data-rules.md) · [문제와 함정](skills/semantic-crosscheck/references/pitfalls.md) · [변경 이력](CHANGELOG.md) · [v0.26.0 릴리스 노트](docs/releases/v0.26.0.md)
 
 <div align="center">
 
 **한 계층의 설명을 믿기 전에, 다른 계층의 답과 대조합니다.**
 
-[빠른 시작으로 이동 ↑](#quick-start-with-the-demo) · [GitHub 릴리스](https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.25.0)
+[빠른 시작으로 이동 ↑](#quick-start-with-the-demo) · [GitHub 릴리스](https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.26.0)
 
 </div>
 
 <a id="recent-changes"></a>
 ## Recent changes
 
-Notes from recent releases (v0.15.0 to v0.25.0) on optional features and on what they leave unchanged. New users can skip this section. The full history is in the [changelog](CHANGELOG.md).
+Notes from recent releases (v0.15.0 to v0.26.0) on optional features and on what they leave unchanged. New users can skip this section. The full history is in the [changelog](CHANGELOG.md).
 
 Since v0.15.0, authored `gold.expect` cases can opt into local opaque-byte
 [`spec_source` bindings](docs/knowledge-sources.md). Missing or changed evidence
@@ -934,6 +934,8 @@ passes. Source pins add no operational report or grain authority. The optional [
 exports explicitly selected Gold contracts or previews a local bundle against
 current trusted inputs. It performs no execution or import application; PASS
 means scoped metadata completion, with authenticity and correctness unproven.
+
+[v0.26.0](docs/releases/v0.26.0.md) hardens CLI verdict hygiene, child-process and subprocess bounds, opt-in doctor gating, and packaging parity. Early exit-code-2 argument or configuration rejections now remove an unaliased prior `result.json` (and `report.json` / `report.md` for `report`) of that stage while preserving symlink, hardlink and input-alias guards; `grain` propagates exit code 3 on missing database environment; `expect` surfaces standard configuration errors when `spec_source` is absent and marks passing 0-row cases with `empty: true` and a `not_proven` line. Cube child processes now inherit an explicit OS variable allowlist rather than a substring denylist, `pg8000` connections and HermiT Java invocations carry bounded timeouts, closure-table SQL queries quote `naming.closure_table(...)` via `ident.qualified(...)`, and `report` adds opt-in `--require-doctor` / `[verify] doctor_observation = "require"` (default `"disclose"`). Manifests, `THIRD_PARTY.md` (`pglast 7.22`), `commands/*.md` plugin-root paths and Codex notes, tag-pinned Claude Code install instructions, and optional `z3-solver` test skip guards are aligned. Engine code changed, so rerun operational stages after upgrading.
 
 [v0.25.0](docs/releases/v0.25.0.md) discloses comparisons of empty sets that passed without a word. A `shacl:<id>`
 or `shacl:pair:<id>` check where neither pySHACL nor the SQL view flagged a key, a `v5:closure:<h>` check without a
@@ -1049,4 +1051,4 @@ Cube queries and SQL still do not share an MVCC snapshot. See [replay coverage](
 
 설정 하나로 PostgreSQL의 계층·규칙, SHACL, OWL·HermiT, Cube 모델을 만들고 서로와 gold SQL을 비교합니다. `not_run`은 통과가 아니며, 전체 판정은 `report`와 `not_proven`을 함께 읽습니다. 원본 조회와 생성 스키마 기록을 분리하고, 데모 적재는 별도의 loader 역할을 사용합니다. 0.22.0부터 선택 단계 `data-rules`가 별도 규칙 파일의 데이터 규칙을 PostgreSQL과 독립 Python으로 두 번 평가해 둘이 같을 때만 판정하며, 찾은 키는 출력 스키마의 뷰에서 사용자와 함께 조회합니다.
 
-요구 환경은 **Python 3.11 이상 · PostgreSQL 17 이상 · Java 11 이상 · Node.js 22 이상**입니다. Linux Cube에는 **glibc 2.34** 이상(x64), 2.30 이상(arm64)이 필요합니다. Codex 설치 태그는 **v0.25.0**, 라이선스는 MIT입니다.
+요구 환경은 **Python 3.11 이상 · PostgreSQL 17 이상 · Java 11 이상 · Node.js 22 이상**입니다. Linux Cube에는 **glibc 2.34** 이상(x64), 2.30 이상(arm64)이 필요합니다. Codex 설치 태그는 **v0.26.0**, 라이선스는 MIT입니다.

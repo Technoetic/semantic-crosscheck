@@ -1637,8 +1637,27 @@ and a V3 pair test that compared no key (`shape_q.compared_no_key`) carry `empty
 a pair test: no key of the together answer was compared, while the alone answers may hold keys), and a `not_proven`
 line (section 7; `v5:defined:<name>` had its line before). Statuses, the V4 baseline, the evidence object, its
 schema and `RULE_VERSION` do not change, in either `gold_observation` mode; `report.md` lists the lines with every
-stage's. An `expect` case whose sides are all empty is still not disclosed. The data-rules pattern subset is
+stage's. Since 0.26.0 a passing `expect` case whose expected, gold and Cube rows are all empty also carries `empty = true` and a `not_proven` line. The data-rules pattern subset is
 documented for what it guarantees (the same syntax read the same way, the refused constructs) and what it does not (a
 backtracking bound, the same chosen match: [data-rules.md](data-rules.md#pattern-subset-text_quantity)); a difference
 there that changes the rule's output stays a disagreement (`paths_disagree`), and one that changes no output leaves
 the verdict the same under either reading.
+
+## v0.26.0 runtime isolation, verdict hygiene and opt-in doctor gate
+
+- **Stale own-verdict cleanup on exit 2:** early argument, preflight and configuration rejections remove an existing
+  unaliased `result.json` of the invoked stage (and `report.json` / `report.md` for `report`) only when the file is a
+  regular single-link file in an existing non-symlink directory, matches no CLI or configuration input path, and parses
+  as a valid receipt of that stage. Input-alias and concurrent-writer guards remain intact.
+- **Exit-code parity:** `grain` propagates `StageError` exit code 3 (`EXIT_ENV`) on missing DSN or unreachable database
+  instead of collapsing it into an internal error; `expect` surfaces standard `config.load` errors when `spec_source` is
+  not used while retaining full suppression whenever `spec_source` is present.
+- **Runtime bounds and child environment allowlist:** `cube_run.child_env` passes only an explicit allowlist of OS and
+  locale variables (`INHERITED_ENV_ALLOWLIST`) plus the Cube runtime variables, `db.connect` sets a bounded 30-second
+  socket timeout (`CONNECT_TIMEOUT_S`), `owl.hermit` bounds the HermiT Java subprocess (`HERMIT_TIMEOUT_S = 60`), and
+  closure-table queries in `closure_oracle`, `sweep` and `shape_q` quote `naming.closure_table(...)` with
+  `ident.qualified(...)`.
+- **Opt-in `doctor` gate and `expect` empty-case disclosure:** `[verify] doctor_observation = "disclose" | "require"`
+  (default `"disclose"`) and `sxc.py report --require-doctor` let callers require a current passing `doctor` result in
+  `report` without changing default report verdicts; passing `expect` cases with zero expected, gold and Cube rows set
+  `empty = true` in `detail` and record a `not_proven` line.

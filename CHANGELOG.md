@@ -1,5 +1,69 @@
 # Changelog
 
+## [0.26.0] - 2026-11-15
+
+Release notes: [docs/releases/v0.26.0.md](docs/releases/v0.26.0.md).
+
+Verdict hygiene on early exit-code-2 rejections, Cube child-environment allowlisting, bounded PostgreSQL connect and
+HermiT subprocess timeouts, opt-in `doctor` gating in `report`, empty-pass disclosure in `expect`, and packaging and
+documentation contract alignment. No runtime dependency or pin changes.
+
+### Added
+
+- Opt-in `doctor` gate in `report`: `[verify] doctor_observation = "disclose" | "require"` (default `"disclose"`) and
+  `sxc.py report --require-doctor` require `doctor` to be present, current for the configuration and engine digests,
+  and passing before `report` exits 0. Default `"disclose"` keeps existing `report` verdicts unchanged.
+- `expect` empty-comparison disclosure: a passing `expect:<gold>[<i>]` case where `expected_rows`, `gold_rows` and
+  `cube_rows` are all 0 sets `empty: true` in check `detail` and appends a `not_proven` line in `expect/result.json`.
+
+### Fixed
+
+- Early exit-code-2 CLI rejections (`argparse` parse errors, missing `--config`, and pre-execution argument guards in
+  `sxc.py`, `sql-structure`, `semantic-preflight` and `okf`) could leave an earlier `PASS` `result.json` (or
+  `report.json` / `report.md`) on disk when callers forgot to check `$?`. `discard_own_verdict` and
+  `discard_own_report` now remove a prior own receipt when it is a regular single-link file in an existing non-symlink
+  directory, resolves to no input or `--config` path, and decodes as an sxc receipt for that stage, while preserving
+  all input-alias and concurrent-writer replacement protections.
+- `grain` caught `StageError` under its generic `Exception` handler and returned exit code 1 (`unexpected_error`)
+  instead of exit code 3 (`EXIT_ENV`) when the PostgreSQL DSN variable was unset or unreachable. `StageError` now
+  propagates with its exit code.
+- `expect` suppressed all `config.load` messages behind a generic exit-code-2 string even when `[[gold.expect]]`
+  declared no `spec_source`. Standard `config.load` diagnostics now surface when `spec_source` is absent, while
+  configs naming `spec_source` keep full path/message suppression.
+
+### Security and runtime hardening
+
+- `cube_run.child_env` replaces its substring-based environment denylist with `INHERITED_ENV_ALLOWLIST` (explicit OS
+  path, temp, home and locale variables only), preventing unrelated host tokens or proxy variables from reaching the
+  Node.js Cube child process (`SECURITY.md` security policy updated).
+- `db.connect` passes a bounded 30-second socket timeout (`CONNECT_TIMEOUT_S = 30`) to `pg8000.native.Connection`, and
+  `owl.hermit` bounds the HermiT Java subprocess to 60 seconds (`HERMIT_TIMEOUT_S = 60`), turning `TimeoutExpired` into
+  `ReasonerError`.
+- `closure_oracle`, `sweep` and `shape_q` quote `naming.closure_table(...)` through `ident.qualified(...)`, matching
+  the identifier-quoting contract documented in `SECURITY.md`.
+
+### Packaging, documentation and tests
+
+- `.codex-plugin/plugin.json` `interface.longDescription` is condensed below 1,200 characters (enforced in
+  `tests/test_packaging.py`).
+- `THIRD_PARTY.md` lists the optional `pglast 7.22` (`GPL-3.0-or-later`, `requirements/sql-structure.txt`) dependency
+  in the Python packages table, and `tests/test_packaging.py` checks both `requirements/witness.txt` and
+  `requirements/sql-structure.txt` pins.
+- Z3-dependent unit tests in `tests/test_constraint_audit.py` and `tests/test_search_extensions.py` skip cleanly when
+  `z3-solver` is absent unless `SXC_TEST_FULLSTACK=1` is set (`CONTRIBUTING.md` and `README.md` updated).
+- `sxc.py`'s module docstring lists all 21 CLI stages (`okf` and `knowledge-evolution` added), all 21 `commands/*.md`
+  files include the Codex `${CLAUDE_PLUGIN_ROOT}` substitution note and plugin-rooted `requirements/` and
+  `docs/setup-roles.sql` paths, and `README.md` adds a tag-pinned Claude Code clone/install option. CI and
+  `tools/leak_scan.py` (with `.githooks`) enforce these contracts.
+
+### Upgrading
+
+- Engine code changed, so the engine fingerprint changed: `build`, `reason`, `cube` and `verify` results written by
+  v0.25.0 are stale (`inputs_changed`); rerun the operational stages after upgrading. Existing configurations and
+  dependency pins require no edits.
+
+[0.26.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.26.0
+
 ## [0.25.0] - 2026-11-14
 
 Release notes: [docs/releases/v0.25.0.md](docs/releases/v0.25.0.md).

@@ -458,6 +458,7 @@ def _run_cases(res: Result, conn, fcfg, env: str, work: Path, planned: list, kin
     for c in ran:   # gold and Cube may have read different fixture rows: no case is shown to have passed
         if c.status == "pass":
             c.status = "not_run"
+            c.detail.pop("empty", None)
             c.detail["reason"] = reason
             res.not_proven.append(f"{c.id}: not run ({reason})")
 

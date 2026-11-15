@@ -99,6 +99,7 @@ class SearchExtensionsTest(unittest.TestCase):
             ce.run(None, args, self.root)
         connect.assert_not_called()
 
+    @requires_z3
     def test_schema_edits_invalidate_replay_before_connect(self):
         schema_path = self.spec()
         args = self.args(witness_schema=str(schema_path))
@@ -117,6 +118,7 @@ class SearchExtensionsTest(unittest.TestCase):
                 ce.run(None, args, self.root)
             connect.assert_not_called()
 
+    @requires_z3
     def test_equal_sql_stays_not_run(self):
         args = self.args(witness_schema=str(self.spec()))
         with patch.object(ce.db, 'connect', return_value=SimpleNamespace(close=lambda: None)), patch.object(ce, 'evaluate', return_value={'equal': True}):

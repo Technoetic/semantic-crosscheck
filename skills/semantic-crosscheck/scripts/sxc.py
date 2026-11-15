@@ -37,9 +37,16 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from semantic_crosscheck import VERSION, config, mutation_coverage, provenance  # noqa: E402
 from semantic_crosscheck.result import (  # noqa: E402
-    EXIT_CONFIG, EXIT_FAIL, Result, StageError, argv_option, discard,
-    discard_own_report, discard_own_verdict, inputs_fingerprint,
+    EXIT_CONFIG, EXIT_FAIL, Result, StageError, _protected_resolved_set,
+    _real_existing_dir, argv_option, discard, discard_own_report,
+    discard_own_verdict, inputs_fingerprint,
 )
+
+_UNRESOLVED = object()
+_STANDALONE_NO_CFG = {
+    "counterexample", "cube-replay", "tlp", "shacl-corpus",
+    "shacl-repair", "knowledge-evolution", "boundary-schema",
+}
 
 STAGES = {
     "doctor": "doctor",
@@ -441,12 +448,13 @@ def _audit_cli_inputs(argv, cli):
     return argparse.Namespace(**values)
 
 
-def _audit_usage_failure(args):
+def _audit_usage_failure(args, raw_argv=()):
     from semantic_crosscheck import constraint_audit
     out = Path(args.out) if args.out else Path.cwd() / '.sxc'
     try:
         constraint_audit.prepare_run(args, out)
     except StageError:
+        discard_own_verdict(out, 'counterexample', protected_paths=raw_argv, config_hint=args.config)
         out = None  # Unsafe aliases or output errors must not overwrite a source.
     res = Result('counterexample', inputs={'constraint_audit': {'mode': 'constraint_audit'}})
     res.add('stage', 'error', '', reason='invalid_constraint_audit_arguments')
@@ -490,8 +498,9 @@ def _diagnostic_cli_inputs(argv):
 def _diagnostic_output(args):
     if args.out:
         return Path(args.out)
-    cfg = Path(args.config or DEFAULT_CONFIG) if args.stage == "grain" else None
-    return (cfg.resolve().parent if cfg is not None and cfg.is_file() else Path.cwd()) / ".sxc"
+    if args.stage == "grain":
+        return (Path(args.config).parent if args.config else Path.cwd()) / ".sxc"
+    return Path.cwd() / ".sxc"
 
 
 def _diagnostic_prepare(args, out):
@@ -643,18 +652,33 @@ def main(argv=None) -> int:
         args = (parser(audit_errors=True) if audit_inputs is not None or diagnostic_inputs is not None else cli).parse_args(argv)
     except _AuditUsageError:
         return (_diagnostic_usage_failure(diagnostic_inputs, argv) if diagnostic_inputs is not None
-                else _audit_usage_failure(audit_inputs))
+                else _audit_usage_failure(audit_inputs, argv))
     except SystemExit as exc:
         if exc.code:
             known = next((tok for tok in argv if tok in STAGES), None)
             if known:
-                cfg_opt = argv_option(argv, ("--config",))
-                out_opt = argv_option(argv, ("--out",))
-                cand = Path(out_opt) if out_opt else (Path(cfg_opt).parent / ".sxc" if cfg_opt else Path.cwd() / ".sxc")
-                if known == "report":
-                    discard_own_report(cand, protected_paths=argv, config_hint=cfg_opt)
+                sub_act = next((a for a in cli._actions if isinstance(a, argparse._SubParsersAction)), None)
+                sub = sub_act.choices.get(known) if sub_act else None
+                opt_strings = tuple(sub._option_string_actions) if (sub is not None and sub.allow_abbrev) else ()
+                cfg_opt = argv_option(argv, ("--config",), option_strings=opt_strings, unresolved=_UNRESOLVED)
+                out_opt = argv_option(argv, ("--out",), option_strings=opt_strings, unresolved=_UNRESOLVED)
+                cfg_hint = cfg_opt if isinstance(cfg_opt, str) else None
+                if out_opt is _UNRESOLVED:
+                    cand = None
+                elif isinstance(out_opt, str):
+                    cand = Path(out_opt)
+                elif known in _STANDALONE_NO_CFG:
+                    cand = Path.cwd() / ".sxc"
+                elif cfg_opt is _UNRESOLVED:
+                    cand = None
+                elif isinstance(cfg_opt, str):
+                    cand = Path(cfg_opt).parent / ".sxc"
                 else:
-                    discard_own_verdict(cand, known.replace("-", "_"), protected_paths=argv, config_hint=cfg_opt)
+                    cand = Path.cwd() / ".sxc"
+                if known == "report":
+                    discard_own_report(cand, protected_paths=argv, config_hint=cfg_hint)
+                else:
+                    discard_own_verdict(cand, known.replace("-", "_"), protected_paths=argv, config_hint=cfg_hint)
         raise
     stage = args.stage
     if stage == 'boundary-schema':
@@ -674,24 +698,26 @@ def main(argv=None) -> int:
     expect_legacy_error = False
     report_cfg = report_cfg_sha = None
     out = Path(args.out) if args.out else None
+    cand_out = out if out is not None else (
+        (Path(args.config).parent if (args.config and stage not in _STANDALONE_NO_CFG) else Path.cwd()) / ".sxc"
+    )
     try:
         if stage == "verify":
             # Verify's output is known even when configuration discovery fails.
-            if out is None:
-                out = (Path(args.config).resolve().parent if args.config else Path.cwd()) / ".sxc"
             try:
-                mutation_coverage.discard_matrix(out, args.config or DEFAULT_CONFIG)
+                if out is not None or _real_existing_dir(cand_out):
+                    mutation_coverage.discard_matrix(cand_out, args.config or DEFAULT_CONFIG)
             except StageError:
-                discard_own_verdict(out, result_name, protected_paths=argv, config_hint=args.config or DEFAULT_CONFIG)
+                discard_own_verdict(cand_out, result_name, protected_paths=argv, config_hint=args.config or DEFAULT_CONFIG)
                 out = None  # An unsafe diagnostic alias must not redirect an error-result write.
                 raise
         if stage == 'expect':
-            cand_expect_out = out if out is not None else (
-                Path(args.config).resolve().parent / '.sxc' if args.config else Path.cwd() / '.sxc'
-            )
-            expect_legacy_error = True
-            cfg_file = config_path('expect', args.config)
-            expect_legacy_error = False
+            try:
+                cfg_file = config_path('expect', args.config)
+            except StageError:
+                discard_own_verdict(cand_out, result_name, protected_paths=argv, config_hint=args.config or DEFAULT_CONFIG)
+                expect_legacy_error = True
+                raise
             legacy_candidate = False
             try:
                 if not cfg_file.is_symlink() and not getattr(cfg_file, 'is_junction', lambda: False)():
@@ -703,7 +729,7 @@ def main(argv=None) -> int:
             try:
                 expect_cfg, expect_cfg_sha, out, cfg_file = _expect_prepare(args, out)
             except StageError:
-                discard_own_verdict(cand_expect_out, result_name, protected_paths=argv, config_hint=cfg_file)
+                discard_own_verdict(cand_out, result_name, protected_paths=argv, config_hint=cfg_file)
                 if legacy_candidate:
                     expect_legacy_error = True
                     out = None
@@ -711,7 +737,7 @@ def main(argv=None) -> int:
                 out = None
                 raise StageError('expect: invalid_or_protected_inputs', EXIT_CONFIG) from None
             except Exception:
-                discard_own_verdict(cand_expect_out, result_name, protected_paths=argv, config_hint=cfg_file)
+                discard_own_verdict(cand_out, result_name, protected_paths=argv, config_hint=cfg_file)
                 out = None
                 raise StageError('expect: invalid_or_protected_inputs', EXIT_CONFIG) from None
         if diagnostic_mode:
@@ -728,6 +754,7 @@ def main(argv=None) -> int:
             try:
                 args._constraint_audit_replay_raw = constraint_audit.prepare_run(args, out)
             except StageError:
+                discard_own_verdict(out, result_name, protected_paths=argv, config_hint=args.config)
                 out = None  # Writing an error result must not overwrite the aliased source.
                 raise
         if stage in {"cube-replay", "tlp", "shacl-corpus"}:
@@ -829,8 +856,30 @@ def main(argv=None) -> int:
         res = provenance.finish(None if diagnostic_mode else cfg, res, revision_start)
     except StageError as e:
         if stage == "report":
-            out = _report_safe_out(out, cfg or report_cfg)
-            discard_report_files(out)
+            if out is None:
+                discard_own_report(cand_out, protected_paths=argv, config_hint=args.config or DEFAULT_CONFIG)
+            elif cfg is None and report_cfg is None:
+                from semantic_crosscheck import contract_evidence
+                try:
+                    contract_evidence.protect_paths((Path(args.config),) if args.config else (), out)
+                    protected_argv, _ = _protected_resolved_set(argv, args.config)
+                    file_targets = (
+                        out / ".gitignore", out / "report.json", out / "report.md",
+                        out / "report" / "result.json", out / "report" / "result.json.part",
+                    )
+                    if any(t.resolve() in protected_argv or t.absolute() in protected_argv for t in file_targets):
+                        out = None
+                except Exception:
+                    out = None
+                if out is None:
+                    discard_own_report(cand_out, protected_paths=argv, config_hint=args.config or DEFAULT_CONFIG)
+                else:
+                    discard_report_files(out)
+            else:
+                out = _report_safe_out(out, cfg or report_cfg)
+                discard_report_files(out)
+        elif out is None:
+            discard_own_verdict(cand_out, result_name, protected_paths=argv, config_hint=args.config or DEFAULT_CONFIG)
         res = Result(result_name)
         if audit_mode:
             res.inputs = {"constraint_audit": {"mode": "constraint_audit"}}

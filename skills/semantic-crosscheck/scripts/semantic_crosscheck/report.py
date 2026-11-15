@@ -309,7 +309,8 @@ def _next_action(results: dict, counted: dict, required: list[str], stale: dict)
     """The first thing to do, in pipeline order: fix a stage that is current and did not pass, or (re)run the stages
     that are stale or missing."""
     if not results:
-        return f"run `sxc.py doctor`, then {', '.join(required)} (for the demo: demo before build), then rerun report"
+        after_doc = [r for r in required if r != "doctor"]
+        return f"run `sxc.py doctor`, then {', '.join(after_doc)} (for the demo: demo before build), then rerun report"
     todo = [s for s in _stage_order(required) if (s in required and s not in results) or (s in stale and counted.get(s) is not None)]
     for stage in _stage_order(required):
         if stage in todo:

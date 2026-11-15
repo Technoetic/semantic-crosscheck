@@ -72,6 +72,7 @@ def protect_paths(paths, out):
 def preflight(cfg, out):
     """Protect declared inputs without requiring readable sidecar contents."""
     if cfg is None:
+        protect_paths((), out)
         return
     protect_paths((cfg.path,), out)
     # Reparse before every deletion/publication, including a Config that used to

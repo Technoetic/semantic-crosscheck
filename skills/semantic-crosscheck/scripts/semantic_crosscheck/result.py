@@ -161,7 +161,7 @@ def require_stage(out_dir: str | Path, stage: str) -> dict:
 _MAX_OWN_VERDICT_BYTES = 4 * 1024 * 1024
 
 
-def argv_option(argv, names: tuple[str, ...]) -> str | None:
+def argv_option(argv, names: tuple[str, ...], *, option_strings: tuple[str, ...] = (), unresolved=None):
     """Extract the last value of an option in `names` from raw CLI tokens without invoking argparse."""
     tokens = list(argv or ())
     if "--" in tokens:
@@ -171,11 +171,21 @@ def argv_option(argv, names: tuple[str, ...]) -> str | None:
         if not isinstance(token, str):
             continue
         opt, sep, val = token.partition("=")
-        if opt in names:
+        matched = opt in names
+        if not matched and option_strings and opt.startswith("--") and len(opt) > 2:
+            hits = [cand for cand in option_strings if cand.startswith(opt)]
+            if len(hits) == 1 and hits[0] in names:
+                matched = True
+            elif len(hits) > 1 and any(h in names for h in hits):
+                found = unresolved
+                continue
+        if matched:
             if sep:
-                found = val
+                found = val if val else unresolved
             elif index + 1 < len(tokens) and isinstance(tokens[index + 1], str) and not tokens[index + 1].startswith("-"):
                 found = tokens[index + 1]
+            else:
+                found = unresolved
     return found
 
 
@@ -186,13 +196,38 @@ def _is_linked(path: Path) -> bool:
         return True
 
 
+def _darwin_alias(path: Path) -> bool:
+    import stat as stat_mod
+    import sys
+    targets = {"/var": "/private/var", "/tmp": "/private/tmp"}
+    if sys.platform != "darwin" or path.as_posix() not in targets:
+        return False
+    try:
+        meta = path.lstat()
+        if not stat_mod.S_ISLNK(meta.st_mode):
+            return False
+        expected = Path(targets[path.as_posix()])
+        target = path.readlink()
+        if not target.is_absolute():
+            target = path.parent / target
+        actual = expected.lstat()
+        return (
+            target == expected
+            and stat_mod.S_ISDIR(actual.st_mode)
+            and not bool(getattr(actual, "st_file_attributes", 0) & 0x400)
+            and path.resolve(strict=True) == expected
+        )
+    except OSError:
+        return False
+
+
 def _real_existing_dir(path: Path) -> bool:
     try:
         cur = path.absolute()
         if not cur.exists() or _is_linked(cur) or not cur.is_dir():
             return False
         for parent in cur.parents:
-            if _is_linked(parent):
+            if _is_linked(parent) and not _darwin_alias(parent):
                 return False
         return True
     except OSError:
@@ -204,9 +239,16 @@ def _protected_resolved_set(protected_paths, config_hint) -> tuple[set[Path], by
     items = list(protected_paths or ())
     if config_hint is not None:
         items.append(config_hint)
+    candidates = []
     for item in items:
         if not item:
             continue
+        candidates.append(item)
+        if isinstance(item, str) and item.startswith("-") and "=" in item:
+            _, _, rhs = item.partition("=")
+            if rhs:
+                candidates.append(rhs)
+    for item in candidates:
         try:
             p = Path(item)
             resolved.add(p.resolve())
@@ -220,7 +262,10 @@ def _protected_resolved_set(protected_paths, config_hint) -> tuple[set[Path], by
             if not _is_linked(cp) and cp.is_file():
                 st = cp.stat()
                 if st.st_size <= _MAX_OWN_VERDICT_BYTES:
-                    cfg_bytes = cp.read_bytes()
+                    raw_cfg = cp.read_bytes()
+                    cfg_bytes = b"\n".join(
+                        line for line in raw_cfg.splitlines() if not line.lstrip().startswith(b"#")
+                    )
         except OSError:
             cfg_bytes = b"result.json report.json report.md"
     return resolved, cfg_bytes
@@ -260,7 +305,7 @@ def discard_own_verdict(out_dir: str | Path | None, stage: str, *, protected_pat
         return False
     try:
         doc = json.loads(raw.decode("utf-8"))
-        if not isinstance(doc, dict) or doc.get("schema_version") != SCHEMA_VERSION:
+        if not isinstance(doc, dict) or doc.get("schema_version") != SCHEMA_VERSION or doc.get("stage") != stage:
             return False
         if not isinstance(doc.get("provenance"), dict) or not isinstance(doc.get("runtime_evidence"), dict):
             return False
@@ -298,7 +343,7 @@ def discard_own_report(out_dir: str | Path | None, *, protected_paths=(), config
         raw = _unlinked_regular_bytes(rm, protected)
         if raw is not None:
             try:
-                txt = raw.decode("utf-8")
+                txt = raw.decode("utf-8").replace("\r\n", "\n")
                 if txt.startswith("# semantic-crosscheck report\n") and "\n| Stage | Status |" in txt:
                     rm.unlink()
             except (UnicodeError, OSError):

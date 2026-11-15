@@ -150,6 +150,12 @@ class DoctorGateReportTest(unittest.TestCase):
         # Default disclose mode still passes without doctor
         self.assertEqual(report.run(cfg, argparse.Namespace(), out).status, "pass")
 
+        # Empty results with --require-doctor must not list "doctor" twice in next_safe_action
+        empty_out = self.tmp / "empty_out"
+        empty_res = report.run(cfg, argparse.Namespace(require_doctor=True), empty_out)
+        self.assertEqual(empty_res.status, "not_run")
+        self.assertNotIn("doctor`, then doctor", empty_res.next_safe_action)
+
         # CLI --require-doctor fails (not_run missing) when doctor is absent
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
             rc = sxc.main(["report", "--config", str(cfg_path), "--out", str(out), "--require-doctor"])
@@ -211,6 +217,16 @@ class ExpectZeroRowDisclosureTest(unittest.TestCase):
                 res.not_proven,
             )
             self.assertFalse(any("expect:q[1]" in line for line in res.not_proven), res.not_proven)
+
+            # If expect:fixture detects mid-run tampering, demoted not_run checks must not retain empty=True
+            res_tampered = Result("expect")
+            tampered_end = {"fixture_sha256": "c" * 64, "tables_sha256": "b" * 64, "rows": 1}
+            with patch.object(expect, "share_locks", lambda *_a, **_k: contextlib.nullcontext(True)),                  patch.object(expect, "fixture_digest", side_effect=[digest, tampered_end]),                  patch.object(cube_run, "serve", lambda *_a, **_k: contextlib.nullcontext(object())),                  patch.object(expect, "run_case", side_effect=[(status, dict(detail)), (status2, dict(detail2))]):
+                expect._run_cases(res_tampered, object(), cfg, "SXC_EXPECT_DSN", work, planned, {}, [], digest, {})
+            self.assertEqual(res_tampered.status, "error")
+            c0 = next(c for c in res_tampered.checks if c.id == "expect:q[0]")
+            self.assertEqual(c0.status, "not_run")
+            self.assertNotIn("empty", c0.detail)
 
 
 if __name__ == "__main__":

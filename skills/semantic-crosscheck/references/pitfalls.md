@@ -82,6 +82,21 @@ gold SQL and `crosscheck.toml` avoid them too.
   that day are left out (a row at 12:00 on the last day is not counted). Compare the date instead,
   `col::date BETWEEN CAST(:from AS date) AND CAST(:to AS date)`, or write the window half-open,
   `col >= CAST(:from AS date) AND col < CAST(:to AS date) + 1`.
+- **Do not compare a `timestamp` column with a `timestamptz` value.** PostgreSQL converts the column
+  to `timestamptz` in the session `TimeZone` for the comparison. Across a daylight-saving change that
+  conversion does not keep the column's order: a local time in the skipped hour can convert to a later
+  instant than the first times after it. An index scan assumes the order and stops at the first row
+  that fails the condition, so it can miss rows that a sequential scan counts. On PostgreSQL 17.11
+  with `TimeZone` set to `America/New_York`, 73 rows five minutes apart from 00:00 to 06:00 on
+  2026-03-08 and the condition `ts < timestamptz '2026-03-08 07:30:00+00'` gave 36 rows by a
+  sequential scan and 30 by an index scan (the six rows from 03:00 to 03:25 were missed), and 73 by
+  both with `TimeZone` set to UTC (`tests/test_pitfalls_dates_pg.py`). The gold query then disagrees
+  with a generated layer, or with itself under another plan, for a reason that is not in the data.
+  Keep both sides the same type: a `timestamp` column against a `timestamp` value
+  (`CAST(:at AS timestamp)`, or the date forms above) and a `timestamptz` column against a
+  `timestamptz` value. The harness does not set `TimeZone` for the gold SQL (only the fixture digest
+  of `expect` fixes it to UTC), so the gold SQL runs in the time zone the server or role gives the
+  session; fixing it to UTC removes the plan dependence but also moves a window meant in local time.
 - **Read-only sessions come from `PGOPTIONS`.** The check role can write to the output schema, so Cube
   is not read-only by privilege alone. The runner removes every inherited `PG*`, `CUBEJS_*` and `SXC_*`
   variable, `NODE_OPTIONS` and every variable holding a `postgres://` URL, and sets

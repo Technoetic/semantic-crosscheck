@@ -7,8 +7,9 @@ test builds that example in a temporary table and counts it under a sequential s
 73 in UTC) and miss the rows the pitfall names, and the same-type forms the pitfall recommends must give one answer
 under both plan settings in both zones. The two forms that can use the index on `ts` are checked to use it under the
 index settings; the form that casts the column to `date` cannot, so it runs as a sequential scan under both. If a
-server release stops showing the difference, this test fails and the pitfall text has to change with it. The text check needs no database; the counts run when SXC_TEST_ADMIN_DSN is set and use
-only a temporary table of the admin session.
+server release stops showing the difference, this test fails and the pitfall text has to change with it. The text
+check needs no database; the counts run when SXC_TEST_ADMIN_DSN is set and use only a temporary table of the admin
+session.
 """
 
 import re

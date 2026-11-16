@@ -156,9 +156,9 @@ class ReferenceSplitTest(unittest.TestCase):
 
 
 class SupportWindowTest(unittest.TestCase):
-    """v0.27.0 gives, for each minimum runtime, the day its upstream support ends and the page the day was read from
-    (checked 2026-11-16). The days are the projects' published schedules, not something this checkout enforces, so
-    the test holds the column, the days and their sources, and nothing in it fails when one of the days passes."""
+    """v0.27.0 gives, for each minimum runtime, the date or month its upstream support ends and the page it was read
+    from (checked 2026-11-16). The dates are the projects' published schedules, not something this checkout enforces,
+    so the test holds the column, the dates and their sources, and nothing in it fails when one of the dates passes."""
 
     ROWS = {"Python + pg8000": ("2027-10", "https://peps.python.org/pep-0664/"),
             "PostgreSQL": ("2029-11-08", "https://www.postgresql.org/support/versioning/"),

@@ -17,22 +17,23 @@ behaviour changes.
   `TimeZone` for the gold SQL, so the pitfall asks for the same type on both sides.
   `tests/test_pitfalls_dates_pg.py` builds the quoted example on the integration server (73 rows,
   `America/New_York`: 36 by a sequential scan, 30 by an index scan, 73 under UTC), checks which rows the index scan
-  misses, and holds the same-type forms to one answer under both plans in both zones.
+  misses, and holds the same-type forms to one answer under both plan settings in both zones.
 - README requirements table: a column with the upstream end of support of each minimum version (Python 3.11,
   PostgreSQL 17, Java 11 as Eclipse Temurin 11, Node.js 22) and the page each date was read from, checked on
   2026-11-16. Node.js 22 ends first (2027-04-30); raising the Node.js minimum goes with moving the Cube pin.
 - `docs/reference/cli.md` (stages, options, exit codes, optional diagnostics, the business-definition preflight),
   `docs/reference/results.md` (reading results, evidence kinds, a failing run) and `docs/reference/check-ids.md`
-  (the check ids): the README's reference sections with their text unchanged. Each document adds a title and a
-  one-sentence introduction; heading levels, relative links and anchors were adjusted.
+  (the check ids): the README's reference sections. Each document starts with a title and a two-sentence
+  introduction; the moved text is otherwise unchanged apart from heading levels, relative links, anchors and
+  section separator lines.
 
 ### Changed
 
-- README: the reference sections moved to `docs/reference/` (1,054 to 770 lines). Each explicit anchor of
-  the moved sections (`#stages`, `#reading-results`, `#evidence-kinds`, `#reading-a-failure`, `#check-catalogue`,
-  `#recent-changes`, `#optional-diagnostic-contracts`) and the anchor of the preflight heading
-  (`#offline-business-definition-preflight`) keep a short stub that links on, so outside links to them still land. The English "Recent changes" prose is replaced by links to
-  this changelog and the release notes.
+- README: the reference sections moved to `docs/reference/` (1,054 to 770 lines). Each explicit anchor of the
+  moved or replaced sections (`#stages`, `#reading-results`, `#evidence-kinds`, `#reading-a-failure`,
+  `#check-catalogue`, `#recent-changes`, `#optional-diagnostic-contracts`) and the anchor of the preflight heading
+  (`#offline-business-definition-preflight`) keep a short stub that links on, so outside links to them still land.
+  The English "Recent changes" prose is replaced by links to this changelog and the release notes.
 - `skills/semantic-crosscheck/adapters/cube/package-lock.json`: `npm update body-parser qs joi follow-redirects
   @azure/identity @azure/msal-node fast-xml-parser --package-lock-only --ignore-scripts`, within the declared ranges:
   12 packages changed and 2 added (`is-in-ssh`, `powershell-utils`, both MIT). `npm audit --package-lock-only`

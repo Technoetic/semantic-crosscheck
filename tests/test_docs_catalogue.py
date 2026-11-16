@@ -35,7 +35,7 @@ PLACEHOLDER = re.compile(r"<[^<>]*>")
 def user_documents() -> list[Path]:
     skill = ROOT / "skills" / "semantic-crosscheck"
     return [ROOT / "README.md", ROOT / "SECURITY.md", ROOT / "CHANGELOG.md", DESIGN,
-            *sorted((ROOT / "docs" / "releases").glob("v*.md")), skill / "SKILL.md", *sorted((skill / "references").glob("*.md")),
+            *sorted((ROOT / "docs" / "reference").glob("*.md")), *sorted((ROOT / "docs" / "releases").glob("v*.md")), skill / "SKILL.md", *sorted((skill / "references").glob("*.md")),
             *sorted((ROOT / "commands").glob("*.md"))]
 
 

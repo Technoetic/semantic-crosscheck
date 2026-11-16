@@ -25,6 +25,8 @@ from semantic_crosscheck import config, evidence, shape_q, stage_reason
 
 ROOT = pgfixture.ROOT
 README = ROOT / "README.md"
+REFERENCE = ROOT / "docs" / "reference"
+RESULTS = REFERENCE / "results.md"   # the README's "reading results" section, a document of its own since v0.27.0
 SKILL = ROOT / "skills" / "semantic-crosscheck" / "SKILL.md"
 DESIGN = ROOT / "docs" / "design.md"
 CONTRACT = ROOT / "docs" / "contract-report.md"
@@ -113,20 +115,21 @@ class OldSentencesTest(unittest.TestCase):
         v4_row = next(line for line in readme.split("\n") if line.startswith("| **V4"))
         self.assertNotIn("기준 질의가 잡아내는가", v4_row)
         self.assertNotIn("gold suite의 실패 항목이 변형 모델을 검출", readme)
-        for path in (README, SKILL, DESIGN, *sorted(COMMANDS.glob("*.md"))):
+        for path in (README, SKILL, DESIGN, *sorted(REFERENCE.glob("*.md")), *sorted(COMMANDS.glob("*.md"))):
             with self.subTest(document=path.name):
                 self.assertNotIn("gold suite cannot see", flat(read(path)))
         self.assertNotIn("no gold query observes", read(PACKAGE / "stage_verify.py"))
 
     def test_the_documents_say_what_a_pass_means(self):
-        for path in (README, SKILL, DESIGN, COMMANDS / "xc-verify.md", COMMANDS / "xc-report.md"):
+        for path in (README, SKILL, DESIGN, REFERENCE / "check-ids.md", COMMANDS / "xc-verify.md",
+                     COMMANDS / "xc-report.md"):
             with self.subTest(document=path.name):
                 self.assertIn(NEW_SENTENCE, read(path))
         self.assertIn("Only `detection = authored` means that a gold item did", flat(read(SKILL)))
         self.assertIn("gold 질의가 변화를 검출한 것은 `detection = authored`일 때뿐",
                       next(line for line in read(README).split("\n") if line.startswith("| **V4")))
-        self.assertIn('<a id="evidence-kinds"></a>\n### 근거의 종류 읽기', read(README))
-        self.assertIn("](#evidence-kinds)", read(README))
+        self.assertIn('<a id="evidence-kinds"></a>\n## 근거의 종류 읽기', read(RESULTS))
+        self.assertIn("](docs/reference/results.md#evidence-kinds)", read(README))
 
 
 class RegistryTest(unittest.TestCase):
@@ -158,8 +161,8 @@ class RegistryTest(unittest.TestCase):
                 generic = facet.replace(f"{h}_", "<h>_").replace(f"m_{target}", "m_<m>")
                 self.assertEqual(generic, documented[op])
 
-    def test_report_kinds_in_readme(self):
-        part = read(README).split("### 근거의 종류 읽기", 1)[1].split("\n| 종류 | 두 쪽 | 예 |\n", 1)[1]
+    def test_report_kinds_in_the_results_reference(self):
+        part = read(RESULTS).split("## 근거의 종류 읽기", 1)[1].split("\n| 종류 | 두 쪽 | 예 |\n", 1)[1]
         rows = [line for line in part.split("\n\n", 1)[0].split("\n") if line.startswith("| `")]
         self.assertEqual([ticked(r.split(" | ")[0])[0] for r in rows], list(evidence.REPORT_KINDS))
 

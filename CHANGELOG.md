@@ -1,5 +1,63 @@
 # Changelog
 
+## [0.27.0] - 2026-11-16
+
+Release notes: [docs/releases/v0.27.0.md](docs/releases/v0.27.0.md).
+
+A documented `timestamp`/`timestamptz` pitfall with a PostgreSQL test of its plan dependence, an in-range refresh of
+the Cube adapter lockfile that clears six npm advisories without moving the Cube pin, the upstream end-of-support
+dates of the minimum runtimes, and a README that moves its reference sections into `docs/reference/`. No engine
+behaviour changes.
+
+### Added
+
+- `skills/semantic-crosscheck/references/pitfalls.md`: "Do not compare a `timestamp` column with a `timestamptz`
+  value." Across a daylight-saving change the conversion to the session `TimeZone` does not keep the column's order,
+  so an index scan and a sequential scan of the same gold query can count different rows. The harness does not set
+  `TimeZone` for the gold SQL, so the pitfall asks for the same type on both sides.
+  `tests/test_pitfalls_dates_pg.py` builds the quoted example on the integration server (73 rows,
+  `America/New_York`: 36 by a sequential scan, 30 by an index scan, 73 under UTC), checks which rows the index scan
+  misses, and holds the same-type forms to one answer under both plans in both zones.
+- README requirements table: a column with the upstream end of support of each minimum version (Python 3.11,
+  PostgreSQL 17, Java 11 as Eclipse Temurin 11, Node.js 22) and the page each date was read from, checked on
+  2026-11-16. Node.js 22 ends first (2027-04-30); raising the Node.js minimum goes with moving the Cube pin.
+- `docs/reference/cli.md` (stages, options, exit codes, optional diagnostics, the business-definition preflight),
+  `docs/reference/results.md` (reading results, evidence kinds, a failing run) and `docs/reference/check-ids.md`
+  (the check ids): the README's reference sections, moved without change of content apart from heading levels and
+  relative links.
+
+### Changed
+
+- README: the reference sections moved to `docs/reference/` (1,054 to 755 lines). Each old anchor (`#stages`,
+  `#reading-results`, `#check-catalogue`, `#optional-diagnostic-contracts`, `#recent-changes`) keeps a short stub that
+  links on, so outside links to those anchors still land. The English "Recent changes" prose is replaced by links to
+  this changelog and the release notes.
+- `skills/semantic-crosscheck/adapters/cube/package-lock.json`: `npm update body-parser qs joi follow-redirects
+  @azure/identity @azure/msal-node fast-xml-parser --package-lock-only --ignore-scripts`, within the declared ranges:
+  12 packages changed and 2 added (`is-in-ssh`, `powershell-utils`, both MIT). `npm audit --package-lock-only`
+  reports 5 unique advisories instead of 11. The `@cubejs-backend/*` packages stay at 1.8.3; `package.json`, the
+  native module pins and the Node.js minimum are unchanged. `tests/test_cube_unit.py` holds the six refreshed
+  packages outside the advised ranges and the Cube packages at the pin.
+- Tests that read the moved README sections read `docs/reference/`; the document contract tests
+  (`tests/test_docs_cli.py`, `tests/test_docs_catalogue.py`, `tests/test_packaging.py`) include the reference
+  documents, and `tests/test_docs_readme.py` holds the stubs and every link between the README and those documents.
+
+### Security
+
+- The five remaining npm advisories are three for basic-ftp and one each for elliptic and graphql-scalars. Updating
+  every package within its declared range leaves the same five, so clearing them needs a change this release does
+  not make (a newer Cube pin or package overrides). The adapter listens on 127.0.0.1 only. `THIRD_PARTY.md` records
+  the refresh.
+
+### Upgrading
+
+- The adapter's `package-lock.json` changed, so an adapter installed by v0.26.0 reads as stale until
+  `sxc.py cube-install` runs again. The engine fingerprint covers the lockfile and the package version, so `build`,
+  `reason`, `cube` and `verify` results written by v0.26.0 are stale (`inputs_changed`); rerun the operational
+  stages. Configurations and the Python dependency pins need no edits.
+
+[0.27.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.27.0
+
 ## [0.26.0] - 2026-11-15
 
 Release notes: [docs/releases/v0.26.0.md](docs/releases/v0.26.0.md).

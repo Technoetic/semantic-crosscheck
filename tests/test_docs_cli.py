@@ -23,6 +23,7 @@ from semantic_crosscheck.result import EXIT_CONFIG, StageError
 
 ROOT = pgfixture.ROOT
 README = ROOT / "README.md"
+CLI_REFERENCE = ROOT / "docs" / "reference" / "cli.md"   # the README's stage section, a document of its own since v0.27.0
 COMMANDS = ROOT / "commands"
 WORKFLOW = ROOT / ".github" / "workflows" / "tests.yml"
 SKILL_DIR = ROOT / "skills" / "semantic-crosscheck"
@@ -47,7 +48,7 @@ def read(path: Path) -> str:
 
 def documents() -> list[Path]:
     return [README, ROOT / "SECURITY.md", ROOT / "THIRD_PARTY.md", ROOT / "CHANGELOG.md", ROOT / "docs" / "design.md",
-            *sorted((ROOT / "docs" / "releases").glob("v*.md")), SKILL_DIR / "SKILL.md", *sorted((SKILL_DIR / "references").glob("*.md")),
+            *sorted((ROOT / "docs" / "reference").glob("*.md")), *sorted((ROOT / "docs" / "releases").glob("v*.md")), SKILL_DIR / "SKILL.md", *sorted((SKILL_DIR / "references").glob("*.md")),
             *sorted(COMMANDS.glob("*.md"))]
 
 
@@ -130,16 +131,18 @@ class OptionsTest(unittest.TestCase):
                 self.assertTrue(hinted)
                 self.assertLessEqual(hinted, stage_options(stage))
 
-    def test_readme_documents_the_common_options_and_every_stage(self):
+    def test_readme_documents_the_common_options_and_the_reference_every_stage(self):
         text = read(README)
         for option in ("--config", "--out", "--quiet", "--version"):
             with self.subTest(option=option):
                 self.assertIn(option, text)
+        self.assertIn("](docs/reference/cli.md)", text)
+        reference = read(CLI_REFERENCE)
         for stage in stage_parsers():
             with self.subTest(stage=stage):
-                self.assertIn(f"| `{stage}` |", text)
+                self.assertIn(f"| `{stage}` |", reference)
                 for option in stage_options(stage) - {"--config", "--out", "--quiet"}:
-                    self.assertIn(option, text)
+                    self.assertIn(option, reference)
 
     def test_workflow_command_lines_parse(self):
         argvs = workflow_invocations()

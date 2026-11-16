@@ -10,7 +10,7 @@
 PostgreSQL 17 이상의 부모·자식 계층 데이터(예: BOM)에 대한 데이터 규칙·OWL 분류·Cube 시맨틱 레이어를 설정 하나로 정의하고,<br/>
 이 계층들이 같은 답을 내는지 확인하려는 팀과 그 검증을 맡은 코딩 에이전트(Claude Code · Codex)를 위한 검증 도구입니다.
 
-[![Release](https://img.shields.io/badge/Release-v0.26.0-0D9488?style=for-the-badge)](docs/releases/v0.26.0.md)
+[![Release](https://img.shields.io/badge/Release-v0.27.0-0D9488?style=for-the-badge)](docs/releases/v0.27.0.md)
 [![CI](https://img.shields.io/github/actions/workflow/status/Technoetic/semantic-crosscheck/tests.yml?branch=main&style=for-the-badge&label=CI&logo=github)](https://github.com/Technoetic/semantic-crosscheck/actions/workflows/tests.yml)
 [![MIT](https://img.shields.io/badge/License-MIT-8B5CF6?style=for-the-badge)](LICENSE)
 [![Claude Code](https://img.shields.io/badge/Claude_Code-Plugin-191919?style=for-the-badge&logo=anthropic&logoColor=white)](#claude-code)
@@ -89,7 +89,7 @@ flowchart TB
 | **출력** | 검사 ID·건수·상태·수정할 설정 항목·검증하지 못한 범위 |
 | **수정 지점** | 생성된 SQL·YAML 대신 **`crosscheck.toml`**을 수정하고 다시 실행 |
 
-**계층이 일치하면 무엇을 알 수 있는가.** 네 계층은 모두 `crosscheck.toml` 하나에서 생성합니다. 그래서 계층끼리의 일치(SQL 위반 뷰와 SHACL, SQL 폐포·분류와 OWL 추론)는 같은 설정을 서로 다른 생성기와 엔진이 이 데이터에서 같게 해석했다는 것을 보여 줄 뿐, 설정이 옳다는 근거는 아닙니다. 독립 근거는 사람이 독립적으로 작성한 gold SQL, 업무 명세에서 옮겨 쓴 기대 행(`expect` 단계가 읽는 `[[gold.expect]]`의 `authored` 사례), 그리고 생성한 폐포 SQL을 쓰지 않고 원본 연결에서 다시 계산하는 Python 폐포 검산(`v3:closure_oracle:<h>`)입니다. 이미 가지고 있는 Cube 모델·OWL 온톨로지·SHACL shapes 파일은 검증 파이프라인의 입력이 아니며, `build`·`reason`·`cube`·`verify`가 검사하는 모델은 이 설정에서 생성한 것입니다. 0.23.0부터 `report`는 모든 검사를 근거의 종류(사람이 쓴 gold SQL인 authored, 독립 재계산인 recomputed, 생성 계층끼리의 generated, 한쪽뿐인 structural, 변이 검사인 mutation)별로 세어 `report.md`의 `## Evidence` 절과 콘솔의 `EVIDENCE` 줄에 보여 주므로, 통과한 검사 중 생성 계층끼리의 일치가 얼마인지 따로 읽을 수 있습니다. 읽는 법은 [근거의 종류 읽기](#evidence-kinds)에 있습니다. 통과가 증명하지 못하는 범위는 [검증 한계](#limitations-and-not-proven)에 있습니다.
+**계층이 일치하면 무엇을 알 수 있는가.** 네 계층은 모두 `crosscheck.toml` 하나에서 생성합니다. 그래서 계층끼리의 일치(SQL 위반 뷰와 SHACL, SQL 폐포·분류와 OWL 추론)는 같은 설정을 서로 다른 생성기와 엔진이 이 데이터에서 같게 해석했다는 것을 보여 줄 뿐, 설정이 옳다는 근거는 아닙니다. 독립 근거는 사람이 독립적으로 작성한 gold SQL, 업무 명세에서 옮겨 쓴 기대 행(`expect` 단계가 읽는 `[[gold.expect]]`의 `authored` 사례), 그리고 생성한 폐포 SQL을 쓰지 않고 원본 연결에서 다시 계산하는 Python 폐포 검산(`v3:closure_oracle:<h>`)입니다. 이미 가지고 있는 Cube 모델·OWL 온톨로지·SHACL shapes 파일은 검증 파이프라인의 입력이 아니며, `build`·`reason`·`cube`·`verify`가 검사하는 모델은 이 설정에서 생성한 것입니다. 0.23.0부터 `report`는 모든 검사를 근거의 종류(사람이 쓴 gold SQL인 authored, 독립 재계산인 recomputed, 생성 계층끼리의 generated, 한쪽뿐인 structural, 변이 검사인 mutation)별로 세어 `report.md`의 `## Evidence` 절과 콘솔의 `EVIDENCE` 줄에 보여 주므로, 통과한 검사 중 생성 계층끼리의 일치가 얼마인지 따로 읽을 수 있습니다. 읽는 법은 [근거의 종류 읽기](docs/reference/results.md#evidence-kinds)에 있습니다. 통과가 증명하지 못하는 범위는 [검증 한계](#limitations-and-not-proven)에 있습니다.
 
 <details>
 <summary><b>🧭 목차 전체 펼치기</b></summary>
@@ -178,15 +178,17 @@ $$
 <a id="requirements"></a>
 ## 📋 실행 환경
 
-| 구성 요소 | 필요한 단계 | 요구 버전 |
-|---|---|---|
-| Python + pg8000 (`requirements/core.txt`) | 모든 단계 | **Python 3.11 이상** |
-| PostgreSQL | DB를 사용하는 단계 | **PostgreSQL 17 이상** · `MERGE ... WHEN NOT MATCHED BY SOURCE`, `merge_action()`, `COPY ... ON_ERROR` 사용 |
-| psql 클라이언트 | `docs/setup-roles.sql` 실행 | 최근 버전 |
-| owlready2 · pySHACL · rdflib (`requirements/reason.txt`) | `reason` | 파일에 고정된 버전 |
-| Java | `reason`의 HermiT | **Java 11 이상** |
-| Node.js + npm | `cube-install`, `cube`, `verify` | **Node.js 22 이상** |
-| Cube 네이티브 모듈 지원 플랫폼 | `cube`, `verify` | Windows x64 · macOS x64/arm64 · Linux x64/arm64 |
+| 구성 요소 | 필요한 단계 | 요구 버전 | 최소 버전의 상류 지원 종료 |
+|---|---|---|---|
+| Python + pg8000 (`requirements/core.txt`) | 모든 단계 | **Python 3.11 이상** | 2027-10 무렵(보안 수정 종료) · [PEP 664](https://peps.python.org/pep-0664/) |
+| PostgreSQL | DB를 사용하는 단계 | **PostgreSQL 17 이상** · `MERGE ... WHEN NOT MATCHED BY SOURCE`, `merge_action()`, `COPY ... ON_ERROR` 사용 | 2029-11-08(마지막 판) · [PostgreSQL 버전 정책](https://www.postgresql.org/support/versioning/) |
+| psql 클라이언트 | `docs/setup-roles.sql` 실행 | 최근 버전 | — |
+| owlready2 · pySHACL · rdflib (`requirements/reason.txt`) | `reason` | 파일에 고정된 버전 | — |
+| Java | `reason`의 HermiT | **Java 11 이상** | 최소 2027-10까지(Eclipse Temurin 11) · [Adoptium 지원 일정](https://adoptium.net/support/) |
+| Node.js + npm | `cube-install`, `cube`, `verify` | **Node.js 22 이상** | 2027-04-30 · [Node.js 릴리스 일정](https://github.com/nodejs/Release) |
+| Cube 네이티브 모듈 지원 플랫폼 | `cube`, `verify` | Windows x64 · macOS x64/arm64 · Linux x64/arm64 | — |
+
+상류 지원 종료 날짜는 각 프로젝트가 공개한 일정을 2026-11-16에 확인한 값이며, 일정은 바뀔 수 있습니다. 이 저장소가 날짜를 강제하지는 않습니다. 최소 버전 가운데 상류 지원이 가장 먼저 끝나는 것은 Node.js 22(2027-04-30)이며, Node.js 최소 버전을 올리는 일은 Cube 1.8.3 고정을 옮기는 결정과 함께 합니다.
 
 Cube는 항상 Tesseract SQL 플래너(`CUBEJS_TESSERACT_SQL_PLANNER=true`)로 실행하고 `cube:meta`에 Cube 버전과 플래너를 기록합니다. 기록이 없거나 다르면 report가 이전 결과를 최신으로 인정하지 않으므로, 0.3.0에서 만든 cube·verify 결과는 다시 실행합니다. Cube 1.8.3의 파일 크기와 SHA-256은 [native-sha256.json](skills/semantic-crosscheck/adapters/cube/native-sha256.json)에 고정되어 있습니다. Linux는 x64에서 **glibc 2.34** 이상, arm64에서 **glibc 2.30** 이상이 필요하며 musl은 지원하지 않습니다.
 
@@ -211,7 +213,7 @@ Cube는 항상 Tesseract SQL 플래너(`CUBEJS_TESSERACT_SQL_PLANNER=true`)로 �
 기본 브랜치를 따라가는 설치입니다. 특정 릴리스 태그로 고정하려면 해당 태그를 복제한 뒤 로컬 경로를 등록합니다.
 
 ```bash
-git clone --branch v0.26.0 --depth 1 https://github.com/Technoetic/semantic-crosscheck.git
+git clone --branch v0.27.0 --depth 1 https://github.com/Technoetic/semantic-crosscheck.git
 ```
 
 ```text
@@ -232,7 +234,7 @@ git clone --branch v0.26.0 --depth 1 https://github.com/Technoetic/semantic-cros
 릴리스 태그를 고정해 등록합니다.
 
 ```text
-codex plugin marketplace add Technoetic/semantic-crosscheck --ref v0.26.0
+codex plugin marketplace add Technoetic/semantic-crosscheck --ref v0.27.0
 codex plugin add semantic-crosscheck@semantic-crosscheck-local
 ```
 
@@ -249,7 +251,7 @@ Windows PowerShell에서 실행 정책 때문에 `codex.ps1`이 거부되면 두
    python -m pip install -r "<plugin root>/requirements/reason.txt"
    ```
 
-   `<plugin root>` 예: `~/.claude/plugins/cache/semantic-crosscheck/semantic-crosscheck/0.26.0` 또는 `~/.codex/plugins/cache/semantic-crosscheck-local/semantic-crosscheck/0.26.0`. 패키지가 없으면 `/xc-doctor`가 실제 경로에 맞는 설치 명령을 안내합니다.
+   `<plugin root>` 예: `~/.claude/plugins/cache/semantic-crosscheck/semantic-crosscheck/0.27.0` 또는 `~/.codex/plugins/cache/semantic-crosscheck-local/semantic-crosscheck/0.27.0`. 패키지가 없으면 `/xc-doctor`가 실제 경로에 맞는 설치 명령을 안내합니다.
 2. psql을 사용하는 superuser가 `docs/setup-roles.sql`로 **loader·check 역할**을 만듭니다.
 3. Java를 `PATH`에 추가하거나 `SXC_JAVA`를 지정합니다.
 4. Node.js와 npm을 준비하고 `/xc-install` 또는 `sxc.py cube-install`로 **Cube 어댑터**를 한 번 설치합니다.
@@ -407,7 +409,7 @@ python skills/semantic-crosscheck/scripts/sxc.py report --config demo/crosscheck
 
 이 순서에서는 `demo`는 0, `build`는 1, `reason`은 1, `cube`는 0, `verify`는 1, `report`는 1로 종료합니다. 오류 데이터를 적재하는 명령 자체는 성공하지만, 뒤의 검사가 심어 둔 결함을 찾아냅니다.
 
-실패한 검사가 화면에 어떻게 나오고 어떻게 읽는지는 [실패한 실행 읽기](#reading-a-failure)에 예시가 있습니다.
+실패한 검사가 화면에 어떻게 나오고 어떻게 읽는지는 [실패한 실행 읽기](docs/reference/results.md#reading-a-failure)에 예시가 있습니다.
 
 <details>
 <summary><b>🔴 심어 둔 오류와 실제 검사 결과 펼치기</b></summary>
@@ -437,46 +439,9 @@ python skills/semantic-crosscheck/scripts/sxc.py report --config demo/crosscheck
 <a id="stages"></a>
 ## 🛠️ 단계·옵션·종료 코드
 
-```text
-python skills/semantic-crosscheck/scripts/sxc.py <stage> [--config PATH] [--out DIR] [--quiet] [options]
-```
+모든 단계는 `python skills/semantic-crosscheck/scripts/sxc.py <stage> [--config PATH] [--out DIR] [--quiet]` 꼴로 실행합니다. `--config`는 설정 파일, `--out`은 결과 폴더를 정하고, `--quiet`는 요약 한 줄만 출력하게 합니다. `sxc.py --version`은 버전을 표시합니다. 단계 표, 단계별 옵션, 종료 코드, 선택 진단의 옵션은 [단계·옵션·종료 코드 참조](docs/reference/cli.md)에 있습니다.
 
-| 단계 | 역할 | 단계별 옵션 | 주요 산출물 |
-|---|---|---|---|
-| `doctor` | Python·pg8000·DSN·PostgreSQL·검사 역할 권한·선택 구성 요소 확인 | `--require core,reason,cube` | `doctor/result.json` |
-| `demo` | loader 역할로 가상 데이터 적재 | `--variant clean\|dirty`, `--seed N`, `--scale N` | `demo/result.json`, `demo/expected.json` |
-| `build` | 위반 뷰·계층 폐포 생성 | `--hierarchy NAME` | `build/result.json`, `build/build.sql`, `build/shapes.ttl`, `build/fk_review.sql` |
-| `reason` | SHACL ↔ SQL, OWL 일관성·폐포·분류 대조 | `--only shacl,owl`, `--synthetic-witnesses` | `reason/result.json` |
-| `cube` | Cube 모델 생성·시작·검사 | 별도 옵션 없음 | `cube/result.json`, `cube/model/*.yml`, `cube/model.json`, `cube/server.log` |
-| `verify` | V1·V2·V3·V4 검증 | `--only v1,v2,v3,v4`, `--gold ID` | `verify/result.json`, `verify/server.log`, `verify/mutants/*/` |
-| `report` | 필수 단계의 실행·최신성·통과 여부 종합 | `--require-doctor` | `report/result.json`, `report.md`, `report.json` |
-| `cube-install` | 사용자별 고정 Cube 어댑터 설치 | `--home DIR`, `--native-file PATH`, `--force` | `cube_install/result.json`, `cube_install/npm-ci.log`, `cube_install/smoke.log` |
-| `counterexample` | 합성 데이터에서 SQL의 차이·BOM 변환 관계를 검사하고 축소·재현 | `--reference-sql FILE`, `--candidate-sql FILE`, `--metamorphic-sql FILE`, `--mutation-operator NAME`, `--gold-sql FILE`, `--scenario nulls`, `--seed N`, `--max-examples N`, `--max-shrink-steps N`, `--shrink-strategy structured`, `--witness-schema FILE`, `--solver-timeout-ms N`, `--dsn-env NAME`, `--statement-timeout-ms N`, `--constraints FILE`, `--constraint-audit FILE`, `--replay FILE` | `counterexample/result.json`, `counterexample/fixture.json` |
-| `cube-replay` | 고정 합성 데이터를 실제 Cube 원형·변형 모델과 독립 gold SQL로 비교 | `--mutation-operator NAME`, `--allow-scratch-schema`, `--seed N`, `--dsn-env NAME`, `--statement-timeout-ms N`, `--replay FILE` | `cube_replay/result.json`, `cube_replay/fixture.json` |
-| `boundary-schema` | 선언한 단일 스칼라 SQL 비교의 정확한 경계값·NULL에서 기존 witness-v1 스키마를 생성하는 오프라인 실험 | `--spec FILE` | `boundary_schema/result.json`, `boundary_schema/witness-schema.json` |
-| `semantic-preflight` | Offline authored business-definition and structured-plan consistency | `--contract FILE`, `--plan FILE`; explicit `--config FILE` required | `semantic_preflight/result.json` |
-| `sql-structure` | Optional offline PostgreSQL17 AST comparison with authored structural expectations | `--sql FILE`, `--expect FILE`; optional `--out DIR`, `--quiet`; no `--config` | `sql_structure/result.json` |
-| `tlp` | 참·거짓·NULL 분할 검사. 0.10.0부터 선택형 NoREC 조건 건수 비교 | `--spec FILE`, `--oracle tlp\|norec`, `--dsn-env NAME`, `--seed N`, `--max-examples N`, `--statement-timeout-ms N`, `--replay FILE`, `--shrink`, `--max-shrink-steps N` | `tlp/result.json`, `tlp/fixture.json` |
-| `shacl-corpus` | 독립 기대 결과와 pySHACL·Apache Jena의 합성 보고서 비교. 0.9.0부터는 W3C SHACL 시험 모음 core의 프로필 안 사례도 W3C 기대 보고서와 비교 | `--jena-home DIR`, `--timeout-ms N`, `--w3c-suite [DIR]`, `--allow-unpinned-suite` | `shacl_corpus/result.json` |
-| `expect` | 전용 fixture DB에서 gold SQL·Cube를 실행해 `[[gold.expect]]`의 문자 그대로 기대 행과 비교 | `--allow-fixture-database`, `--dsn-env NAME` | `expect/result.json`, `expect/build/`, `expect/cube/`, `expect/server.log` |
-| `data-rules` | 데이터 규칙을 PostgreSQL과 독립 Python으로 각각 평가해 같은지 확인하고, 규칙별 뷰와 문제 품번 뷰를 검증 | `--rule ID` | `data_rules/result.json`, `data_rules/rules.sql` |
-
-나머지 네 단계 `shacl-repair`·`grain`·`okf`·`knowledge-evolution`의 옵션은 영문 부록의 [Optional diagnostic contracts](#optional-diagnostic-contracts) 표에 있습니다.
-
-**공통 옵션**
-
-- `--config PATH`: 명시하면 반드시 존재해야 합니다. 없으면 exit 2이며 단계를 실행하지 않습니다. 생략하면 `./crosscheck.toml`을 찾습니다. `doctor`·`cube-install`은 설정 없이도 실행합니다. 별도 합성 도구 `counterexample`은 설정을 읽지 않으며 `--config`를 거부합니다. `expect`는 운영 설정을 읽지만 fixture DB에만 접속합니다.
-- `--out DIR`: 기본 출력 위치는 설정 옆 `.sxc`입니다. 설정 없이 실행하면 `./.sxc`이며, 새 출력 디렉터리에는 내용 `*`의 `.gitignore`를 만듭니다.
-- `--quiet`: 요약 한 줄만 출력합니다. `sxc.py --version`은 버전을 표시합니다.
-
-| 종료 코드 | 뜻 |
-|:---:|---|
-| **0** | 통과 |
-| **1** | 검사 실패·오류·미실행, 또는 `--only`·`--gold`·`--hierarchy`·`--rule`로 범위를 좁힌 실행 |
-| **2** | 설정·사용법 오류 |
-| **3** | DSN·DB 버전·Python 패키지·Java·Node.js·Cube 어댑터 등 환경 부족 |
-
-[설정 레퍼런스](skills/semantic-crosscheck/references/config.md) · [전체 설계 계약](docs/design.md)
+---
 
 ## 합성 반례와 데이터 버전 추적
 
@@ -561,161 +526,12 @@ Node·Java 버전, 사용한 HermiT와 Cube 설치 파일의 해시도 검증 �
 <a id="reading-results"></a>
 ## 📋 결과 읽기
 
-각 단계의 `result.json`에는 `status`, `checks`의 ID·상태·`config_ref`·건수 정보, `not_proven`, `next_safe_action`이 들어갑니다.
-
-```mermaid
-flowchart TD
-    A["report가 필수 단계와 검사 확인"] --> B{"오류 error?"}
-    B -->|"있음"| E["ERROR · exit 1"]
-    B -->|"없음"| C{"실패 fail?"}
-    C -->|"있음"| F["FAIL · exit 1"]
-    C -->|"없음"| D{"미실행·누락<br/>또는 오래된 결과?"}
-    D -->|"있음"| N["NOT RUN<br/>exit 1"]
-    D -->|"없음"| P["PASS · exit 0<br/>not_proven<br/>범위도 확인"]
-    classDef blocked fill:#fff1f2,stroke:#e11d48,color:#881337
-    classDef passed fill:#f0fdf4,stroke:#16a34a,color:#14532d
-    class E,F,N blocked
-    class P passed
-```
-
-| 표시 | 어떻게 읽는가 |
-|---|---|
-| `error` / `fail` | 검사 자체의 오류 또는 조건 불충족 |
-| `not_run` | 실행하지 못했거나 제외된 검사 · **통과로 바뀌지 않음** |
-| `not_proven` | 통과한 검사가 증명하지 못한 부분 · 판정과 함께 제시 |
-| `config_ref` | 점검·수정할 `crosscheck.toml` 위치 |
-| `next_safe_action` | 원인을 처리하고 다음에 수행할 행동 |
-
-판정 우선순위는 **error → fail → not_run → 모두 pass**입니다. 자원 제한을 넘긴 SHACL·OWL도 `reason=resource_limit`과 명시적 `not_run`을 남깁니다. `--only`·`--gold`·`--hierarchy`·`--rule`로 좁힌 실행을 전체 검증의 완료 근거로 사용하지 않습니다.
-
-`report`는 `build`·`cube`·`verify`를 요구합니다. 설정에 `[ontology]` 또는 `[[shapes]]`가 있으면 `reason`도 필요합니다. 의존 단계보다 먼저 실행한 결과는 오래된 것으로 처리합니다: `build`는 `demo` 뒤, `reason`·`cube`는 `build` 뒤, `verify`는 `build`·`cube` 뒤에 실행합니다. 선택 단계인 `doctor`·`demo`도 실행 결과가 실패이면 보고서를 실패시킵니다.
-
-> [!IMPORTANT]
-> 설정과 gold SQL의 fingerprint가 바뀌면 관련 결과는 `why=inputs_changed`로 오래된 상태가 됩니다. 데이터 버전 추적은 위의 선택 설정으로 연결할 수 있지만, **PostgreSQL·Cube의 모든 세션이 하나의 MVCC snapshot을 공유하지는 않습니다.** 한 번의 검증 동안 입력 데이터를 안정적으로 유지해야 합니다.
-
-<a id="evidence-kinds"></a>
-### 근거의 종류 읽기
-
-0.23.0부터 모든 검사에는 근거의 종류가 하나 있습니다. 종류는 검사가 비교하는 두 쪽이 무엇인지를 말할 뿐, 어느 쪽이 옳다는 뜻은 아닙니다. 판정 규칙과 전체 표는 [설계 문서의 Evidence kinds](docs/design.md#evidence-kinds)에 있습니다.
-
-| 종류 | 두 쪽 | 예 |
-|---|---|---|
-| `authored` | 한쪽이 사람이 쓴 gold SQL의 행이며, 그 SQL에 생성한 텍스트가 그대로 들어 있지 않음. 누가 썼는지만 말하며 gold SQL이 옳거나 설정과 독립이라는 뜻은 아님 | `v1:<gold>`, `v2:<gold>:<stratum>` |
-| `recomputed` | 한쪽을 생성기 모듈을 가져오지 않는 엔진 코드가 원본 행에서 다시 계산. 생성기 코드와 독립일 뿐 설정 항목과 독립은 아님 | `v3:closure_oracle:<h>` |
-| `generated` | 두 쪽 모두 `crosscheck.toml`에서 생성기로 만들었거나, 한 생성 계층을 자기 자신과 비교. 두 번째 엔진(HermiT)을 써도 입력을 생성기가 만들면 여기에 속함 | `v3:closure_oracle:<h>`를 뺀 `v3:*`, `shacl:<id>`, `v5:closure:<h>`, `closure_apply:<h>` |
-| `structural` | 한쪽뿐: 데이터·설정·환경·제공된 모델에 대한 규칙, 실행 범위의 기록 | `shape:<id>`, `cube:meta`, `scope:v1` |
-| `mutation` | V4 변이 검사. 무엇이 변이를 검출했는지는 `detection`에 따로 기록 | `v4:<operator>:<target>` |
-
-gold SQL에 생성한 텍스트가 그대로 있으면(출력 스키마 이름, 생성한 관계의 이름 `<h>_closure`·`<h>_cycles`·`v_shape_<id>`·`v_rule_<id>`·`v_rules_subjects`, 지표 필터의 조건절을 그대로 옮긴 것) 그 gold 질의의 `v1`·`v2` 검사는 generated로 세고, verify가 무엇이 일치했는지 `not_proven` 줄로 알립니다. 규칙 뷰는 일치한 글자 대신 항상 한 항목 `relation:v_rule_*`로 적고, 대소문자는 ASCII 범위에서만 같게 봅니다. 표현을 바꿔 옮긴 복사는 찾지 못합니다.
-
-**V4의 `detection`.** V4 suite는 사람이 쓴 gold 항목을 먼저, 생성한 텍스트가 있는 gold 항목을 그다음, V3 항목을 마지막에 실행하고 처음 통과하지 않은 항목에서 멈춥니다. `v4:<operator>:<target>` 검사의 detail에는 `killed_by`(처음 실패한 항목)와 함께 `detection`, `facet`(연산자가 바꾸는 부분), `gold_comparing`(그 facet을 비교하는 사람이 쓴 gold 질의)이 있습니다.
-
-| `detection` | 뜻 |
-|---|---|
-| `authored` | 다시 실행한 사람이 쓴 gold 항목이 변형 모델에서 실패함. gold 질의가 이 변화를 검출했다는 표시는 이것뿐 |
-| `generated_only` | 다시 실행한 사람이 쓴 gold 항목은 모두 통과했고, 생성 계층끼리의 검사(V3 항목 또는 생성한 텍스트가 있는 gold 항목)만 실패함. 기본 모드에서는 verify가 연산자별 처방을 담은 `not_proven` 줄을 남기고, `"require"` 모드에서는 그 줄 대신 검사가 `fail`이 되어 다음 할 일을 알림(suite 항목이 빠졌으면 `not_run`과 그 사실을 적은 줄) |
-| `unattributed` | 어떤 근거 규칙도 분류하지 못한 항목이 실패함 |
-| `none` | 실패한 항목이 없음(변이가 살아남음) |
-
-다시 실행하는 항목은 V1의 첫 바인딩과 층마다 처음 `verify.mutant_bindings`개의 바인딩뿐이므로, `generated_only`는 이 바인딩에 대해서만 정확합니다. suite가 처음 실패한 항목에서 멈추므로 그 뒤의 항목도 검출했을지는 알 수 없습니다.
-
-**report의 `EVIDENCE` 줄.** verify 결과가 있으면 `report`는 `report.json`에 `evidence` 키, `report.md`에 `## Evidence` 절을 쓰고, 콘솔의 `NOT PROVEN` 줄 뒤·`next:` 앞에 `  EVIDENCE  `로 시작하는 줄을 출력합니다(`--quiet`이면 출력하지 않음). 판정은 바꾸지 않습니다. 줄에는 다음이 나옵니다.
-
-- 종류별 검사 수(통과/전체)와, authored 검사 중 양쪽 모두 0행을 비교한 수
-- 변이: 선택한 연산자 수, 사람이 쓴 항목이 검출한 수, 생성 계층끼리의 검사만 검출한 수와 그 검사 ID, 귀속하지 못한 수, `verify.accepted_gaps`로 허용한 수, 살아남은 수, 판정하지 못한 수, 이 데이터에서 동등한 수, 적용할 수 없는 수
-- facet: 사람이 쓴 gold SQL이 값이 있는 행으로 비교한 수, 사람이 쓴 항목의 변이 검출로 더해진 수, 사람이 쓴 근거가 없는 facet과 그 이유
-- 0행: 양쪽 모두 0행을 비교한 authored 검사(이름이 `empty`인 층의 것은 따로), 모든 비교가 0행이었던 gold 질의, 생성한 텍스트가 있는 gold SQL
-
-facet은 지표·계층·`ontology.class_column`에서 gold 질의가 비교할 수 있는 한 부분입니다(예: `m_<m>.value`, `m_<m>.ts`, `<h>_closure.qty`, 노드 cube와 지표의 조인 `<node>+m_<m>`; 모델의 어느 엔터티 cube에도 분류 열이 없으면 `*.<class_column>` 하나가 `not_in_model` 빈틈으로 남음). 행을 비교했어도 gold 쪽 값이 모두 NULL·0·빈 문자열이면 비교한 것으로 세지 않습니다. 값이 있는 행을 비교했다는 것도 틀린 값을 잡아낸다는 뜻은 아니며, 변화를 보았다는 근거는 사람이 쓴 항목의 변이 검출뿐입니다. facet은 범위를 좁히지 않은 verify 실행에서만 판정하고, 좁힌 실행에서는 `not judged (narrowed verify run)`으로 나옵니다.
-
-**두 가지 모드.** `[verify] gold_observation`의 기본값 `"disclose"`는 알리기만 하고 상태를 바꾸지 않습니다. 예외가 하나 있습니다. gold SQL에 생성한 텍스트가 있으면 그 gold 항목은 V4 suite에서 사람이 쓴 항목 뒤로 가므로, 그런 설정에서는 `killed_by`와 V4 상태가 어느 쪽으로든(`error`·`not_run`이 `pass`로, `pass`가 `error`·`not_run`으로) 달라질 수 있습니다. 선택 값 `"require"`는 알리던 내용을 상태로 바꾸며, 통과를 실패나 `not_run`으로만 바꿉니다. 생성 계층끼리의 검사만 검출한 변이는 `fail`(`generated_only`, `unattributed`)이고 suite 항목이 빠졌으면 `not_run`(`suite_incomplete`), 전체 범위 실행에서는 지표·계층·`ontology.class_column`마다 `gold_evidence:<element>` 검사가 생기며, 모든 비교가 0행인 gold 질의의 통과한 `v1:<gold>`는 `not_run`(`no_rows_compared`)입니다. `error`는 바꾸지 않습니다. `verify.accepted_gaps`에 이미 아는 빈틈(요소, facet, `v4:<operator>:<target>`)을 적으면 그 항목은 실패하지 않고 `accepted by verify.accepted_gaps` 줄로 남습니다. 두 키는 [설정 레퍼런스](skills/semantic-crosscheck/references/config.md)에 있습니다.
-
-<a id="reading-a-failure"></a>
-### 실패한 실행 읽기
-
-아래는 `build`의 검사 두 개가 실패했을 때의 콘솔 출력입니다. 테스트의 기준 출력 파일 [`build_fail/console.txt`](tests/fixtures/compat_v0_21_1/build_fail/console.txt)에서 그대로 옮겼습니다. 파일 첫 줄의 `exit 1`은 종료 코드 기록이라 뺐고, `<out>`은 출력 디렉터리 자리입니다. 이 출력은 데모 설정으로 `build`를 실행하되, 실제 DB 대신 고정된 합성 건수를 돌려주는 테스트용 연결을 써서 얻은 것입니다. 단위 테스트(`tests/test_data_rules_compat.py`)가 현재 코드의 출력과 바이트 단위로 같은지 확인합니다. 실제 DB에서 dirty 데모를 실행하면 심어 둔 결함이 더 많아 실패하는 검사가 더 많습니다.
-
-```text
-[sxc build] FAIL  checks: 4 pass, 2 fail, 0 error, 0 not_run  -> <out>/build/result.json
-  FAIL    shape:child_exists  [shapes[0] child_exists]  violations=2 severity=violation kind=class view=sxc_out.v_shape_child_exists
-  FAIL    shape:open_le_total  [shapes[3] open_le_total]  violations=3 severity=violation kind=sql view=sxc_out.v_shape_open_le_total trusted_sql=True
-  NOT PROVEN  runtime evidence is unbound: actual PostgreSQL, Node, Java, HermiT and selected Cube installation were not bound; local engine/package metadata alone does not establish the executing runtime
-  NOT PROVEN  data revision is unbound: no owner-maintained revision was checked; separate database sessions and cached gold answers are not proven to observe one data version
-  next: shapes failed: inspect the violating keys in sxc_out.v_shape_child_exists, sxc_out.v_shape_open_le_total, then fix the data or the [[shapes]] entries; then rerun build
-```
-
-| 출력에서 볼 곳 | 읽는 법 |
-|---|---|
-| 첫 줄의 `4 pass, 2 fail, 0 error, 0 not_run` | 단계 판정과 검사 수입니다. 실패한 검사가 있어 단계가 FAIL이고 종료 코드는 1입니다. 통과한 검사 4개는 화면에 나오지 않으며(경고 등급이라 위반 1건을 보고하고 통과한 `shape:stock_nonnegative` 포함) 전체 목록은 `result.json`에 있습니다. |
-| `shape:child_exists` | 실패한 검사의 ID입니다. |
-| `[shapes[0] child_exists]` | `config_ref`, 곧 점검할 설정 위치입니다. `crosscheck.toml`의 `[[shapes]]` 항목을 0부터 세어 0번(첫 번째)이고 `id`가 `child_exists`입니다. |
-| `violations=2`, `view=sxc_out.v_shape_child_exists` | 규칙을 어긴 행이 2건입니다. 행 값은 출력하지 않습니다. 어긴 행은 출력 스키마의 이 뷰에 있으므로 DB에서 조회합니다. |
-| `kind=sql`, `trusted_sql=True` | 설정에 적은 `sql_violation` 조건으로 검사한 규칙이라는 표시입니다. |
-| `NOT PROVEN` 두 줄 | 이 실행이 증명하지 못한 범위입니다. 통과한 실행에도 나오며 판정을 바꾸지 않습니다. |
-| `next:` | 다음에 할 일입니다. 두 뷰에서 어긴 행의 키를 확인하고, 데이터나 `[[shapes]]` 항목을 고친 뒤 `build`를 다시 실행하라고 합니다. |
-
-이 상태에서 `report`를 실행하면 최종 판정은 다음과 같습니다([`report_fail/console.txt`](tests/fixtures/compat_v0_21_1/report_fail/console.txt), 같은 실행의 [`report.md`](tests/fixtures/compat_v0_21_1/report_fail/report.md)).
-
-```text
-[sxc report] FAIL  checks: 0 pass, 1 fail, 0 error, 3 not_run  -> <out>/report/result.json
-  FAIL    stage:build  [shapes[0] child_exists]  pass=4 fail=2 error=0 not_run=0 not_proven=2 required=True
-  NOT_RUN stage:reason  reason=missing required=True
-  NOT_RUN stage:cube  reason=missing required=True
-  NOT_RUN stage:verify  reason=missing required=True
-  NOT PROVEN  data revision is unbound: no owner-maintained revision was checked; separate database sessions and cached gold answers are not proven to observe one data version
-  NOT PROVEN  stage doctor was not run, so the check role's privileges (read-only on the source tables) and the optional components were not verified
-  next: fix build first (fail): shapes failed: inspect the violating keys in sxc_out.v_shape_child_exists, sxc_out.v_shape_open_le_total, then fix the data or the [[shapes]] entries; then rerun build
-```
-
-- `report`는 필수 단계마다 `stage:<name>` 검사를 하나씩 둡니다(선택 단계 `doctor`·`demo`는 판정에 쓸 결과가 있을 때만). `stage:build`는 build 결과의 검사 수를 다시 세어 FAIL로 판정하고, 대괄호에는 그 단계에서 처음으로 통과하지 못한 검사의 `config_ref`를 보여 줍니다.
-- `NOT_RUN`과 `reason=missing`은 필수 단계 `reason`·`cube`·`verify`의 결과가 없다는 뜻입니다. 실행하지 않은 단계는 통과로 세지 않습니다.
-- `next:`는 먼저 고칠 단계를 알려 줍니다. 여기서는 build의 `next:`를 그대로 되풀이합니다.
-
-**다음에 할 일**
-
-1. `view=`에 나온 뷰를 DB에서 사용자와 함께 조회해 어긴 행을 확인합니다. 예: `SELECT * FROM sxc_out.v_shape_child_exists;`
-2. 데이터가 틀렸으면 원본 데이터를 고치고, 규칙이 틀렸으면 `config_ref`가 가리키는 `crosscheck.toml` 항목을 고칩니다. 생성된 SQL·YAML은 고치지 않습니다.
-3. 실패한 단계(`build`)를 다시 실행한 뒤, 그 뒤의 단계(`reason`·`cube`·`verify`)와 `report`를 순서대로 실행합니다.
+단계 결과(`result.json`)와 `report`의 줄을 읽는 법은 [결과 읽기 참조](docs/reference/results.md)에 있습니다. 검사마다 붙는 근거의 종류는 [근거의 종류 읽기](docs/reference/results.md#evidence-kinds), 실패한 실행의 예는 [실패한 실행 읽기](docs/reference/results.md#reading-a-failure)에 있습니다.
 
 <a id="check-catalogue"></a>
 ## 🔎 검사 ID 목록
 
-<details>
-<summary><b>단계별 검사 조건 전체 펼치기</b></summary>
-
-| 단계 | 검사 ID | 통과 조건 |
-|---|---|---|
-| doctor | `python`, `pg8000`, `dsn`, `connect`, `pg_version`, `privileges:temporary` | 필수 환경·PostgreSQL 버전·임시 테이블 권한 충족 |
-| doctor | `privileges:select:<entity>`, `privileges:no_write:<entity>`, `output_schema` | 원본 조회 가능, 원본 쓰기·소유·스키마 생성 불가, 출력 스키마 사용 가능 |
-| doctor | `reason:*`, `cube:*` | 필요한 구성 요소 준비; 선택 요소 누락은 not_proven으로 보고 |
-| demo | `demo:rows:<table>`, `demo:copy_on_error` | 적재 건수가 생성 기준과 일치, 잘못된 행만 COPY에서 제외 |
-| build | `shape:<id>` | 위반 없음; warning 규칙은 건수를 보고하고 통과 |
-| build | `closure:<h>`, `closure_apply:<h>` | 순환 정책·최대 깊이 충족, 적용한 폐포가 재계산과 일치 |
-| build | `rule_view:<id>`, `rule_subjects:view` | 0.22.0부터, `[data_rules]`의 `views = true`일 때만: 현재 규칙 파일로 규칙별 조회 뷰 `v_rule_<id>`와 문제 키 뷰 `v_rules_subjects`를 생성. 뷰의 행이 맞는지는 data-rules가 확인 |
-| reason | `shacl:<id>` | pySHACL의 위반 대상과 SQL 위반 키 일치 |
-| reason | `shacl:meta:generated` | 0.10.0부터: 생성한 규칙을 shacl-shacl 구문 규칙의 부분집합으로 사전 검사 |
-| reason | `shacl:pair:<id>` | 0.11.0부터, `verify.shacl_pairs = true`일 때만: `t.<a> <op> t.<b>` 꼴 `sql_violation`을 SHACL 속성 쌍으로 바꾼 pySHACL 위반 대상과 SQL 위반 키 일치 |
-| reason | `owl:consistency`, `v5:closure:<h>`, `v5:defined:<name>` | OWL 일관성, OWL의 폐포·정의 클래스가 SQL과 일치 |
-| reason | `v5:witness:<name>` | 선택한 합성 예제에서 HermiT·SQL이 독립 기대 결과와 일치; 실제 데이터의 공허성은 별도 유지 |
-| cube | `cube:model`, `cube:meta`, `cube:gold_members:<gold>` | 모델 생성, 공개 멤버 목록 정확(Cube 버전·SQL 플래너 기록), gold 질의 멤버 존재·공개 |
-| verify | `v1:<gold>`, `v2:<gold>:<stratum>` | Cube 타입에 맞춘 기준 SQL·Cube 행 일치. 양쪽 모두 0행인 비교도 통과하며 `evidence`의 0행 목록에 남음. 0.23.0부터 `verify.gold_observation = "require"`에서는 모든 비교가 0행인 gold 질의의 통과한 `v1:<gold>`가 `not_run`(`no_rows_compared`) |
-| verify | `v3:total:<member>`, `v3:additive:<member>:<member>`, `v3:pair:<member>+<member>` | 합계·그룹 합(NULL 그룹과 독립 SQL 비교 포함)·지표 조합 일치 |
-| verify | `v3:closure_oracle:<h>` | 원본 연결의 독립 계산과 저장 폐포의 정확한 수량·논리 경로 수·최단/최장 깊이 일치 |
-| verify | `v3w:pair_witness:<member>+<member>` | 0.11.0부터, `verify.existence_witness = true`일 때만: 표본·조각 지표 쌍에서 단독 응답에 빠진 키가 설정의 필터로도 사실 행이 없고 결합 값이 비어 있음(NULL). 단독 응답에 있는 키는 확인하지 않음. 쌍 검사 자체의 판정은 증인이 실패해도 바뀌지 않음 |
-| verify | `v4:<operator>:<target>` | 다시 실행한 suite 항목(gold 항목 또는 V3 항목) 하나가 변형 모델에서 실패(`killed_by`). gold 질의가 검출했다는 뜻은 `detection = authored`일 때뿐이며, `generated_only`는 생성 계층끼리의 검사만 실패했다는 뜻. 0.23.0부터 `verify.gold_observation = "require"`에서는 `generated_only`·`unattributed`가 실패(`verify.accepted_gaps`에 없을 때) |
-| verify | `gold_evidence:<element>` | 0.23.0부터, `verify.gold_observation = "require"`이고 전체 범위 실행일 때만: 지표·계층·`ontology.class_column`마다 모든 facet이 사람이 쓴 gold 질의와 값이 있는 행으로 비교되었거나, 사람이 쓴 항목의 변이 검출이 있거나, `verify.accepted_gaps`에 있음 |
-| report | `stage:<name>` | 단계가 실행되었고 최신이며 통과 |
-| build·reason·cube·verify / report | `data_revision:stable`, `data_revision:current` | 구성된 데이터 버전이 안정적이며 현재 근거와 일치; 조회 오류는 실패로 닫음 |
-| build·reason·cube·verify / report | `runtime_evidence:stable`, `runtime_evidence:current` | 선택한 실제 실행 환경 근거가 안정적이며 현재와 일치; 누락·변경·조회 실패 시 기존 PASS 재사용 차단 |
-| counterexample | `counterexample:search`, `counterexample:query`, `counterexample:recheck`, `counterexample:inputs`, `counterexample:artifact` | 합성 SQL 차이와 축소·재현 범위; 오류·미발견은 동등성 증명 불가, 재생 파일 크기 상한 초과 시 저장 거부 |
-| expect | `expect:<gold>[<i>]`, `expect:build`, `expect:cube`, `expect:fixture`, `expect:cases` | fixture에서 gold SQL과 Cube가 모두 기대 행과 일치; 서로 같은데 기대 행과 다르면 `common_mode`(authored)·`regression`(captured) 실패, build 전과 사례 전후에 잰 fixture 테이블 해시가 다르면 통과 불가(그 시점들의 비교일 뿐 한 시점의 같은 데이터를 보장하지는 않음) |
-| data-rules | `data_rules:snapshot`, `data_rules:key:<entity>` | 0.22.0부터: 하나의 READ ONLY REPEATABLE READ 스냅샷에서 행 예산·게이트·내보내기를 마침, 노드 키(와 `key`로 보고하는 엔터티의 키)에 NULL·중복 없음 |
-| data-rules | `rule:<id>`, `rule_xcheck:<id>`, `rule_example:<id>` | 컴파일한 PostgreSQL과 독립 Python 평가의 결과가 같고 직접 쓴 예제 행과도 같음. `violation` 규칙이 행을 찾으면 실패, `warning` 규칙은 건수를 보고하고 통과. 두 평가가 다르면 `paths_disagree`, 서로 같은데 예제와 다르면 `common_mode`로 규칙은 `not_run` |
-| data-rules | `rule_lookup:<id>`, `rule_subjects:lookup` | `v_rule_<id>`·`v_rules_subjects`가 합의된 행을 정해진 순서(`ord`)로 정확히 반환. build가 지금의 규칙 파일로 만들지 않은 뷰는 `view_stale` |
-
-조기 중단의 `stage`, doctor의 `database`, demo의 `demo:load`, verify의 `v4:suite`, 범위를 나타내는 `scope:*`, 설치의 `cube_install:*`까지 포함한 전체 목록은 [설계 문서의 카탈로그](docs/design.md#6-check-catalogue)를 참고합니다.
-
-</details>
+검사 ID 목록은 [검사 ID 참조](docs/reference/check-ids.md)에 있습니다. 정식 목록과 판정 규칙은 [설계 문서 6절](docs/design.md#6-check-catalogue)입니다.
 
 ---
 
@@ -836,23 +652,23 @@ Cube의 기본 오류 로그에는 오류 클래스·코드·대략적인 범주
 <a id="development"></a>
 ## 🧪 검증 근거와 개발
 
-| v0.26.0의 확인 근거 | 범위 |
+| v0.27.0의 확인 근거 | 범위 |
 |---|---|
-| [릴리스 검증 JSON](https://github.com/Technoetic/semantic-crosscheck/releases/download/v0.26.0/verification.json) | 실행 후 실제 공개 소스 커밋, 원시 CI 로그의 테스트·제외·실패·오류, 독립 검증, archive SHA-256 기록 |
+| [릴리스 검증 JSON](https://github.com/Technoetic/semantic-crosscheck/releases/download/v0.27.0/verification.json) | 실행 후 실제 공개 소스 커밋, 원시 CI 로그의 테스트·제외·실패·오류, 독립 검증, archive SHA-256 기록 |
 | [GitHub Actions](https://github.com/Technoetic/semantic-crosscheck/actions/workflows/tests.yml) | 6개 OS/Python 단위 작업 + PostgreSQL·HermiT·Cube 통합 + 보안 검사 = 8개 작업 |
 | 엄격한 통합 runner | 미실행 검사·빈 suite·실패·오류가 있으면 CI 실패 |
 | 실제 runtime 선택 모드 | 완전 실행 환경의 성공·설정 변경·근거 누락 시 PASS 차단을 실행하는 통합 CI |
 | 새 릴리스 브랜치 전체 검증 | 릴리스 메타데이터를 포함한 새 전체 로컬 실행과 공개 CI의 실제 결과를 검증 JSON에 각각 기록하며, 실행 전 성공 집계를 선언하지 않음 |
-| 이번 경계 보강 검증 | 최종 고정 소스의 전체 로컬 실행·독립 검토·공개 CI를 각각 실행한 뒤 실제 결과를 기록한다. 이전 릴리스의 테스트 집계를 이번 버전의 근거로 사용하지 않는다. |
+| 이번 판의 검증 | 최종 고정 소스의 전체 로컬 실행·독립 검토·공개 CI를 각각 실행한 뒤 실제 결과를 기록한다. 이전 릴리스의 테스트 집계를 이번 버전의 근거로 사용하지 않는다. |
 | 데이터 규칙 | 엄격한 PostgreSQL 17 통합 작업의 데이터 규칙 시험이 모든 규칙 종류와 원자의 컴파일 SQL을 실행하고 독립 Python 평가·직접 쓴 기대 결과와 대조하며, SQL 변이가 `rule_xcheck:<id>` 실패로 드러나는지 확인한다. 실제 실행 결과는 검증 JSON에 기록하며 실행 전에 성공을 선언하지 않는다. |
-| 릴리스 배포 파일 | [소스 ZIP](https://github.com/Technoetic/semantic-crosscheck/releases/download/v0.26.0/semantic-crosscheck-0.26.0.zip) · [SHA256SUMS](https://github.com/Technoetic/semantic-crosscheck/releases/download/v0.26.0/SHA256SUMS) |
+| 릴리스 배포 파일 | [소스 ZIP](https://github.com/Technoetic/semantic-crosscheck/releases/download/v0.27.0/semantic-crosscheck-0.27.0.zip) · [SHA256SUMS](https://github.com/Technoetic/semantic-crosscheck/releases/download/v0.27.0/SHA256SUMS) |
 
-최종 공개 커밋·CI 작업 URL·실제 집계는 실행 후 릴리스와 함께 제공하는 **v0.26.0 검증 JSON**에서 확인합니다. 원시 CI 로그에서 읽은 집계만 공개 커밋의 근거로 사용하며, 이전 구현 단계 검증·새 전체 로컬 검증·전체 엔진 통합 CI를 구분합니다.
+최종 공개 커밋·CI 작업 URL·실제 집계는 실행 후 릴리스와 함께 제공하는 **v0.27.0 검증 JSON**에서 확인합니다. 원시 CI 로그에서 읽은 집계만 공개 커밋의 근거로 사용하며, 이전 구현 단계 검증·새 전체 로컬 검증·전체 엔진 통합 CI를 구분합니다.
 
 릴리스 ZIP은 태그에서 `git archive`로 만듭니다. 명령에 적힌 태그가 있는 clone에서 아래 명령을 실행하면 게시된 ZIP과 대조할 파일이 나옵니다. ZIP에는 커밋 시각이 현지 시각으로 기록되므로 시간대를 UTC+9로 맞추며(`TZ=KST-9`), 압축 수준 `-9`나 `--prefix`를 바꿔도 해시가 달라집니다. 다른 git·zlib 버전에서의 바이트 동일성은 주장하지 않습니다.
 
 ```bash
-TZ=KST-9 git archive --format=zip -9 --prefix=semantic-crosscheck-0.26.0/ -o semantic-crosscheck-0.26.0.zip v0.26.0
+TZ=KST-9 git archive --format=zip -9 --prefix=semantic-crosscheck-0.27.0/ -o semantic-crosscheck-0.27.0.zip v0.27.0
 ```
 
 확인 기록(2026-11-11, v0.22.0 자산): git 2.55.0(Windows), 시간대 UTC+9에서 버전이 0.22.0인 위 명령의 결과는 게시된 `semantic-crosscheck-0.22.0.zip`과 바이트 단위로 같았고, SHA-256이 같은 릴리스의 SHA256SUMS 값과 일치했습니다. 이 기록은 그 자산 하나에 대한 것이며, 위 명령의 버전을 바꿀 때 함께 바꾸지 않습니다.
@@ -912,143 +728,28 @@ CI는 전체 이력을 가진 clone의 작업 트리·이력을 일반 패턴과
 
 **MIT** · [LICENSE](LICENSE). 런타임 의존성을 저장소에 포함하지 않으며 의존성 라이선스는 [THIRD_PARTY.md](THIRD_PARTY.md)에 정리했습니다.
 
-[설계 문서](docs/design.md) · [설정 레퍼런스](skills/semantic-crosscheck/references/config.md) · [데이터 규칙](docs/data-rules.md) · [문제와 함정](skills/semantic-crosscheck/references/pitfalls.md) · [변경 이력](CHANGELOG.md) · [v0.26.0 릴리스 노트](docs/releases/v0.26.0.md)
+[설계 문서](docs/design.md) · [설정 레퍼런스](skills/semantic-crosscheck/references/config.md) · [데이터 규칙](docs/data-rules.md) · [문제와 함정](skills/semantic-crosscheck/references/pitfalls.md) · [변경 이력](CHANGELOG.md) · [v0.27.0 릴리스 노트](docs/releases/v0.27.0.md)
 
 <div align="center">
 
 **한 계층의 설명을 믿기 전에, 다른 계층의 답과 대조합니다.**
 
-[빠른 시작으로 이동 ↑](#quick-start-with-the-demo) · [GitHub 릴리스](https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.26.0)
+[빠른 시작으로 이동 ↑](#quick-start-with-the-demo) · [GitHub 릴리스](https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.27.0)
 
 </div>
 
 <a id="recent-changes"></a>
-## Recent changes
+## 최근 변경
 
-Notes from recent releases (v0.15.0 to v0.26.0) on optional features and on what they leave unchanged. New users can skip this section. The full history is in the [changelog](CHANGELOG.md).
-
-Since v0.15.0, authored `gold.expect` cases can opt into local opaque-byte
-[`spec_source` bindings](docs/knowledge-sources.md). Missing or changed evidence
-stops execution before DB; completion drift invalidates affected expectation
-passes. Source pins add no operational report or grain authority. The optional [OKF metadata diagnostic](docs/okf.md)
-exports explicitly selected Gold contracts or previews a local bundle against
-current trusted inputs. It performs no execution or import application; PASS
-means scoped metadata completion, with authenticity and correctness unproven.
-
-[v0.26.0](docs/releases/v0.26.0.md) hardens CLI verdict hygiene, child-process and subprocess bounds, opt-in doctor gating, and packaging parity. Early exit-code-2 argument or configuration rejections now remove an unaliased prior `result.json` (and `report.json` / `report.md` for `report`) of that stage while preserving symlink, hardlink and input-alias guards; `grain` propagates exit code 3 on missing database environment; `expect` surfaces standard configuration errors when `spec_source` is absent and marks passing 0-row cases with `empty: true` and a `not_proven` line. Cube child processes now inherit an explicit OS variable allowlist rather than a substring denylist, `pg8000` connections and HermiT Java invocations carry bounded timeouts, closure-table SQL queries quote `naming.closure_table(...)` via `ident.qualified(...)`, and `report` adds opt-in `--require-doctor` / `[verify] doctor_observation = "require"` (default `"disclose"`). Manifests, `THIRD_PARTY.md` (`pglast 7.22`), `commands/*.md` plugin-root paths and Codex notes, tag-pinned Claude Code install instructions, and optional `z3-solver` test skip guards are aligned. Engine code changed, so rerun operational stages after upgrading.
-
-[v0.25.0](docs/releases/v0.25.0.md) discloses comparisons of empty sets that passed without a word. A `shacl:<id>`
-or `shacl:pair:<id>` check where neither pySHACL nor the SQL view flagged a key, a `v5:closure:<h>` check without a
-closure pair on either side and a V3 pair test that compared no key now carry `empty: true` in their detail and a
-NOT PROVEN line; the SHACL line also names the checks whose export held no row at all. Statuses, the `evidence`
-object and its rule version do not change, also with `verify.gold_observation = "require"`. On the clean demo reason
-prints one more NOT PROVEN line. The data-rules documentation now says what the `text_quantity` pattern subset does
-not do: Python and PostgreSQL read its syntax the same way but can choose different matches from the same position
-(PostgreSQL the longest, Python the first its backtracking finds), which is a disagreement whenever it changes the
-rule's output, never a pass. The pitfalls reference gives gold date windows for `timestamp` columns that include
-the whole last day. Engine code changed, so rerun the operational stages after upgrading.
-
-[v0.24.0](docs/releases/v0.24.0.md) adds an opt-in [mutation observation matrix](docs/mutation-matrix.md).
-Set `[verify] mutant_observation = "all"` to continue observing selected baseline-passing replay items after
-the first non-pass, bounded by `mutant_max_items`. The authoritative first-detector verdict remains the same;
-`verify/mutation-matrix.json` is diagnostic only and distinguishes observed mismatches, errors and unexecuted
-cells. It does not grant report authority or establish complete semantic coverage. The default `"first"` mode
-keeps early stopping. A separate [authored join/aggregate corpus](docs/join-aggregate-fixtures.md) exercises
-duplicate inner joins, SQL NULL handling and row/non-NULL counts versus sums using literal expectations,
-independent standard-library arithmetic and PostgreSQL companion tests. No new runtime dependency or CLI stage
-is added. Engine code changed, so rerun operational stages after upgrading.
-
-[v0.23.0](docs/releases/v0.23.0.md) says what kind of evidence each check is: authored (hand-written gold SQL), recomputed (the independent closure recomputation), generated (two layers generated from the same configuration), structural (one side) or mutation (V4). A passing `v4:<operator>:<target>` check records in `detection` whether a replayed authored gold item or only a check between generated layers failed against the mutant; only `authored` means that a gold query detected the change. verify adds an `evidence` key and not_proven lines for generated-only kills, facets of measures and hierarchies without authored evidence, gold queries whose every comparison had zero rows and gold SQL that contains generated text verbatim; report adds a `## Evidence` section, an `evidence` key and `  EVIDENCE  ` console lines. Statuses do not change by default, except V4 statuses and `killed_by` for a configuration whose gold SQL contains generated text (it now runs after the authored gold items). The opt-in `verify.gold_observation = "require"` turns the disclosures into statuses; `verify.accepted_gaps` names known gaps. Engine code changed, so rerun the operational stages after upgrading.
-
-[v0.22.1](docs/releases/v0.22.1.md) is a documentation and unit-test release: it corrects statements in this README, the command documents and the plugin descriptions, and adds 14 unit tests. No stage, check, option, result format, configuration key or dependency changes, and the only product-code change is the version constant. The engine fingerprint changes with it, so rerun the operational stages after upgrading.
-
-[v0.22.0](docs/releases/v0.22.0.md) adds an optional [`data-rules` stage](docs/data-rules.md). Typed rules from a separate rule file are evaluated twice on one read-only snapshot, as compiled PostgreSQL and as an independent standard-library Python evaluation, and a rule gets a verdict only when both agree and its authored examples hold. With `views = true` (the default) build creates lookup views, so the keys a rule found are read in the database with the user while results keep counts and ids only. Configurations without `[data_rules]` keep their build output, results and reports byte for byte, apart from the engine fingerprint. Agreement of the two evaluations does not prove that a rule is the right business rule.
-
-Since v0.21.1, [opt-in contract/plan report evidence](docs/contract-report.md), an optional [PostgreSQL SQL structure diagnostic](docs/sql-structure.md) and independent [bag/provenance-scope fixtures](docs/provenance-fixtures.md) are available. Configurations without the paired preflight selection retain existing report authority. Missing, changed or non-passing evidence cannot satisfy the opted-in report gate. SQL parsing and synthetic fixtures are separate supported-subset checks, not business-truth or query-equivalence proofs.
-
-- [`boundary-schema`](docs/boundary-schema.md) derives a small exact scalar
-  domain from a declared integer, numeric(p,s) or date comparison. It runs
-  offline and emits a schema consumed by the existing `--witness-schema` search.
-  This is a supported-subset experiment, not general SQL parsing or equivalence.
-- [`tlp --shrink`](docs/tlp.md) opts into structured reduction of TLP/NoREC
-  discrepancies. A source-bound v2 replay rechecks the original, accepted steps
-  and final fixture; default runs and valid v1 replays keep their contracts.
-- Previous exact Cube JSON/Decimal, Gold SQL metadata and bounded HTTP response
-  contracts remain in force. Core runtime dependencies and engine pins remain unchanged; optional SQL structure checks require a separately installed parser. Default pipeline stages and non-opted-in report authority are retained.
-
-Actual final-source local and main/tag CI results are recorded in the published
-verification JSON after execution. No earlier release total is substituted.
-
-## Offline business-definition preflight
-
-[`semantic-preflight`](docs/semantic-preflight.md) optionally compares authored
-metric definitions and a structured plan with configured measure/Gold/Cube
-metadata. It requires explicit `--config`, `--contract` and `--plan`; it reads no
-Gold/revision SQL body and makes no DB, network or model call.
-
-```text
-python skills/semantic-crosscheck/scripts/sxc.py semantic-preflight --config examples/semantic-preflight/crosscheck.toml --contract examples/semantic-preflight/contract.json --plan examples/semantic-preflight/plan.json --out .sxc-semantic-preflight
-```
-
-**`reviewed` is an unauthenticated caller assertion. Matching unit, population,
-denominator and time fields do not prove SQL meaning; a plan period does not
-bind SQL parameters or prove date filtering.** Missing or ambiguous selections
-remain `not_run`; complete conflicts fail. This adds no default stage or report
-authority unless paired `[semantic_preflight]` sidecars are explicitly configured; see [report evidence](docs/contract-report.md). The new Python engine code
-changes the existing fingerprint, so rerun operational stages after upgrading.
-See the [schema, synthetic example and reused NVIDIA references](docs/semantic-preflight.md).
+판마다의 변경은 [CHANGELOG.md](CHANGELOG.md)와 판별 릴리스 노트(이번 판: [v0.27.0](docs/releases/v0.27.0.md))에 있습니다. 선택 기능의 사용법과 한계는 각 문서에 있습니다: [`spec_source` 묶기](docs/knowledge-sources.md), [OKF 메타데이터](docs/okf.md), [지식 변화 평가](docs/knowledge-evolution.md), [변이 관측표](docs/mutation-matrix.md), [변이 재생 범위](docs/mutation-coverage.md), [조인·집계 정답 사례](docs/join-aggregate-fixtures.md), [데이터 규칙](docs/data-rules.md), [계약 보고 근거](docs/contract-report.md), [SQL 구조 진단](docs/sql-structure.md), [출처 범위 fixture](docs/provenance-fixtures.md), [경계 스키마](docs/boundary-schema.md), [TLP 축소](docs/tlp.md), [업무 정의 사전 점검](docs/semantic-preflight.md).
 
 <a id="optional-diagnostic-contracts"></a>
-## Optional diagnostic contracts (since v0.13.0)
+## 선택 진단
 
-Three default-off paths deepen the evidence around a failure:
-
-- **SHACL repair fixtures:** `shacl-repair --spec FILE` runs real pySHACL on independently authored before/after synthetic graphs, compares normalized expected report bags and verifies retained targets and immutable facts. Separate edit costs do not override hard preservation. [Schema and examples](docs/shacl-repair.md).
-- **Independent grain contracts:** `grain --config FILE --spec FILE` compares authored source/group/output/key/filter/null-policy claims with the existing undated preaggregate-to-node operation, then checks actual key and join preconditions in one bounded read-only PostgreSQL snapshot. [Schema and examples](docs/grain.md).
-- **OWL explanations:** `reason --explain-inconsistency` localizes generated axiom groups with the same HermiT after a consistency failure, within axiom/count/time caps. Only completed retained-deletion checks establish subset minimality; the original failure stays. Since 0.14.0, a completed explanation also reports `uniqueness` (`unique`, `not_unique` or `not_proven`) from one extra full-set check per retained group within the same caps; `unique` covers only explanations over the generated groups with this HermiT. [Limits and examples](docs/owl-explanations.md).
-
-The first two are standalone diagnostics outside the default report pipeline. They do not prove business truth, complete SHACL report equivalence, independent OWL correctness, global-minimum explanations or future data consistency. Runtime dependencies and defaults are unchanged; the optional diagnostics are included since v0.13.0 (`uniqueness` since v0.14.0).
-
-| Stage | Additional diagnostic options |
-|---|---|
-| `shacl-repair` | `--spec FILE`, `--timeout-ms 30000` |
-| `grain` | `--spec FILE`, `--max-rows 100000` |
-| `okf` | Since v0.15.0, metadata only: `--export DIR --select GOLD_ID` (repeatable selection) or `--import-preview DIR`; explicit `--config FILE` required |
-| `knowledge-evolution` | Since v0.15.0, fixed offline synthetic replay: `--out DIR`, `--quiet`; rejects `--config`, accepts no external fixture; no engines |
-
-The [offline knowledge evolution diagnostic](docs/knowledge-evolution.md)
-checks five fixed source transitions and 26 contracts through actual source and
-report APIs. Restoration leaves retained expectation evidence `not_run`; retiring
-the authored case changes the configuration fingerprint and stales old synthetic
-operational receipts. PASS measures only harness behavior, with no semantic
-coverage, DB, engine or model execution. Together with
-[authored source binding](docs/knowledge-sources.md) and
-[selected OKF metadata exchange](docs/okf.md), it remains opt-in and outside
-operational report gates. All three are opt-in additions available since v0.15.0.
-
-The opt-in reason diagnostic accepts `--explain-inconsistency`, `--explain-max-axioms 128`, `--explain-max-checks 64`,
-`--explain-timeout-ms 10000`, `--explain-max-explanations 1` (1..32) and `--explain-max-search-nodes 256` (1..4096).
-For example, request up to five alternative causes with
-`reason --explain-inconsistency --explain-max-explanations 5 --explain-max-checks 256 --explain-timeout-ms 60000`.
-Each reported alternative is a verified subset-minimal generated-group core. `enumeration_status: partial` means
-the result, node, call or time budget interrupted the search; only an exhausted search or established first-core
-uniqueness gives `complete`. Original consistency failure and first-core fields remain unchanged.
-
-V4 now replays every eligible chunk of a bounded V3 pair baseline and its NULL group, using the same in-memory key
-partition. Chunk replay item ids append `:chunk[<index>]` to the V3 check id; the NULL group appends `:null`.
-These are suite item ids in `killed_by` and coverage, not additional top-level checks. The configurable
-`verify.mutant_max_items` (positive integer, default 10000) caps logical replay items per mutant. Without an
-earlier non-pass, exhaustion is `not_run` (`suite_budget`), not a survival verdict. Since v0.24.0 optional `all`
-observation retains an earlier non-pass and records later budget exhaustion as partial observations.
-`verify/mutation-coverage.json` records each selected mutant
-instance, executed items/attempt counts and unexecuted reasons, including equivalent-on-current-data and
-not-applicable instances. Mutant details also retain their execution receipts. An early confirmed kill remains
-valid with remaining items explicitly unrun in default `first` mode; optional `all` observes later items within
-the budget. Above `pair_key_budget`, sampling and its disclosures remain;
-Cube queries and SQL still do not share an MVCC snapshot. See [replay coverage](docs/mutation-coverage.md).
+기본 파이프라인 밖의 선택 진단(`shacl-repair`, `grain`, `okf`, `knowledge-evolution`, `reason --explain-inconsistency`)과 V4의 조각 재생은 [단계·옵션·종료 코드 참조의 선택 진단 절](docs/reference/cli.md#optional-diagnostic-contracts)에 있습니다. 업무 정의 사전 점검(`semantic-preflight`)의 실행 예는 [같은 문서](docs/reference/cli.md#offline-business-definition-preflight)에 있습니다.
 
 ## 한국어 요약
 
 설정 하나로 PostgreSQL의 계층·규칙, SHACL, OWL·HermiT, Cube 모델을 만들고 서로와 gold SQL을 비교합니다. `not_run`은 통과가 아니며, 전체 판정은 `report`와 `not_proven`을 함께 읽습니다. 원본 조회와 생성 스키마 기록을 분리하고, 데모 적재는 별도의 loader 역할을 사용합니다. 0.22.0부터 선택 단계 `data-rules`가 별도 규칙 파일의 데이터 규칙을 PostgreSQL과 독립 Python으로 두 번 평가해 둘이 같을 때만 판정하며, 찾은 키는 출력 스키마의 뷰에서 사용자와 함께 조회합니다.
 
-요구 환경은 **Python 3.11 이상 · PostgreSQL 17 이상 · Java 11 이상 · Node.js 22 이상**입니다. Linux Cube에는 **glibc 2.34** 이상(x64), 2.30 이상(arm64)이 필요합니다. Codex 설치 태그는 **v0.26.0**, 라이선스는 MIT입니다.
+요구 환경은 **Python 3.11 이상 · PostgreSQL 17 이상 · Java 11 이상 · Node.js 22 이상**입니다. Linux Cube에는 **glibc 2.34** 이상(x64), 2.30 이상(arm64)이 필요합니다. 최소 버전 가운데 상류 지원이 가장 먼저 끝나는 것은 Node.js 22(2027-04-30)입니다. Codex 설치 태그는 **v0.27.0**, 라이선스는 MIT입니다.

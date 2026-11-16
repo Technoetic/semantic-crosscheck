@@ -144,6 +144,32 @@ class PinsTest(unittest.TestCase):
         self.assertTrue(deps["express"].startswith("4."))
         self.assertFalse(self.pkg.get("scripts"))
 
+    # The v0.27.0 lockfile refresh within the declared ranges moved these packages out of the ranges that npm audit
+    # reported for the v0.26.0 lockfile (advisory, first version outside the range); the Cube packages stayed at
+    # config.CUBE_VERSION (@cubejs-backend/dotenv has a version line of its own). A lockfile regenerated from an older
+    # registry cache would fall back without notice.
+    REFRESHED = {"@azure/msal-node": ("GHSA-xcx6-jx8p-x3h5", (7, 1, 0)),
+                 "body-parser": ("GHSA-27r3-jxmh-p828", (1, 20, 9)),
+                 "fast-xml-parser": ("GHSA-474x-hrwr-fgx4", (5, 11, 3)),
+                 "follow-redirects": ("GHSA-mrwp-f3q8-3g9p", (1, 16, 2)),
+                 "joi": ("GHSA-4528-x5fx-h6hg", (17, 13, 9)),
+                 "qs": ("GHSA-6pq8-jhm2-2vcw", (6, 16, 1))}
+
+    def test_lockfile_keeps_the_refreshed_packages_out_of_the_advised_ranges(self):
+        packages = self.lock["packages"]
+        for name, (advisory, first_outside) in self.REFRESHED.items():
+            with self.subTest(package=name, advisory=advisory):
+                version = packages[f"node_modules/{name}"]["version"]
+                self.assertRegex(version, r"^\d+\.\d+\.\d+$")
+                self.assertGreaterEqual(tuple(int(part) for part in version.split(".")), first_outside)
+        cube = {path: entry["version"] for path, entry in packages.items()
+                if path.startswith("node_modules/@cubejs-backend/") and path.count("node_modules/") == 1
+                and path != "node_modules/@cubejs-backend/dotenv"}
+        self.assertGreaterEqual(len(cube), 10)
+        for path, version in cube.items():
+            with self.subTest(package=path):
+                self.assertEqual(version, config.CUBE_VERSION)
+
     def test_lockfile_agrees_with_package_json(self):
         self.assertEqual(self.lock["lockfileVersion"], 3)
         self.assertEqual(self.lock["name"], self.pkg["name"])

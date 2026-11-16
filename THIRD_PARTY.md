@@ -163,6 +163,13 @@ packages (`@cubejs-backend/*`) are Apache-2.0.
 Several packages in the locked tree declare `engines.node >= 22`, which is why the adapter's
 `package.json` and `cube-install` require Node.js 22 or later.
 
+The v0.27.0 lockfile was refreshed within the declared ranges (`npm update` of the advised packages with
+`--package-lock-only --ignore-scripts`). `npm audit --package-lock-only` then reports five unique advisories
+instead of eleven: three for basic-ftp and one each for elliptic and graphql-scalars. Updating every package
+within its declared range leaves the same five, so clearing them needs a change this release does not make (a
+newer Cube pin or package overrides). The adapter listens on 127.0.0.1 only. The two packages the refresh
+added, is-in-ssh and powershell-utils, are MIT; the Cube packages stay at 1.8.3.
+
 ### Cube native module
 
 | Component | Version | Licence | Source |

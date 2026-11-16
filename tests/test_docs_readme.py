@@ -105,13 +105,17 @@ class FailureExampleTest(unittest.TestCase):
 
 
 class ReferenceSplitTest(unittest.TestCase):
-    """v0.27.0 moved the reference sections of the README into docs/reference/. Each old anchor keeps a short stub that
-    links on, so a link to README#<anchor> from outside still lands, and every link between the README and the
-    reference documents lands on an anchor that exists."""
+    """v0.27.0 moved the reference sections of the README into docs/reference/. Each explicit anchor of the moved
+    sections, and the anchor of the preflight heading, keeps a short stub that links on, so a link to README#<anchor>
+    from outside still lands, and every link between the README and the reference documents lands on an anchor that
+    exists."""
 
     STUBS = {"stages": "docs/reference/cli.md", "reading-results": "docs/reference/results.md",
+             "evidence-kinds": "docs/reference/results.md#evidence-kinds",
+             "reading-a-failure": "docs/reference/results.md#reading-a-failure",
              "check-catalogue": "docs/reference/check-ids.md",
-             "optional-diagnostic-contracts": "docs/reference/cli.md#optional-diagnostic-contracts"}
+             "optional-diagnostic-contracts": "docs/reference/cli.md#optional-diagnostic-contracts",
+             "offline-business-definition-preflight": "docs/reference/cli.md#offline-business-definition-preflight"}
 
     def test_each_moved_section_leaves_a_stub_that_links_on(self):
         text = read(README)

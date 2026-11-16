@@ -526,7 +526,17 @@ Node·Java 버전, 사용한 HermiT와 Cube 설치 파일의 해시도 검증 �
 <a id="reading-results"></a>
 ## 📋 결과 읽기
 
-단계 결과(`result.json`)와 `report`의 줄을 읽는 법은 [결과 읽기 참조](docs/reference/results.md)에 있습니다. 검사마다 붙는 근거의 종류는 [근거의 종류 읽기](docs/reference/results.md#evidence-kinds), 실패한 실행의 예는 [실패한 실행 읽기](docs/reference/results.md#reading-a-failure)에 있습니다.
+단계 결과(`result.json`)와 `report`의 줄을 읽는 법은 [결과 읽기 참조](docs/reference/results.md)에 있습니다.
+
+<a id="evidence-kinds"></a>
+### 근거의 종류 읽기
+
+검사마다 붙는 근거의 종류는 [결과 읽기 참조의 같은 절](docs/reference/results.md#evidence-kinds)에 있습니다.
+
+<a id="reading-a-failure"></a>
+### 실패한 실행 읽기
+
+실패한 실행의 예와 읽는 법은 [결과 읽기 참조의 같은 절](docs/reference/results.md#reading-a-failure)에 있습니다.
 
 <a id="check-catalogue"></a>
 ## 🔎 검사 ID 목록
@@ -746,7 +756,12 @@ CI는 전체 이력을 가진 clone의 작업 트리·이력을 일반 패턴과
 <a id="optional-diagnostic-contracts"></a>
 ## 선택 진단
 
-기본 파이프라인 밖의 선택 진단(`shacl-repair`, `grain`, `okf`, `knowledge-evolution`, `reason --explain-inconsistency`)과 V4의 조각 재생은 [단계·옵션·종료 코드 참조의 선택 진단 절](docs/reference/cli.md#optional-diagnostic-contracts)에 있습니다. 업무 정의 사전 점검(`semantic-preflight`)의 실행 예는 [같은 문서](docs/reference/cli.md#offline-business-definition-preflight)에 있습니다.
+기본 파이프라인 밖의 선택 진단(`shacl-repair`, `grain`, `okf`, `knowledge-evolution`, `reason --explain-inconsistency`)과 V4의 조각 재생은 [단계·옵션·종료 코드 참조의 선택 진단 절](docs/reference/cli.md#optional-diagnostic-contracts)에 있습니다.
+
+<a id="offline-business-definition-preflight"></a>
+### 업무 정의 사전 점검
+
+업무 정의 사전 점검(`semantic-preflight`)의 실행 예는 [단계·옵션·종료 코드 참조의 같은 절](docs/reference/cli.md#offline-business-definition-preflight)에 있습니다.
 
 ## 한국어 요약
 

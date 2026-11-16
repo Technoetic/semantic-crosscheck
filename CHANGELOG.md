@@ -23,14 +23,15 @@ behaviour changes.
   2026-11-16. Node.js 22 ends first (2027-04-30); raising the Node.js minimum goes with moving the Cube pin.
 - `docs/reference/cli.md` (stages, options, exit codes, optional diagnostics, the business-definition preflight),
   `docs/reference/results.md` (reading results, evidence kinds, a failing run) and `docs/reference/check-ids.md`
-  (the check ids): the README's reference sections, moved without change of content apart from heading levels and
-  relative links.
+  (the check ids): the README's reference sections with their text unchanged. Each document adds a title and a
+  one-sentence introduction; heading levels, relative links and anchors were adjusted.
 
 ### Changed
 
-- README: the reference sections moved to `docs/reference/` (1,054 to 755 lines). Each old anchor (`#stages`,
-  `#reading-results`, `#check-catalogue`, `#optional-diagnostic-contracts`, `#recent-changes`) keeps a short stub that
-  links on, so outside links to those anchors still land. The English "Recent changes" prose is replaced by links to
+- README: the reference sections moved to `docs/reference/` (1,054 to 770 lines). Each explicit anchor of
+  the moved sections (`#stages`, `#reading-results`, `#evidence-kinds`, `#reading-a-failure`, `#check-catalogue`,
+  `#recent-changes`, `#optional-diagnostic-contracts`) and the anchor of the preflight heading
+  (`#offline-business-definition-preflight`) keep a short stub that links on, so outside links to them still land. The English "Recent changes" prose is replaced by links to
   this changelog and the release notes.
 - `skills/semantic-crosscheck/adapters/cube/package-lock.json`: `npm update body-parser qs joi follow-redirects
   @azure/identity @azure/msal-node fast-xml-parser --package-lock-only --ignore-scripts`, within the declared ranges:

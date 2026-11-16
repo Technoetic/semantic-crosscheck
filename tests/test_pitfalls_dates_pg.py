@@ -5,8 +5,9 @@ gives an answer that depends on the plan across a daylight-saving change, and qu
 test builds that example in a temporary table and counts it under a sequential scan and under an index scan, with
 `TimeZone` set to America/New_York and to UTC: the mixed-type condition must give the quoted counts (36 and 30, and
 73 in UTC) and miss the rows the pitfall names, and the same-type forms the pitfall recommends must give one answer
-under both plans in both zones. If a server release stops showing the difference, this test fails and the pitfall
-text has to change with it. The text check needs no database; the counts run when SXC_TEST_ADMIN_DSN is set and use
+under both plan settings in both zones. The two forms that can use the index on `ts` are checked to use it under the
+index settings; the form that casts the column to `date` cannot, so it runs as a sequential scan under both. If a
+server release stops showing the difference, this test fails and the pitfall text has to change with it. The text check needs no database; the counts run when SXC_TEST_ADMIN_DSN is set and use
 only a temporary table of the admin session.
 """
 
@@ -20,11 +21,13 @@ NEW_YORK = "America/New_York"
 # 73 rows five minutes apart from 00:00 to 06:00 local time on 2026-03-08, the day New York skips 02:00 to 03:00.
 ROWS = 73
 MIXED = "ts < timestamptz '2026-03-08 07:30:00+00'"
+# form: (condition, expected ids, whether the index on ts can serve it)
 SAME_TYPE = {
-    "timestamp value": ("ts < CAST('2026-03-08 02:30:00' AS timestamp)", list(range(30))),
-    "date window": ("ts::date BETWEEN CAST('2026-03-08' AS date) AND CAST('2026-03-08' AS date)", list(range(ROWS))),
+    "timestamp value": ("ts < CAST('2026-03-08 02:30:00' AS timestamp)", list(range(30)), True),
+    "date window": ("ts::date BETWEEN CAST('2026-03-08' AS date) AND CAST('2026-03-08' AS date)", list(range(ROWS)),
+                    False),
     "half-open date window": ("ts >= CAST('2026-03-08' AS date) AND ts < CAST('2026-03-08' AS date) + 1",
-                              list(range(ROWS))),
+                              list(range(ROWS)), True),
 }
 SEQUENTIAL = ("SET LOCAL enable_seqscan = on", "SET LOCAL enable_indexscan = off",
               "SET LOCAL enable_indexonlyscan = off", "SET LOCAL enable_bitmapscan = off")
@@ -101,12 +104,16 @@ class DaylightSavingComparisonTest(unittest.TestCase):
                 self.assertEqual(ids, list(range(ROWS)))
 
     def test_same_type_forms_give_one_answer_under_both_plans_and_zones(self):
-        for form, (condition, expected) in SAME_TYPE.items():
+        for form, (condition, expected, indexable) in SAME_TYPE.items():
             for zone in (NEW_YORK, "UTC"):
                 for plan in PLANS:
                     with self.subTest(form=form, zone=zone, plan=plan):
-                        ids, _ = self.select(zone, plan, condition)
+                        ids, plan_text = self.select(zone, plan, condition)
                         self.assertEqual(ids, expected)
+                        if plan == "sequential":
+                            self.assertNotIn("Index", plan_text)
+                        elif indexable:
+                            self.assertIn("Index", plan_text)
 
 
 if __name__ == "__main__":

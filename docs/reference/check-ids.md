@@ -27,6 +27,8 @@
 | verify | `v3w:pair_witness:<member>+<member>` | 0.11.0부터, `verify.existence_witness = true`일 때만: 표본·조각 지표 쌍에서 단독 응답에 빠진 키가 설정의 필터로도 사실 행이 없고 결합 값이 비어 있음(NULL). 단독 응답에 있는 키는 확인하지 않음. 쌍 검사 자체의 판정은 증인이 실패해도 바뀌지 않음 |
 | verify | `v4:<operator>:<target>` | 다시 실행한 suite 항목(gold 항목 또는 V3 항목) 하나가 변형 모델에서 실패(`killed_by`). gold 질의가 검출했다는 뜻은 `detection = authored`일 때뿐이며, `generated_only`는 생성 계층끼리의 검사만 실패했다는 뜻. 0.23.0부터 `verify.gold_observation = "require"`에서는 `generated_only`·`unattributed`가 실패(`verify.accepted_gaps`에 없을 때) |
 | verify | `gold_evidence:<element>` | 0.23.0부터, `verify.gold_observation = "require"`이고 전체 범위 실행일 때만: 지표·계층·`ontology.class_column`마다 모든 facet이 사람이 쓴 gold 질의와 값이 있는 행으로 비교되었거나, 사람이 쓴 항목의 변이 검출이 있거나, `verify.accepted_gaps`에 있음 |
+| measure-oracle | `measure_oracle` | 명시한 한 테이블의 원시 행으로 독립 계산한 SUM/COUNT와 Cube 지표 일치. 빈 범위와 서로 다른 스냅샷의 한계는 별도 공개하며, 기본 report 판정에는 포함하지 않음 |
+| plan-compare | `plan_compare.consistency`, `plan_compare.cleanup` | 서로 다른 실제 스캔 계획에서 같은 합성 질의의 전체 타입 행 다중집합 비교; 정리 실패는 오류. 전역 동등성·정답 보장이 아닌 선택 진단 |
 | report | `stage:<name>` | 단계가 실행되었고 최신이며 통과 |
 | build·reason·cube·verify / report | `data_revision:stable`, `data_revision:current` | 구성된 데이터 버전이 안정적이며 현재 근거와 일치; 조회 오류는 실패로 닫음 |
 | build·reason·cube·verify / report | `runtime_evidence:stable`, `runtime_evidence:current` | 선택한 실제 실행 환경 근거가 안정적이며 현재와 일치; 누락·변경·조회 실패 시 기존 PASS 재사용 차단 |

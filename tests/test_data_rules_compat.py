@@ -6,7 +6,8 @@ the inputs_fingerprint keys, and two offline `build` + `report` runs of demo/cro
 recording stand-in for the database (every statement build sends, build.sql, result.json, the console summaries,
 report.md and report.json, and the check lists). Every golden must stay byte-identical; capture.py normalises only
 run times, the engine fingerprint (new modules change it by design) and output paths. The command-line stage list
-may gain data-rules and nothing else, here and in capture.py's check mode. With [data_rules] and views = false, build still sends exactly the v0.21.1
+may gain data-rules and the explicitly optional measure-oracle/plan-compare diagnostics and nothing else, here and
+in capture.py's check mode. With [data_rules] and views = false, build still sends exactly the v0.21.1
 statements and writes the same build.sql; report adds its one data-rules line only when [data_rules] is configured;
 expect's fixture configuration drops [data_rules]. No database is needed.
 """
@@ -26,7 +27,8 @@ from semantic_crosscheck import config, db, expect, report
 
 GOLDEN = pgfixture.ROOT / "tests" / "fixtures" / "compat_v0_21_1"
 STAGES = "static/stages.txt"
-NEW_STAGES = {"data-rules"}
+NEW_DIAGNOSTICS = {"measure-oracle", "plan-compare"}
+NEW_STAGES = {"data-rules", *NEW_DIAGNOSTICS}
 
 
 def load_capture():
@@ -59,13 +61,14 @@ class CompatibilityGoldenTest(unittest.TestCase):
                  if p.is_file() and p.suffix not in (".py", ".pyc") and "__pycache__" not in p.parts}
         self.assertEqual(found, set(self.current))
 
-    def test_the_stage_list_gains_only_data_rules(self):
+    def test_the_stage_list_gains_only_declared_optional_stages(self):
         golden = self.golden(STAGES).decode("utf-8").splitlines()
         current = self.current[STAGES].splitlines()
         self.assertEqual(current, sorted(sxc.STAGES))
         self.assertLessEqual(set(golden), set(current))
         self.assertLessEqual(set(current) - set(golden), NEW_STAGES)
         self.assertEqual([s for s in current if s not in NEW_STAGES], golden)
+        self.assertLessEqual(NEW_DIAGNOSTICS, sxc.DIAGNOSTIC_STAGES)
 
     def test_the_capture_is_deterministic(self):
         self.assertEqual(self.capture.collect(), self.current)
@@ -86,7 +89,10 @@ class CompatibilityGoldenTest(unittest.TestCase):
             (folder / "static").mkdir()
             (folder / STAGES).write_bytes(self.golden(STAGES))
             lists = {"golden plus data-rules": (sorted(golden + ["data-rules"]), True),
-                     "another new stage": (sorted(golden + ["data-rules", "zz-stage"]), False),
+                     "golden plus measure-oracle": (sorted(golden + ["measure-oracle"]), True),
+                     "golden plus plan-compare": (sorted(golden + ["plan-compare"]), True),
+                     "golden plus all declared stages": (sorted(golden + list(NEW_STAGES)), True),
+                     "another new stage": (sorted(golden + list(NEW_STAGES) + ["zz-stage"]), False),
                      "a stage removed": (sorted(golden[1:] + ["data-rules"]), False),
                      "another order": (list(reversed(golden)), False)}
             for label, (stages, allowed) in lists.items():

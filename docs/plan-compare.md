@@ -15,7 +15,7 @@ Set `SXC_TEST_ADMIN_DSN` to an explicitly chosen, dedicated PostgreSQL test
 environment. `--dsn-env NAME` selects another environment variable; it never
 falls back to a company or operational configuration. The stage accepts no
 `crosscheck.toml`. The optional `--statement-timeout-ms` defaults to 1000 ms,
-and `--quiet` suppresses normal console output. DSNs come from environment
+and `--quiet` prints only the summary line. DSNs come from environment
 variables only. Use a test account that can create temporary tables.
 
 ## Closed version 1 spec

@@ -50,10 +50,33 @@ default.
 | `data-rules` | [xc-data-rules.md](../../../commands/xc-data-rules.md) | `sxc.py data-rules --config crosscheck.toml` |
 | `shacl-repair` | [xc-shacl-repair.md](../../../commands/xc-shacl-repair.md) | `sxc.py shacl-repair --spec "<plugin root>/examples/shacl-repair/valid.json"` |
 | `grain` | [xc-grain.md](../../../commands/xc-grain.md) | `sxc.py grain --config crosscheck.toml --spec contract.json` |
+| `measure-oracle` | [xc-measure-oracle.md](../../../commands/xc-measure-oracle.md) | `sxc.py measure-oracle --config crosscheck.toml --spec oracle.json` |
+| `plan-compare` | [xc-plan-compare.md](../../../commands/xc-plan-compare.md) | `sxc.py plan-compare --spec plan.json --dsn-env SXC_TEST_ADMIN_DSN --statement-timeout-ms 1000` |
 | `okf` (since v0.15.0) | [xc-okf.md](../../../commands/xc-okf.md) | `sxc.py okf --config crosscheck.toml --export contract-bundle --select q01_explosion` |
 | `semantic-preflight` | [xc-preflight.md](../../../commands/xc-preflight.md) | `sxc.py semantic-preflight --config crosscheck.toml --contract contract.json --plan plan.json` |
 | `sql-structure` | [xc-sql-structure.md](../../../commands/xc-sql-structure.md) | `sxc.py sql-structure --sql query.sql --expect expect.json` |
 | `knowledge-evolution` (since v0.15.0) | [xc-knowledge-evolution.md](../../../commands/xc-knowledge-evolution.md) | `sxc.py knowledge-evolution --out .sxc-evolution --quiet` |
+
+`measure-oracle` independently computes one bounded global SUM/COUNT from raw
+rows and compares an explicitly authored Cube query. It requires `--spec`, a
+configuration (`--config`, or `./crosscheck.toml`), and a current Cube receipt/model
+in the selected output directory. Raw export and Cube use separate snapshots;
+establish a stable-data/revision contract and retain empty-coverage disclosures.
+See [the oracle contract](../../../docs/measure-oracle.md).
+
+`plan-compare` uses only the explicit declarative synthetic `--spec` and a
+dedicated test connection named by `--dsn-env` (default: `SXC_TEST_ADMIN_DSN`).
+It rejects `--config`, ignores operational configuration, and creates only owned
+session temporary objects. A pass requires different observed sequential/index
+plans and equal complete typed row bags. Same-plan, empty, partial and budgeted
+observations cannot pass; mismatch identifies disagreement, not the correct
+answer. No reduction or minimality is supplied. See
+[the plan comparison contract](../../../docs/plan-compare.md).
+
+Both diagnostics are explicit opt-ins outside default report authority. They
+write independent counts-and-hashes results and do not certify business truth,
+global equivalence or shared source/Cube snapshots. `--quiet` prints only the
+summary line; `SXC_DEBUG` does not enable traceback output for either command.
 
 `cube-replay`, `tlp` and `shacl-corpus` are optional standalone synthetic checks. They reject `--config`, ignore any
 working-directory configuration and preserve independent Result stages; their success does not change

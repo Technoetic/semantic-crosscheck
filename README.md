@@ -228,6 +228,8 @@ git clone --branch v0.28.0 --depth 1 https://github.com/Technoetic/semantic-cros
 - **핵심 파이프라인:** [`/xc-doctor`](commands/xc-doctor.md) · [`/xc-demo`](commands/xc-demo.md) · [`/xc-build`](commands/xc-build.md) · [`/xc-reason`](commands/xc-reason.md) · [`/xc-cube`](commands/xc-cube.md) · [`/xc-verify`](commands/xc-verify.md) · [`/xc-report`](commands/xc-report.md) · [`/xc-install`](commands/xc-install.md)
 - **선택 단계·진단:** [`/xc-expect`](commands/xc-expect.md) · [`/xc-data-rules`](commands/xc-data-rules.md) · [`/xc-counterexample`](commands/xc-counterexample.md) · [`/xc-cube-replay`](commands/xc-cube-replay.md) · [`/xc-tlp`](commands/xc-tlp.md) · [`/xc-shacl-corpus`](commands/xc-shacl-corpus.md) · [`/xc-shacl-repair`](commands/xc-shacl-repair.md) · [`/xc-grain`](commands/xc-grain.md) · [`/xc-boundary-schema`](commands/xc-boundary-schema.md) · [`/xc-preflight`](commands/xc-preflight.md) · [`/xc-sql-structure`](commands/xc-sql-structure.md) · [`/xc-okf`](commands/xc-okf.md) · [`/xc-knowledge-evolution`](commands/xc-knowledge-evolution.md)
 
+- **선택 독립 검산·계획 비교:** [`/xc-measure-oracle`](commands/xc-measure-oracle.md) · [`/xc-plan-compare`](commands/xc-plan-compare.md). 두 진단은 기본 `report` 판정에 포함되지 않습니다.
+
 각 단계의 역할과 옵션은 [단계·옵션·종료 코드](#stages)에 있습니다.
 
 <a id="codex"></a>

@@ -54,7 +54,9 @@ SCENARIOS = {
     "fail": {"child_exists": 2, "qty_positive": 0, "stock_nonnegative": 1, "open_le_total": 3},
 }
 STAGES = "static/stages.txt"
-NEW_STAGES = {"data-rules"}                     # stages added since v0.21.1: the only allowed golden difference
+# Only these explicitly optional additions may differ from the historical stage list.
+# All build/report output goldens remain byte-identical.
+NEW_STAGES = {"data-rules", "measure-oracle", "plan-compare"}
 TIME = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:[+-]\d{4}|Z)?")
 ENGINE = re.compile(r'"engine_sha256": "[0-9a-f]{64}"')
 NO_ROWS = ("BEGIN", "COMMIT", "ROLLBACK", "SET LOCAL ", "SAVEPOINT ", "RELEASE SAVEPOINT ", "CREATE ", "DROP ",

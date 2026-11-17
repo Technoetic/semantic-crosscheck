@@ -306,6 +306,7 @@ configuration ids; `<member>` is a Cube member (`cube.member`); `<stratum>` is a
 | Stage | Check id | Passes when | Other outcomes |
 |---|---|---|---|
 | any | `stage` | never passes | `error`: the stage stopped before its own checks (`message` for exit 2 or 3, `reason=interrupted`, or `exception` and `sqlstate`) |
+| measure-oracle | `measure_oracle` | An independently authored bounded raw-row global SUM/COUNT equals one explicit Cube measure query | `fail` on a value mismatch; `not_run` for unsupported types or exhausted bounds; sanitized `error` for invalid/stale inputs or execution failure. Optional diagnostic only: empty coverage and separate raw/Cube snapshots remain disclosed, and a pass adds no default report authority. |
 | any | `data_revision:stable` | build/reason/cube/verify configured start/end source and Cube revision hashes agree | `fail` on change; `error` when a probe cannot run; omitted and explicitly unbound without a probe |
 | report | `data_revision:current` | error check only | `error` when the configured current revision cannot be read; missing or changed stage evidence is also stale |
 | any | `runtime_evidence:stable` | opted-in build/reason/cube/verify actual full-pipeline evidence agrees at start/end | `fail` on change; `error` on a failed end probe; a failed start probe stops the stage |
@@ -406,6 +407,15 @@ configuration ids; `<member>` is a Cube member (`cube.member`); `<stratum>` is a
 | report | `stage:<name>` | the stage (`doctor`, `demo`, `build`, `reason`, `cube`, `verify`) ran, is current and passed | its own status; `not_run` with `reason` `missing` (a required stage without a result) or `stale` |
 | cube-install | `cube_install:npm_ci`, `cube_install:native_sha256`, `cube_install:extract`, `cube_install:smoke` | each install step passed | `fail` or `error`; the steps after a failed one are `not_run` |
 | cube-install | `cube_install:already_installed` | an install matching the pins and this checkout's adapter files exists, so nothing was reinstalled | none |
+
+The optional plan comparison emits the dotted check IDs `plan_compare.consistency`
+and `plan_compare.cleanup`. Consistency passes only when the same bounded
+declarative synthetic query returns equal complete typed row bags under observed
+sequential and index plans. A disagreement fails; unavailable PostgreSQL,
+insufficient plan diversity, empty coverage or exhausted bounds are `not_run`.
+Execution failure, changed inputs and connection cleanup failure are errors.
+Neither check adds default report authority, global equivalence or a minimality
+claim. See [the exact diagnostic contract](plan-compare.md).
 
 The standalone CLI can additionally emit `diagnostic:output` as an error when an output cannot be written safely. It does not expose the path or turn completed checks into a passing stage. Repair case ordinals and six worker gates are composed dynamically; the catalogue test resolves their format-prefix concatenation.
 

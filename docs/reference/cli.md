@@ -2,14 +2,14 @@
 
 ## v0.28.0 선택형 독립 검산·계획 비교
 
-| 명령 | 입력과 범위 |
-|---|---|
-| `measure-oracle --config PATH --spec FILE` | 한 테이블 원시 행의 독립 SUM/COUNT와 Cube 지표 비교. [명세와 한계](../measure-oracle.md). |
-| `plan-compare --spec FILE --dsn-env SXC_TEST_ADMIN_DSN --statement-timeout-ms 1000` | 임시 합성 데이터에서 실제 다른 계획과 전체 행 비교. `--config` 불가. [명세와 한계](../plan-compare.md). |
+| 단계 | 입력과 범위 | 단계별 옵션 | 주요 산출물 |
+|---|---|---|---|
+| `measure-oracle` | 한 테이블 원시 행의 독립 SUM/COUNT와 Cube 지표 비교. [명세와 한계](../measure-oracle.md). | `--spec FILE`; `--config PATH` 생략 시 `./crosscheck.toml` 필수 | `measure_oracle/result.json` |
+| `plan-compare` | 임시 합성 데이터에서 실제 다른 계획과 전체 행 비교. `--config` 불가. [명세와 한계](../plan-compare.md). | `--spec FILE`, `--dsn-env SXC_TEST_ADMIN_DSN`, `--statement-timeout-ms 1000` | `plan_compare/result.json` |
 
-둘 다 `--out DIR`·`--quiet`를 지원하고, counts-only `measure_oracle`/`plan_compare` 결과를 쓴다. 기본 report 판정에는 포함되지 않는다. 종료 코드 0은 명시한 범위의 비교 성공, 1은 불일치/불완전 검사, 2는 사용법·명세 오류, 3은 실행 환경 미비다.
+둘 다 `--out DIR`·`--quiet`를 지원하고, counts-only `measure_oracle`/`plan_compare` 결과를 쓴다. 기본 report 판정에는 포함되지 않는다. 두 진단의 종료 코드 0은 명시한 범위의 비교 성공, 1은 불일치·미실행(`not_run`), 2는 오류·사용법·명세 오류다. 현재 `plan-compare`의 DSN 누락·연결 실패는 `not_run`(종료 1), `measure-oracle`의 Cube·원시 조회 환경 부족은 오류(종료 2)로 처리한다. 아래 공통 종료 코드 3의 환경 부족 규약을 두 진단에 그대로 적용하지 않는다.
 
-이 문서는 README의 '단계·옵션·종료 코드' 절과 선택 진단 절을 옮긴 참조 문서입니다(v0.27.0). 설치와 첫 실행은 [README의 빠른 시작](../../README.md#quick-start-with-the-demo)에 있습니다.
+이 문서는 README의 '단계·옵션·종료 코드' 절과 선택 진단 절의 참조 문서입니다(v0.28.0). 설치와 첫 실행은 [README의 빠른 시작](../../README.md#quick-start-with-the-demo)에 있습니다.
 
 
 ```text

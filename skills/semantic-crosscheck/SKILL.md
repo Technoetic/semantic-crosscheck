@@ -78,6 +78,13 @@ Additional standalone synthetic stages are available when explicitly requested:
 
 All three reject `--config`, ignore default operational configuration, and remain outside the required pipeline. Their passes must not erase real-data `not_proven` disclosures. Missing engines, malformed output, timeout or partial comparison cannot pass. Synthetic rows remain in labelled replay artifacts, never count-only results.
 
+Since v0.28.0, two additional explicitly selected diagnostics are available:
+
+- `measure-oracle --config PATH --spec FILE`: independently evaluate a bounded, independently authored single-table SUM/COUNT and raw-row predicate, then compare one current Cube measure ([command](../../commands/xc-measure-oracle.md), [contract](../../docs/measure-oracle.md)). Raw export and Cube do not share an enforced snapshot; unsupported types and exhausted budgets cannot pass. Do not use generator SQL as the oracle or claim specification correctness.
+- `plan-compare --spec FILE --dsn-env SXC_TEST_ADMIN_DSN`: create only owned temporary synthetic tables/indexes and compare full typed row bags under EXPLAIN-confirmed different scan plans ([command](../../commands/xc-plan-compare.md), [contract](../../docs/plan-compare.md)). Reject `--config`; admit no arbitrary SQL. Mismatch is inconsistency, not which answer is right; same plans, empty coverage and limits cannot pass. No reducer/minimality is provided.
+
+Both diagnostics remain outside default report authority. Never replace operational V1–V5 coverage with these results. V3 additive summation now uses bounded exact arithmetic independent of the surrounding Decimal context; exceeding a bound cannot certify equality.
+
 Since v0.15.0: authored expectation cases may opt into opaque-byte
 `spec_source` pins ([source bindings](../../docs/knowledge-sources.md)). A
 noncurrent source gates cases before DB; completion drift demotes affected

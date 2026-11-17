@@ -1,5 +1,14 @@
 # 단계·옵션·종료 코드
 
+## v0.28.0 선택형 독립 검산·계획 비교
+
+| 명령 | 입력과 범위 |
+|---|---|
+| `measure-oracle --config PATH --spec FILE` | 한 테이블 원시 행의 독립 SUM/COUNT와 Cube 지표 비교. [명세와 한계](../measure-oracle.md). |
+| `plan-compare --spec FILE --dsn-env SXC_TEST_ADMIN_DSN --statement-timeout-ms 1000` | 임시 합성 데이터에서 실제 다른 계획과 전체 행 비교. `--config` 불가. [명세와 한계](../plan-compare.md). |
+
+둘 다 `--out DIR`·`--quiet`를 지원하고, counts-only `measure_oracle`/`plan_compare` 결과를 쓴다. 기본 report 판정에는 포함되지 않는다. 종료 코드 0은 명시한 범위의 비교 성공, 1은 불일치/불완전 검사, 2는 사용법·명세 오류, 3은 실행 환경 미비다.
+
 이 문서는 README의 '단계·옵션·종료 코드' 절과 선택 진단 절을 옮긴 참조 문서입니다(v0.27.0). 설치와 첫 실행은 [README의 빠른 시작](../../README.md#quick-start-with-the-demo)에 있습니다.
 
 

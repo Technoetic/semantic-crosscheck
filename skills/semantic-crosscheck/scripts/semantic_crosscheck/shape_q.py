@@ -72,9 +72,9 @@ dimension row (null_group_rows, orphan_rows; under a backward path the orphans a
 
 import math
 import time
-from decimal import Decimal, InvalidOperation
+from decimal import Context, Decimal, InvalidOperation
 
-from . import canon, compare, config, cube_gen, db, ident, naming, sweep
+from . import canon, compare, config, cube_gen, db, exact_numeric, ident, naming, sweep
 
 PAIR_KEY_CAP = config.PAIR_KEY_CAP   # 2000; also the least verify.pair_key_budget
 MISS = 20          # the detection bound allows a miss probability of at most 1/MISS (5%)
@@ -782,18 +782,29 @@ def _run_total(conn, client, cfg, test: dict) -> tuple[str, dict]:
 
 
 def _number(v) -> Decimal:
-    c = canon.canon(v)
     try:
-        if not isinstance(c, str):
+        if v is None or isinstance(v, bool):
             raise TypeError
-        return Decimal(c)
+        if isinstance(v, Decimal):
+            number = v
+        elif isinstance(v, int):
+            limit = 10 ** exact_numeric.DEFAULT_MAX_DIGITS
+            if v >= limit or v <= -limit:
+                raise exact_numeric.NumericLimit("numeric coefficient limit exceeded")
+            number = Decimal(v)
+        else:
+            # Parsing an exponent is compact; canon's fixed-point formatting is
+            # not. A private constructor context also keeps malformed text from
+            # setting flags or depending on InvalidOperation's ambient trap.
+            text = repr(v) if isinstance(v, float) else str(v)
+            number = Decimal(text, context=Context(traps=[InvalidOperation]))
     except (InvalidOperation, TypeError) as e:
         raise ValueError("a measure returned a value that is not a number") from e
+    return exact_numeric.exact_sum([number])
 
 
 def _sum(values: list):
-    present = [_number(v) for v in values if v is not None]
-    return sum(present, Decimal(0)) if present else None
+    return exact_numeric.exact_sum(_number(v) if v is not None else None for v in values)
 
 
 def _null_group(conn, cfg, test: dict) -> tuple:
@@ -814,6 +825,15 @@ def _run_additive(conn, client, cfg, test: dict) -> tuple[str, dict]:
     total = _single(_load(client, {"measures": [measure]}), measure)
     groups = _load(client, {"dimensions": [dim], "measures": [measure]})
     sql_null, null_rows, orphans = _null_group(conn, cfg, test)
+    for value in (total, sql_null):
+        try:
+            _number(value)  # Bound both sides before canon can expand an exponent.
+        except exact_numeric.NumericLimit:
+            raise
+        except ValueError:
+            # Non-numeric comparison values retain canon's existing semantics,
+            # including leading-zero text; malformed group values still error.
+            pass
     cube_null = _sum([g.get(measure) for g in groups if g.get(dim) is None])
     if test["agg"] == "count":   # a count over no rows is 0 in SQL, NULL as a sum of per-key counts
         cube_null, sql_null = cube_null or 0, sql_null or 0

@@ -5,7 +5,7 @@
 
 Stages: doctor, demo, build, reason, cube, verify, report, cube-install, counterexample,
 cube-replay, tlp, shacl-corpus, expect, shacl-repair, grain, okf, boundary-schema, semantic-preflight,
-sql-structure, knowledge-evolution, data-rules.
+sql-structure, knowledge-evolution, data-rules, measure-oracle, plan-compare.
 Each stage writes <out>/<stage>/result.json (counts and check ids only, never row values) and exits with
 0 pass, 1 a check failed or could not run, 2 configuration or usage error, 3 environment missing.
 
@@ -45,7 +45,7 @@ from semantic_crosscheck.result import (  # noqa: E402
 _UNRESOLVED = object()
 _STANDALONE_NO_CFG = {
     "counterexample", "cube-replay", "tlp", "shacl-corpus",
-    "shacl-repair", "knowledge-evolution", "boundary-schema",
+    "shacl-repair", "knowledge-evolution", "boundary-schema", "plan-compare",
 }
 
 STAGES = {
@@ -70,10 +70,13 @@ STAGES = {
     "semantic-preflight": "semantic_preflight",
     "sql-structure": "sql_structure",
     "data-rules": "stage_data_rules",
+    "measure-oracle": "measure_oracle",
+    "plan-compare": "plan_compare",
 }
 NEEDS_CONFIG = {"demo", "build", "reason", "cube", "verify", "report", "expect", "grain", "semantic-preflight",
-                "data-rules"}
-DIAGNOSTIC_STAGES = {"shacl-repair", "grain", "okf", "knowledge-evolution", "boundary-schema", "semantic-preflight"}
+                "data-rules", "measure-oracle"}
+DIAGNOSTIC_STAGES = {"shacl-repair", "grain", "okf", "knowledge-evolution", "boundary-schema", "semantic-preflight",
+                     "measure-oracle", "plan-compare"}
 DEFAULT_CONFIG = "crosscheck.toml"
 
 
@@ -209,6 +212,16 @@ def parser(*, audit_errors=False) -> argparse.ArgumentParser:
     s.add_argument("--out", metavar="DIR", help="output directory (default: .sxc next to SQL input)")
     s.add_argument("--quiet", action="store_true", help="print only the summary line")
 
+    s = sub.add_parser("measure-oracle", parents=[common], allow_abbrev=False,
+                       help="independently recompute one bounded raw-row SUM/COUNT and compare Cube (optional diagnostic)")
+    s.add_argument("--spec", required=True, metavar="FILE", help="strict version 1 independent raw predicate and Cube query")
+
+    s = sub.add_parser("plan-compare", parents=[common], allow_abbrev=False,
+                       help="compare full synthetic row bags under two observed PostgreSQL plans (optional diagnostic)")
+    s.add_argument("--spec", required=True, metavar="FILE", help="strict version 1 bounded declarative synthetic fixture")
+    s.add_argument("--dsn-env", default="SXC_TEST_ADMIN_DSN", help="environment variable naming a dedicated synthetic PostgreSQL connection")
+    s.add_argument("--statement-timeout-ms", type=int, default=1000, help="per-statement time limit (default: 1000)")
+
     s = sub.add_parser("shacl-corpus", parents=[common], help="compare pySHACL and Apache Jena against independently expected nonrecursive synthetic reports")
     s.add_argument("--jena-home", default="", help="Apache Jena distribution directory (default: SXC_JENA_HOME)")
     s.add_argument("--timeout-ms", type=int, default=30000, help="per-engine-process deadline in milliseconds")
@@ -263,7 +276,7 @@ def config_path(stage: str, given: str | None) -> Path | None:
             raise StageError("counterexample uses synthetic fixtures, not --config; pass the trusted SQL instead "
                              "(--reference-sql and --candidate-sql, or --metamorphic-sql)", EXIT_CONFIG)
         return None
-    if stage in {"cube-replay", "tlp", "shacl-corpus", "shacl-repair", "knowledge-evolution", "boundary-schema"}:
+    if stage in {"cube-replay", "tlp", "shacl-corpus", "shacl-repair", "knowledge-evolution", "boundary-schema", "plan-compare"}:
         if given is not None:
             raise StageError(f"{stage} uses standalone synthetic inputs, not --config", EXIT_CONFIG)
         return None
@@ -634,6 +647,10 @@ def _expect_write(res, out, cfg, configuration_sha):
 
 def main(argv=None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
+    first_stage = next((token for token in argv if token in STAGES), None)
+    if first_stage in {'measure-oracle', 'plan-compare'}:
+        from semantic_crosscheck import bounded_diagnostics
+        return bounded_diagnostics.cli(argv, _summary, ensure_out)
     if argv and (argv[0] == 'sql-structure' or
                  (argv[0].startswith('-') and 'sql-structure' in argv)):
         from semantic_crosscheck import sql_structure

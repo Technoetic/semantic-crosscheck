@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "entity": "orders",
+  "column": "qty",
+  "aggregation": "count",
+  "where": [
+    {"column": "part_id", "operator": "is_not_null"},
+    {"column": "status", "operator": "eq", "type": "text", "value": "FIRM"}
+  ],
+  "cube_query": {"measures": ["m_non_null.value"]},
+  "max_rows": 10000
+}

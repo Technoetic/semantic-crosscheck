@@ -1,6 +1,6 @@
 {
   "name": "semantic-crosscheck",
-  "version": "0.27.0",
+  "version": "0.28.0",
   "description": "Cross-layer verification for an ontology plus semantic layer on PostgreSQL 17, for Codex and Claude Code.",
   "author": {
     "name": "전문준"
@@ -9,7 +9,7 @@
   "interface": {
     "displayName": "Semantic Crosscheck",
     "shortDescription": "Check that a PostgreSQL closure, SHACL rules, OWL reasoning and a Cube model agree.",
-    "longDescription": "semantic-crosscheck generates a PostgreSQL 17 hierarchy closure, SQL and SHACL data rules, an OWL ontology and a Cube data model from one crosscheck.toml, then checks on your data that they agree with each other and with hand-written gold SQL. Optional stages cover literal expected-row fixtures (expect), dual SQL/Python data-rules evaluation, synthetic counterexamples, grain and preflight contracts, and offline PostgreSQL 17 SQL structure checks. A pass means the checks that ran found no disagreement on this snapshot; it is not proof that the model or the business rules are right, and not_proven lines disclose empty comparisons, generated-only mutant kills, and unchecked facets or runtimes. Results hold counts, check IDs and digests only, never row values or credentials (v0.27.0).",
+    "longDescription": "semantic-crosscheck generates a PostgreSQL 17 hierarchy closure, SQL and SHACL data rules, an OWL ontology and a Cube data model from one crosscheck.toml, then checks on your data that they agree with each other and with hand-written gold SQL. Optional stages cover literal expected-row fixtures (expect), dual SQL/Python data-rules evaluation, synthetic counterexamples, grain and preflight contracts, and offline PostgreSQL 17 SQL structure checks. A pass means the checks that ran found no disagreement on this snapshot; it is not proof that the model or the business rules are right, and not_proven lines disclose empty comparisons, generated-only mutant kills, and unchecked facets or runtimes. Results hold counts, check IDs and digests only, never row values or credentials (v0.28.0).",
     "developerName": "Technoetic",
     "category": "Coding",
     "capabilities": [

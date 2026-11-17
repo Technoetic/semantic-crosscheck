@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.28.0] - 2026-11-17
+
+- Fix V3 additive arithmetic with bounded exact Decimal summation independent of ambient precision, rounding and traps. Oversized or nonfinite inputs never certify equality.
+- Add optional `measure-oracle`: independently authored bounded raw-row SUM/COUNT evaluation versus one Cube measure, with typed filters, freshness checks and count-only results. See [contract](docs/measure-oracle.md).
+- Add optional `plan-compare`: declarative synthetic PostgreSQL fixtures compared under EXPLAIN-confirmed different scan plans in one stable read-only snapshot. See [contract](docs/plan-compare.md).
+- Both diagnostics stay outside default report authority; no new runtime dependency, automatic reducer or generic SQL equivalence claim. Engine fingerprints change; rerun operational stages after upgrading.
+- See [release scope and evidence](docs/releases/v0.28.0.md).
+
 ## [0.27.0] - 2026-11-16
 
 Release notes: [docs/releases/v0.27.0.md](docs/releases/v0.27.0.md).
@@ -1158,3 +1166,5 @@ First release. Release notes: [docs/releases/v0.1.0.md](docs/releases/v0.1.0.md)
 [0.19.1]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.19.1
 
 [0.24.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.24.0
+
+[0.28.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.28.0

@@ -1,0 +1,27 @@
+# Synthetic source only; fixture.sql is loaded separately by its owner.
+version = 1
+
+[source]
+dsn_env = "SXC_PG_DSN"
+owner_dsn_env = "SXC_PG_OWNER_DSN"
+schemas = ["sxc_measure_oracle"]
+output_schema = "sxc_out"
+statement_timeout_ms = 10000
+
+[entities.orders]
+table = "sxc_measure_oracle.orders"
+key = ["id"]
+
+[measures.total]
+entity = "orders"
+column = "qty"
+agg = "sum"
+by = "part_id"
+filter = { status = ["FIRM"] }
+
+[measures.non_null]
+entity = "orders"
+column = "qty"
+agg = "count"
+by = "part_id"
+filter = { status = ["FIRM"] }

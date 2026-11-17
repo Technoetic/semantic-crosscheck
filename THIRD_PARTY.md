@@ -220,3 +220,19 @@ by Qi Zhou, Joy Arulraj, Shamkant Navathe, William Harris and Jinpeng Wu. The
 is Apache-2.0 licensed. The fixtures, SQL and bounded Python reference arithmetic are independently authored;
 no SPES code, proof engine, Java/Calcite/Z3 stack or paper examples are incorporated. The fixtures do not
 establish general PostgreSQL/Cube query equivalence or certify business definitions.
+
+## v0.28.0 exact arithmetic and bounded diagnostics
+
+The exact-sum helper and numerical regressions are original standard-library Python implementations.
+The generated/permutation boundary cases extend the property-testing ideas already referenced from
+[Hypothesis](https://github.com/HypothesisWorks/hypothesis); Hypothesis is not installed or bundled.
+
+The optional plan diagnostic follows the differential-plan idea in
+[Keep It Simple: Testing Databases via Differential Query Plans (2024)](https://doi.org/10.1145/3654991)
+and the already referenced [SQLancer project, pinned source](https://github.com/sqlancer/sqlancer/tree/a513c87781ed879e5aae6bc78f8b6c6056bd7a99).
+It is independently implemented for a bounded declarative PostgreSQL synthetic subset. No paper examples or
+SQLancer/Cloudberry oracle code are copied, installed or claimed as PostgreSQL drop-in support. Identical GUC
+settings are not plan evidence; observed physical plan diversity and complete typed bags are required.
+
+The measure oracle's raw-row evaluation is independent of the generators, but not a proof that its authored
+specification is the correct business rule. These diagnostics do not extend default report authority.

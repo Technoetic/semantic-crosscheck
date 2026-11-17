@@ -112,8 +112,12 @@ class BoundedDiagnosticsCliTest(unittest.TestCase):
 
     def test_measure_dispatch_keeps_module_evidence_and_common_fingerprints(self):
         self.set_spec('measure-oracle')
+        # Config canonicalizes its path. Exercise a noncanonical spelling on
+        # every OS, including hosts whose temporary root already has aliases.
+        (self.root / 'config-parent').mkdir()
+        self.cfg = self.root / 'config-parent' / '..' / self.cfg.name
         def run(cfg, args, out):
-            self.assertEqual(cfg.path, self.cfg)
+            self.assertEqual(cfg.path, self.cfg.resolve())
             self.assertEqual(args.spec, str(self.spec))
             self.assertEqual(out, self.out)
             return self.passing('measure_oracle', measure_oracle={'spec_sha256': 'a' * 64})

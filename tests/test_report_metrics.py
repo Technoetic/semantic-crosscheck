@@ -126,3 +126,65 @@ class MetricReportTest(VerifyRun):
         self.assertEqual(rows["m_on_hand.value"]["basis"], "generated_only")
         join = rows["part+m_on_hand"]
         self.assertEqual((join["basis"], join["reason"], join["sources"]), ("missing", "generated_text", []))
+
+    def test_empty_and_unrecorded_generated_groups_do_not_establish_join_coverage(self):
+        self.gold_file("q03_stock", "SELECT * FROM sxc_out.v_rule_stock")
+        self.rows["q03_stock"] = "error"
+        result = self.verify()
+        for check in result.checks:
+            if check.id.startswith(("v3:pair:", "v3:additive:")):
+                check.status = "not_run"
+        additive = next(c for c in result.checks if c.id == "v3:additive:m_on_hand.value:part.part_class")
+        pair = next(c for c in result.checks if c.id.startswith("v3:pair:") and "m_on_hand.value" in c.id)
+        for check, status, detail, basis in [
+            (additive, "pass", {"groups": 0}, "zero_rows"),
+            (additive, "pass", {}, "not_run"), (additive, "pass", {"groups": True}, "not_run"),
+            (additive, "pass", {"groups": 1}, "generated_only"),
+            (pair, "fail", {"keys": 0, "duplicate_keys": 1}, "zero_rows"),
+            (pair, "pass", {"sampled_keys": 3, "keys": 2, "answered_keys": 0}, "zero_rows"),
+            (pair, "pass", {"mode": "chunked", "answered_keys": 0, "null_key_group": {"keys": 1}}, "generated_only"),
+            (pair, "pass", {"mode": "chunked", "answered_keys": 0, "null_key_group": {"keys": 0}}, "zero_rows"),
+            (pair, "pass", {}, "not_run"),
+        ]:
+            with self.subTest(cid=check.id, detail=detail):
+                check.status, check.detail = status, detail
+                _, rows, _ = self.publish(result)
+                self.assertEqual(rows["part+m_on_hand"]["basis"], basis)
+                check.status = "not_run"
+
+    def test_empty_generated_gold_is_an_empty_observation(self):
+        self.gold_file("q03_stock", "SELECT * FROM sxc_out.v_rule_stock")
+        self.rows["q03_stock"] = []
+        result = self.verify()
+        for c in result.checks:
+            if c.id.startswith(("v3:additive:", "v3:pair:")):
+                c.status = "not_run"
+        _, rows, _ = self.publish(result)
+        self.assertEqual(rows["part+m_on_hand"]["basis"], "zero_rows")
+        self.assertEqual(rows["part+m_on_hand"]["sources"], ["q03_stock"])
+
+    def test_mutation_requires_a_selected_operator_and_a_recorded_baseline(self):
+        result = self.verify()
+        row = self.facet(result, "m_firm_open_dated.ts")
+        cid = "v4:dated_shift_one_day:firm_open_dated"
+        row.update(status="detected", reason="", detected_by=[cid])
+        result.add(cid, "pass", "", killed_by="v2:q05_firm_window:fiction[1234]", detection="authored")
+        result.evidence["mutation"]["killed_authored"] = 1
+        _, rows, _ = self.publish(result)
+        self.assertEqual(rows[row["facet"]]["basis"], "not_run")
+        binding = next(c for c in result.checks if c.id.startswith("v2:q05_firm_window:") and
+                       c.status == "pass" and c.detail.get("bindings", 0) > 0)
+        result.checks[-1].detail["killed_by"] = binding.id + "[0]"
+        _, rows, _ = self.publish(result)
+        self.assertEqual(rows[row["facet"]]["basis"], "mutation_only")
+        result.checks[-1].detail["killed_by"] = "v1:q05_firm_window"
+        split = result.evidence["mutation"]
+        split["operators_selected"] -= 1
+        split["operators_not_selected"].append("dated_shift_one_day")
+        _, rows, _ = self.publish(result)
+        self.assertEqual(rows[row["facet"]]["basis"], "not_run")
+        split["operators_not_selected"].remove("dated_shift_one_day")
+        split["operators_selected"] += 1
+        split["killed_authored"] += 1
+        _, rows, _ = self.publish(result)
+        self.assertTrue(all(r["reason"] == "observation_missing" for r in rows.values()))

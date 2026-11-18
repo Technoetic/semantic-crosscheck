@@ -136,10 +136,13 @@ The same rows appear in `report.json.metric_evidence`, in configuration order. E
 | `authored_comparison` | A configured authored Gold query compared this facet with matched rows carrying a value. |
 | `mutation_only` | An authored Gold query detected a mutation of this facet. There is no direct authored value comparison for this facet. |
 | `generated_only` | Only generated comparisons or generated mutation detections are evidenced for this facet. Both sides can share a wrong filter, grouping or join. |
-| `zero_rows` / `no_values` | Authored Gold compared empty results, or returned rows without exercising a value of this facet. For numeric measures the existing verify rule excludes zero as well as NULL. |
+| `zero_rows` / `no_values` | Gold compared empty results or returned rows without exercising a value of this facet. A generated V3 additive or pair check can also report zero groups or comparable keys. For numeric measures the existing verify rule excludes zero as well as NULL. |
 | `missing` | No observed comparison supports this facet. The reason distinguishes, for example, filter-only usage and accepted gaps. |
 | `not_run` | See the reason for a missing, stale, narrowed, unreadable or incomplete receipt, an unrun Gold query, or a facet absent from the model. |
 
+V3 totals compare scalars and carry no source-row count. For grouped V3 checks, the receipt must record at
+least one group or comparable key to establish generated coverage. An incomplete count leaves the observation
+undetermined. Mutation attribution requires a selected operator on this facet and a recorded replay baseline.
 An actual generated check can appear under `sources` even when empty authored Gold takes precedence in
 the basis. A standalone `measure-oracle` or `expect` result stays outside this table. Run those diagnostics
 separately to check an independently specified calculation or fixture. This disclosure preserves the

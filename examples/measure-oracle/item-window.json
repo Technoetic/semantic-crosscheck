@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "entity": "orders",
+  "column": "qty",
+  "aggregation": "sum",
+  "group_by": "part_id",
+  "time_window": {"column": "ordered_on", "start": "2026-01-01", "end": "2026-02-01"},
+  "where": [
+    {"column": "part_id", "operator": "is_not_null"},
+    {"column": "status", "operator": "eq", "type": "text", "value": "FIRM"}
+  ],
+  "cube_query": {
+    "measures": ["m_dated_total.value"],
+    "dimensions": ["m_dated_total.key"],
+    "timeDimensions": [{"dimension": "m_dated_total.ts", "dateRange": ["2026-01-01", "2026-01-31"]}]
+  },
+  "max_rows": 10000
+}

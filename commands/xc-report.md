@@ -52,7 +52,10 @@ stages it depends on and passed.
 
 ## How to report to the user
 
-1. Lead with the overall status and the exit code.
+1. Lead with the overall status and exit code. For configured measures, read the first-page
+   `Metric evidence` table in `report.md` or the `metric_evidence` rows in `report.json`.
+   Identify which facets had an authored value comparison, which had only mutation or generated
+   evidence, and which still need an exercised case or a current verify run.
 2. List each failed or errored check with its `config_ref` (the `crosscheck.toml` entry to fix) and the
    `next` action from the stage result.
 3. List every missing or stale stage, and every not proven item as written (empty strata, equivalent

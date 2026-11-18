@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.29.0] - 2026-11-18
+
+- Show configured measure facets and their evidence in the opening Markdown table and JSON report. Preserve missing, stale and empty evidence as distinct reasons. Existing exit criteria still apply.
+- Compare one grouped measure over a UTC date range against independently aggregated raw rows. Detect missing, duplicate and unexpected groups.
+- Check whether joined rows multiply a fact quantity. A pair of synthetic Cube views demonstrates a matching total and deliberate overcount.
+- See [release scope and verification](docs/releases/v0.29.0.md).
+
 ## [0.28.0] - 2026-11-17
 
 - Fix V3 additive arithmetic with bounded exact Decimal summation independent of ambient precision, rounding and traps. Oversized or nonfinite inputs never certify equality.
@@ -1168,3 +1175,5 @@ First release. Release notes: [docs/releases/v0.1.0.md](docs/releases/v0.1.0.md)
 [0.24.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.24.0
 
 [0.28.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.28.0
+
+[0.29.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.29.0

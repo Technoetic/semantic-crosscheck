@@ -40,7 +40,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from . import config, contract_evidence, cube_run, evidence as kinds, provenance, runtime_provenance
+from . import config, contract_evidence, cube_run, evidence as kinds, metric_evidence, provenance, runtime_provenance
 from .result import STATUSES, Result, inputs_fingerprint, load_result
 from .result_contract import ResultContractError, invalid_result, validate_result
 
@@ -374,8 +374,10 @@ def render_md(summary: dict) -> str:
     lines = ["# semantic-crosscheck report", "",
              f"Overall: **{summary['status'].upper()}**"
              + (f", config `{_md(summary['config'])}`" if summary["config"] else "")
-             + f", generated {summary['generated_at']}", "",
-             f"Required stages: {', '.join(summary['required'])}. The overall status passes only when each of them "
+             + f", generated {summary['generated_at']}", ""]
+    if summary.get("metric_evidence"):
+        lines.extend(metric_evidence.markdown(summary["metric_evidence"]))
+    lines += [f"Required stages: {', '.join(summary['required'])}. The overall status passes only when each of them "
              "ran after the stages it depends on and passed.", "",
              "| Stage | Status | Pass | Fail | Error | Not run | Not proven | Finished |",
              "|---|---|---:|---:|---:|---:|---:|---|"]
@@ -502,12 +504,14 @@ def run(cfg, args, out: Path) -> Result:
             "runtime_evidence": current_runtime,
             "next_safe_action": res.next_safe_action,
         }
-        # Only with a verify result, so a run without verify (the compatibility goldens) is unchanged. The console
-        # lines are a dynamic attribute, like _contract_evidence: Result serialises only its dataclass fields.
+        # Console evidence is a dynamic attribute. Result serialises only its dataclass fields.
         res._evidence_lines = []
         if "verify" in results:
             summary["evidence"] = _evidence(results, counted, required, stale)
             res._evidence_lines = kinds.console_lines(summary["evidence"])
+        if cfg is not None and cfg.measures:
+            summary["metric_evidence"] = metric_evidence.summarize(
+                cfg, results.get("verify"), summary.get("evidence"), "verify" in stale)
         return summary
 
     def changed():

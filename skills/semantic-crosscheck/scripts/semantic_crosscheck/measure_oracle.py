@@ -6,6 +6,7 @@ Cube measure query is authored separately in the spec. No input values, SQL,
 paths, credentials, or exception messages enter its receipt.
 """
 from dataclasses import dataclass
+from datetime import date, datetime, timezone
 from decimal import Decimal, InvalidOperation
 import hashlib
 import json
@@ -15,6 +16,7 @@ import stat
 import sys
 
 from . import config, cube_run, db, ident
+from .cube_client import CubeRowLimitError
 from .exact_numeric import NumericLimit, exact_sum
 from .result import EXIT_CONFIG, Result, StageError, discard_own_verdict, inputs_fingerprint
 from .result_contract import decode_result
@@ -22,6 +24,7 @@ from .result_contract import decode_result
 STAGE = 'measure_oracle'
 SPEC_LIMIT = 65536
 MAX_ROWS = 50000
+MAX_GROUPS = 10000
 MAX_FILTERS = 32
 MAX_VALUES = 256
 TEXT_LIMIT = 4096
@@ -30,13 +33,15 @@ MODEL_LIMIT = 4 * 1024 * 1024
 SNAPSHOT_NOTE = ('Raw source and Cube do not share an MVCC snapshot. A stable-data window or an '
                  'owner-maintained, non-reused revision advanced atomically with every relevant change '
                  'is required; matching answers alone do not establish that contract.')
-SCOPE_NOTE = ('This optional diagnostic compares one global authored query over the complete bounded '
-              'visible source. It does not prove arbitrary measures, business truth, hidden rows, '
-              'joins, time semantics, or unbounded equivalence and adds no report authority.')
+SCOPE_NOTE = ('This optional diagnostic compares one authored query over complete bounded visible inputs. '
+              'It does not prove arbitrary measures, business truth, hidden rows, general joins or time '
+              'semantics, or unbounded equivalence and adds no report authority.')
 _NUMBER = re.compile(r'[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?\Z', re.ASCII)
 _TYPES = {'int2': 'integer', 'int4': 'integer', 'int8': 'integer',
           'numeric': 'numeric', 'text': 'text', 'varchar': 'text', 'bool': 'boolean'}
 _KINDS = frozenset(_TYPES.values())
+_TEMPORAL = frozenset({'date', 'timestamp', 'timestamptz'})
+_CUBE_KIND = {'integer': 'number', 'numeric': 'number', 'text': 'string', 'boolean': 'boolean'}
 
 
 class NotRun(ValueError):
@@ -146,12 +151,38 @@ def _member(value):
     return value.split('.')[0]
 
 
-def _query(query):
-    _keys(query, {'measures'}, {'filters'})
+def _day(value):
+    if not isinstance(value, str) or not re.fullmatch(r'[0-9]{4}-[0-9]{2}-[0-9]{2}', value):
+        raise ValueError('calendar date')
+    return date.fromisoformat(value)
+
+
+def _query(query, *, grouped=False, dated=False):
+    required = {'measures'}
+    if grouped:
+        required.add('dimensions')
+    if dated:
+        required.add('timeDimensions')
+    _keys(query, required, {'filters'})
     measures = query['measures']
     if not isinstance(measures, list) or len(measures) != 1:
-        raise ValueError('single global measure required')
+        raise ValueError('single measure required')
     cube = _member(measures[0])
+    if grouped:
+        dims = query['dimensions']
+        if (not isinstance(dims, list) or len(dims) != 1 or _member(dims[0]) != cube
+                or dims[0] == measures[0]):
+            raise ValueError('single group dimension')
+    if dated:
+        timed = query['timeDimensions']
+        if not isinstance(timed, list) or len(timed) != 1:
+            raise ValueError('single time dimension')
+        td = timed[0]
+        _keys(td, {'dimension', 'dateRange'})
+        bounds = td['dateRange']
+        if (_member(td['dimension']) != cube or td['dimension'] in [*measures, *query.get('dimensions', [])]
+                or not isinstance(bounds, list) or len(bounds) != 2 or _day(bounds[0]) > _day(bounds[1])):
+            raise ValueError('Cube calendar range')
     filters = query.get('filters', [])
     if not isinstance(filters, list) or len(filters) > MAX_FILTERS:
         raise ValueError('query filters')
@@ -260,13 +291,28 @@ def prepare_run(args, out, *, protected_paths=()):
 
 
 def load_spec(path):
-    """Read a bounded closed version-1 contract; decimals are explicit strings."""
+    """Read a bounded, closed contract; decimals are explicit strings."""
     try:
         raw = _read(path, SPEC_LIMIT)
         spec = _decode(raw, spec=True)
-        _keys(spec, {'schema_version', 'entity', 'column', 'aggregation', 'where', 'cube_query'}, {'max_rows'})
-        if type(spec['schema_version']) is not int or spec['schema_version'] != 1:
+        common = {'schema_version', 'entity', 'column', 'aggregation', 'where', 'cube_query'}
+        version = spec['schema_version']
+        if type(version) is not int or version not in (1, 2):
             raise ValueError('version')
+        if version == 2:
+            from . import measure_oracle_join
+            _keys(spec, common | {'related_exists'}, {'max_rows'})
+            measure_oracle_join.validate(spec)
+        else:
+            _keys(spec, common, {'max_rows', 'group_by', 'time_window'})
+        if 'group_by' in spec:
+            ident.check(spec['group_by'])
+        if 'time_window' in spec:
+            window = spec['time_window']
+            _keys(window, {'column', 'start', 'end'})
+            ident.check(window['column'])
+            if _day(window['start']) >= _day(window['end']):
+                raise ValueError('empty time window')
         ident.check(spec['entity'])
         ident.check(spec['column'])
         if spec['aggregation'] not in ('sum', 'count'):
@@ -278,7 +324,7 @@ def load_spec(path):
             raise ValueError('predicates')
         for predicate in spec['where']:
             _predicate(predicate)
-        _query(spec['cube_query'])
+        _query(spec['cube_query'], grouped='group_by' in spec, dated='time_window' in spec)
         return dict(spec, max_rows=max_rows, spec_sha256=hashlib.sha256(raw).hexdigest())
     except Exception:
         raise StageError('measure-oracle: invalid_spec', EXIT_CONFIG) from None
@@ -298,6 +344,19 @@ def _raw(value, kind):
     raise ValueError('source type')
 
 
+def _utc_day(value, kind):
+    if value is None:
+        return None
+    if kind == 'date' and type(value) is date:
+        return value
+    if type(value) is datetime:
+        if kind == 'timestamp' and value.tzinfo is None:
+            return value.date()
+        if kind == 'timestamptz' and value.utcoffset() is not None:
+            return value.astimezone(timezone.utc).date()
+    raise ValueError('temporal source type')
+
+
 def _matches(value, predicate, literals):
     op = predicate['operator']
     if op == 'is_null':
@@ -310,26 +369,37 @@ def _matches(value, predicate, literals):
     return value not in literals if op == 'ne' else value in literals
 
 
-def evaluate(spec, types, rows):
+def evaluate(spec, types, rows, *, on_qualified=None):
     """Compute an exact ephemeral answer from explicit raw values, never config filters.
 
-    `types` is a catalog-derived map to integer/numeric/text/boolean. `value`
-    is intentionally in-memory only; run() serializes counts and fixed reasons.
+    `types` contains catalog-derived scalar and temporal kinds. Scalar values
+    and group maps stay in memory; run() serializes counts and fixed reasons.
+    The optional observer receives each qualifying raw row once in memory.
     """
     if not isinstance(rows, list):
         raise ValueError('source rows')
     if len(rows) > spec['max_rows']:
         raise NotRun('row_limit')
+    group = spec.get('group_by')
+    window = spec.get('time_window')
     columns = {spec['column']} | {p['column'] for p in spec['where']}
+    if group:
+        columns.add(group)
     if any(types.get(name) not in _KINDS for name in columns):
         raise NotRun('unsupported_type')
     if spec['aggregation'] == 'sum' and types[spec['column']] not in ('integer', 'numeric'):
         raise NotRun('unsupported_aggregation_type')
+    if window:
+        if types.get(window['column']) not in _TEMPORAL:
+            raise NotRun('unsupported_time_type')
+        start, end = _day(window['start']), _day(window['end'])
     for p in spec['where']:
         if 'type' in p and not (p['type'] == types[p['column']] or
                                 p['type'] == 'numeric' and types[p['column']] == 'integer'):
             raise NotRun('predicate_type_mismatch')
-    values, qualifying = [], 0
+    # The global empty aggregate has one result. An empty group set has none.
+    buckets = {} if group else {None: []}
+    qualifying = present = 0
     try:
         predicates = []
         for predicate in spec['where']:
@@ -338,20 +408,37 @@ def evaluate(spec, types, rows):
                 literals = [_number(value) for value in literals]
             predicates.append((predicate, frozenset(literals)))
         for row in rows:
-            if not isinstance(row, dict) or any(name not in row for name in columns):
+            if (not isinstance(row, dict) or not columns <= row.keys()
+                    or (window and window['column'] not in row)):
                 raise ValueError('source projection')
             converted = {name: _raw(row[name], types[name]) for name in columns}
-            if all(_matches(converted[p['column']], p, literals) for p, literals in predicates):
-                qualifying += 1
-                values.append(converted[spec['column']])
-        present = sum(value is not None for value in values)
-        answer = exact_sum(values) if spec['aggregation'] == 'sum' else present
+            if window:
+                day = _utc_day(row[window['column']], types[window['column']])
+                if day is None or not start <= day < end:
+                    continue
+            if not all(_matches(converted[p['column']], p, literals) for p, literals in predicates):
+                continue
+            if on_qualified is not None:
+                on_qualified(row)
+            key = converted[group] if group else None
+            value = converted[spec['column']]
+            buckets.setdefault(key, []).append(value)
+            if len(buckets) > MAX_GROUPS:
+                raise NotRun('group_limit')
+            qualifying += 1
+            present += int(value is not None)
+        answers = {key: exact_sum(values) if spec['aggregation'] == 'sum' else sum(v is not None for v in values)
+                   for key, values in buckets.items()}
+    except NotRun:
+        raise
     except NumericLimit:
         raise NotRun('numeric_limit') from None
     except (ValueError, InvalidOperation, OverflowError):
         raise NotRun('unsupported_value') from None
-    return {'value': answer, 'source_rows': len(rows), 'qualifying_rows': qualifying,
-            'non_null_values': present}
+    totals = {'source_rows': len(rows), 'qualifying_rows': qualifying, 'non_null_values': present}
+    if group:
+        return dict(totals, groups=answers, group_kind=types[group])
+    return dict(totals, value=answers[None])
 
 
 def compare_value(expected, cube_rows, member):
@@ -365,6 +452,47 @@ def compare_value(expected, cube_rows, member):
     except (ValueError, InvalidOperation, OverflowError):
         raise ValueError('invalid Cube number') from None
     return actual == expected
+
+
+def _cube_key(value, kind):
+    if value is None:
+        return None
+    if kind in ('integer', 'numeric'):
+        number = _number(value)
+        if kind == 'integer' and number != number.to_integral_value():
+            raise ValueError('fractional integer key')
+        return number
+    if kind == 'text' and type(value) is str:
+        return value
+    if kind == 'boolean':
+        if type(value) is bool:
+            return value
+        if isinstance(value, str) and value in ('true', 'false', 't', 'f'):
+            return value in ('true', 't')
+    raise ValueError('invalid Cube group key')
+
+
+def _compare_groups(answer, rows, query):
+    if not isinstance(rows, list):
+        raise ValueError('invalid Cube groups')
+    if len(rows) > MAX_GROUPS:
+        raise NotRun('group_limit')
+    member, dimension = query['measures'][0], query['dimensions'][0]
+    actual = {}
+    for row in rows:
+        if not isinstance(row, dict) or set(row) != {member, dimension}:
+            raise ValueError('invalid Cube group projection')
+        key = _cube_key(row[dimension], answer['group_kind'])
+        if key in actual:
+            raise _Invalid('duplicate_cube_group')
+        actual[key] = None if row[member] is None else _number(row[member])
+    expected = answer['groups']
+    return {
+        'source_groups': len(expected),
+        'missing_groups': len(expected.keys() - actual.keys()),
+        'extra_groups': len(actual.keys() - expected.keys()),
+        'mismatched_groups': sum(expected[k] != actual[k] for k in expected.keys() & actual.keys()),
+    }
 
 
 @dataclass
@@ -425,30 +553,40 @@ def _prerequisite(cfg, spec, out, captured):
                     and m.get('public') is not False and m.get('shown') is not False]
         if len(measures) != 1:
             raise _Invalid('cube_member_missing')
-        public = {cube_name + '.' + m['name'] for section in ('dimensions', 'measures')
-                  for m in cube.get(section, []) if isinstance(m, dict) and isinstance(m.get('name'), str)
-                  and m.get('public') is not False and m.get('shown') is not False
-                  and not (section == 'dimensions' and m.get('primary_key') and m.get('public') is not True)}
-        if any(f['member'] not in public for f in spec['cube_query'].get('filters', [])):
+        public = {}
+        for section in ('dimensions', 'measures'):
+            public[section] = {cube_name + '.' + m['name'] for m in cube.get(section, [])
+                               if isinstance(m, dict) and isinstance(m.get('name'), str)
+                               and m.get('public') is not False and m.get('shown') is not False
+                               and not (section == 'dimensions' and m.get('primary_key') and m.get('public') is not True)}
+        query = spec['cube_query']
+        public_members = public['measures'] | public['dimensions']
+        if any(f['member'] not in public_members for f in query.get('filters', [])):
             raise _Invalid('cube_member_missing')
+        group_type = None
+        requested = [(name, 'group') for name in query.get('dimensions', [])]
+        requested += [(td['dimension'], 'time') for td in query.get('timeDimensions', [])]
+        for name, role in requested:
+            dims = [d for d in cube.get('dimensions', []) if isinstance(d, dict)
+                    and d.get('name') == name.split('.')[1]]
+            if name not in public['dimensions'] or len(dims) != 1:
+                raise _Invalid('cube_member_missing')
+            if role == 'group':
+                group_type = dims[0].get('type')
+            elif dims[0].get('type') != 'time':
+                raise NotRun('unsupported_time_type')
         captured.extend(snapshots)
-        return paths
-    except _Invalid:
+        return paths, group_type
+    except (_Invalid, NotRun):
         raise
     except Exception:
         raise _Invalid('cube_required') from None
 
 
-def _source(cfg, spec):
-    entity = cfg.entities.get(spec['entity'])
-    if entity is None:
-        raise _Invalid('entity_missing')
-    schema, table = ident.split(entity.table)
-    columns = sorted({spec['column']} | {p['column'] for p in spec['where']})
-    conn = db.connect(cfg.source.dsn_env)
-    try:
-        with db.read_only(conn, min(cfg.source.statement_timeout_ms, STATEMENT_CAP_MS), isolation='repeatable read'):
-            catalog = db.rows(conn, '''SELECT a.attname AS name, t.typname AS type, tn.nspname AS type_schema,
+def _read_table(conn, table, columns, max_rows, *, time_column=None):
+    schema, relation = ident.split(table)
+    projection = ','.join(ident.quote(name) for name in sorted(columns))
+    catalog = db.rows(conn, '''SELECT a.attname AS name, t.typname AS type, tn.nspname AS type_schema,
                 co.collisdeterministic AS collation_deterministic
                 FROM pg_catalog.pg_attribute a
                 JOIN pg_catalog.pg_class c ON c.oid = a.attrelid
@@ -457,19 +595,46 @@ def _source(cfg, spec):
                 JOIN pg_catalog.pg_namespace tn ON tn.oid = t.typnamespace
                 LEFT JOIN pg_catalog.pg_collation co ON co.oid = a.attcollation
                 WHERE n.nspname = :schema AND c.relname = :table
-                  AND a.attnum > 0 AND NOT a.attisdropped''', schema=schema, table=table)
-            types = {row['name']: _TYPES.get(row['type']) if row['type_schema'] == 'pg_catalog' else None
-                     for row in catalog}
-            if any(name not in types for name in columns):
-                raise _Invalid('column_missing')
-            if any(types[name] is None for name in columns):
-                raise NotRun('unsupported_type')
-            collations = {row['name']: row.get('collation_deterministic') for row in catalog}
-            if any(types[name] == 'text' and collations[name] is not True for name in columns):
-                raise NotRun('unsafe_collation')
-            projection = ','.join(ident.quote(name) for name in columns)
-            rows = db.rows(conn, f'SELECT {projection} FROM {ident.qualified(entity.table)} LIMIT :row_limit',
-                           row_limit=spec['max_rows'] + 1)
+                  AND a.attnum > 0 AND NOT a.attisdropped''', schema=schema, table=relation)
+    types = {}
+    for row in catalog:
+        if row['name'] not in columns:
+            continue
+        kind = _TYPES.get(row['type'])
+        if row['name'] == time_column:
+            if row['type'] not in _TEMPORAL:
+                raise NotRun('unsupported_time_type')
+            kind = row['type']
+        if row['type_schema'] != 'pg_catalog' or kind is None:
+            raise NotRun('unsupported_type')
+        if kind == 'text' and row.get('collation_deterministic') is not True:
+            raise NotRun('unsafe_collation')
+        types[row['name']] = kind
+    if types.keys() != set(columns):
+        raise _Invalid('column_missing')
+    rows = db.rows(conn, f'SELECT {projection} FROM {ident.qualified(table)} LIMIT :row_limit', row_limit=max_rows + 1)
+    if len(rows) > max_rows:
+        raise NotRun('row_limit')
+    return types, rows
+
+
+def _source(cfg, spec):
+    entity = cfg.entities.get(spec['entity'])
+    if entity is None:
+        raise _Invalid('entity_missing')
+    conn = db.connect(cfg.source.dsn_env)
+    try:
+        with db.read_only(conn, min(cfg.source.statement_timeout_ms, STATEMENT_CAP_MS), isolation='repeatable read'):
+            if 'related_exists' in spec:
+                from . import measure_oracle_join
+                return measure_oracle_join.source(cfg, spec, conn, _read_table)
+            columns = {spec['column']} | {p['column'] for p in spec['where']}
+            if 'group_by' in spec:
+                columns.add(spec['group_by'])
+            time_column = spec.get('time_window', {}).get('column')
+            if time_column:
+                columns.add(time_column)
+            types, rows = _read_table(conn, entity.table, columns, spec['max_rows'], time_column=time_column)
             return evaluate(spec, types, rows)
     finally:
         conn.close()
@@ -502,15 +667,35 @@ def run(cfg, args, out: Path) -> Result:
             raise _Invalid('configuration_changed')
         captured.extend((selected, cfg_source))
         captured.extend(_Captured.read(path, MODEL_LIMIT) for path in protected[1:])
-        model_paths = _prerequisite(current_cfg, spec, out, captured)
+        model_paths, group_type = _prerequisite(current_cfg, spec, out, captured)
         res.inputs['measure_oracle'] = {'spec_sha256': spec['spec_sha256'],
                                         'config_sha256': hashlib.sha256(cfg_source.raw).hexdigest()}
         answer = _source(current_cfg, spec)
+        query = spec['cube_query']
+        grouped = 'group_by' in spec
+        if grouped and _CUBE_KIND[answer['group_kind']] != group_type:
+            raise NotRun('group_type_mismatch')
+        detail = {name: answer[name] for name in ('source_rows', 'qualifying_rows', 'non_null_values')}
+        if 'related_exists' in spec:
+            for name in ('related_rows', 'matched_facts', 'multi_match_facts', 'qualifying_multi_match_facts',
+                         'null_foreign_keys', 'orphan_related_rows'):
+                detail[name] = answer[name]
         # End the raw database snapshot before starting/waiting for Cube.
         with cube_run.serve(current_cfg, Path(out) / 'cube') as client:
             try:
-                cube_rows = client.load(spec['cube_query'])
-                equal = compare_value(answer['value'], cube_rows, spec['cube_query']['measures'][0])
+                cube_rows = client.load(dict(query, limit=MAX_GROUPS + 1) if grouped else query)
+                if grouped:
+                    groups = _compare_groups(answer, cube_rows, query)
+                    equal = not any(groups[k] for k in ('missing_groups', 'extra_groups', 'mismatched_groups'))
+                    detail.update(groups)
+                else:
+                    equal = compare_value(answer['value'], cube_rows, query['measures'][0])
+            except CubeRowLimitError:
+                if grouped:
+                    raise NotRun('group_limit') from None
+                raise _Invalid('cube_failed') from None
+            except (NotRun, _Invalid):
+                raise
             except Exception:
                 raise _Invalid('cube_failed') from None
         if _model_files(out) != model_paths:
@@ -531,8 +716,7 @@ def run(cfg, args, out: Path) -> Result:
         # Runtime-only: Result.to_dict/asdict serializes dataclass fields, not
         # this callback. CLI rechecks before and after atomic publication.
         res._diagnostic_validate = validate_for_publication
-        detail = {name: answer[name] for name in ('source_rows', 'qualifying_rows', 'non_null_values')}
-        detail.update(max_rows=spec['max_rows'], cube_rows=1,
+        detail.update(max_rows=spec['max_rows'], cube_rows=len(cube_rows),
                       reason='match' if equal else 'value_mismatch')
         if not answer['source_rows']:
             res.not_proven.append('The visible source was empty; this comparison exercised no source values.')
@@ -540,6 +724,8 @@ def run(cfg, args, out: Path) -> Result:
             res.not_proven.append('No raw rows qualified; this comparison exercised no qualifying source values.')
         elif not answer['non_null_values']:
             res.not_proven.append('All qualifying measure values were NULL; no non-NULL measure value was exercised.')
+        if 'related_exists' in spec and not answer['qualifying_multi_match_facts']:
+            res.not_proven.append('No qualifying fact matched multiple related rows.')
         res.add('measure_oracle', 'pass' if equal else 'fail', **detail)
     except NotRun as exc:
         res.add('measure_oracle', 'not_run', reason=exc.reason)

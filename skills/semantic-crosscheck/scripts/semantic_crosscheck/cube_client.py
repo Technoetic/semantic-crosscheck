@@ -66,6 +66,10 @@ class CubeResponseError(CubeError):
     """A /load answer outside Cube's load envelope; compare.error_detail reports it as cube = invalid_response."""
 
 
+class CubeRowLimitError(CubeError):
+    """A /load response reached its requested row limit and may be incomplete."""
+
+
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         # Default redirects drain fp.read() without a byte limit before following
@@ -226,6 +230,6 @@ class CubeClient:
             if not isinstance(data, list) or not all(isinstance(row, dict) for row in data):
                 raise CubeResponseError("the load response has no data list of row objects")
             if len(data) >= q["limit"]:
-                raise CubeError(f"result reached the limit ({q['limit']}); raise the limit or page the query")
+                raise CubeRowLimitError(f"result reached the limit ({q['limit']}); raise the limit or page the query")
             _remaining(deadline)
             return data

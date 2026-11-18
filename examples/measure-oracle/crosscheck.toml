@@ -25,3 +25,11 @@ column = "qty"
 agg = "count"
 by = "part_id"
 filter = { status = ["FIRM"] }
+
+[measures.dated_total]
+entity = "orders"
+column = "qty"
+agg = "sum"
+by = "part_id"
+date_column = "ordered_on"
+filter = { status = ["FIRM"] }

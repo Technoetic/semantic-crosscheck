@@ -121,14 +121,38 @@ query results. It does not solve the separate cross-engine snapshot problem.
 These limitations remain in the report's `not_proven` disclosures, including
 when every required stage passes.
 
+## Metric evidence on the first page
+
+For a configuration with measures, `report.md` starts with the operational status and a table of the
+configured measure facets. Each value, date member and applicable join gets its own row. A passing grand
+total covers the value facet only. The table says which comparison ran. An authored SQL query can still
+share the model's mistaken business definition, and a comparison can finish with a mismatch.
+
+The same rows appear in `report.json.metric_evidence`, in configuration order. Each row has `measure`,
+`facet`, `basis`, `reason` and `sources`. Sources are configured Gold IDs and attributed check IDs.
+
+| Basis | What the current verify receipt supports |
+|---|---|
+| `authored_comparison` | A configured authored Gold query compared this facet with matched rows carrying a value. |
+| `mutation_only` | An authored Gold query detected a mutation of this facet. There is no direct authored value comparison for this facet. |
+| `generated_only` | Only generated comparisons or generated mutation detections are evidenced for this facet. Both sides can share a wrong filter, grouping or join. |
+| `zero_rows` / `no_values` | Authored Gold compared empty results, or returned rows without exercising a value of this facet. For numeric measures the existing verify rule excludes zero as well as NULL. |
+| `missing` | No observed comparison supports this facet. The reason distinguishes, for example, filter-only usage and accepted gaps. |
+| `not_run` | See the reason for a missing, stale, narrowed, unreadable or incomplete receipt, an unrun Gold query, or a facet absent from the model. |
+
+An actual generated check can appear under `sources` even when empty authored Gold takes precedence in
+the basis. A standalone `measure-oracle` or `expect` result stays outside this table. Run those diagnostics
+separately to check an independently specified calculation or fixture. This disclosure preserves the
+operational status, required stages, CLI output, exit code and `report/result.json` contract.
+
 ## Evidence kinds in the report
 
 Since 0.23.0, when a `verify` result is among the results report reads, report also says what kind of evidence
 each check is ([design, section 8, "Evidence kinds"](design.md#evidence-kinds)). This is disclosure only: no check,
-status, exit code or required stage of report changes, `report/result.json` gains no key, and a report without a
-verify result (the compatibility goldens) is unchanged apart from the engine fingerprint.
+status, exit code or required stage of report changes. A report without a verify result omits the detailed section
+described below and still lists its configured measure facets on the first page.
 
-`report.json` gains `evidence` as its last key:
+`report.json` includes these fields under `evidence`:
 
 | Key | Meaning |
 |---|---|

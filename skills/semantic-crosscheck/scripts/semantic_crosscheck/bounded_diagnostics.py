@@ -52,7 +52,8 @@ def _arguments(argv, stage):
     parser = _Parser(prog='sxc.py ' + stage, allow_abbrev=False,
                      description='Optional bounded diagnostic; a pass does not establish global or business correctness.')
     parser.add_argument('--spec', action='append', required=True, metavar='FILE',
-                        help='strict version 1 bounded diagnostic specification')
+                        help=('version 1 or 2 independent raw rule and Cube query' if stage == 'measure-oracle'
+                              else 'strict version 1 bounded diagnostic specification'))
     parser.add_argument('--config', action='append', metavar='FILE',
                         help='operational crosscheck.toml (default: ./crosscheck.toml)' if stage == 'measure-oracle' else argparse.SUPPRESS)
     parser.add_argument('--out', action='append', metavar='DIR',

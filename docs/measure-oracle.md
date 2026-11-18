@@ -1,10 +1,13 @@
 # Independent raw-row measure oracle
 
-`measure-oracle` compares one explicitly authored global Cube measure query with
-an exact Python SUM or COUNT over raw source rows. Its predicate is supplied in
+`measure-oracle` compares one explicitly authored Cube measure query with
+an exact Python SUM or COUNT over raw source rows, globally or per item and
+optionally within a UTC calendar window. Its predicate is supplied in
 a separate JSON file; it is never copied from the configured measure, generated
 SQL, or Cube model. A shared wrong configured filter can therefore produce a
 disagreement even when the generated SQL and Cube agree with each other.
+For a fact measure that should count each fact once when related rows exist,
+see the [version-2 related-row contract](measure-oracle-joins.md).
 
 ```console
 python skills/semantic-crosscheck/scripts/sxc.py cube --config examples/measure-oracle/crosscheck.toml --out .sxc-measure
@@ -70,10 +73,52 @@ client. It contains exactly one `measures` member and optional flat `filters`.
 Filters accept `member`, `operator` and, for `equals`/`notEquals`, a nonempty
 `values` array of at most 256 strings. `set`/`notSet` filters omit `values`.
 There are at most 32 filters. All members must belong to the queried measure's
-cube. Dimensions, cross-cube members, joins, nested Boolean filters, segments,
-time dimensions, order, offset and caller limits are rejected. Referenced
-members must be public in the saved model. This version intentionally has no
-grouped, joined or dated measure oracle.
+cube and must be public in the saved model. Grouping and time filtering use the
+closed forms below. The query excludes nested Boolean filters, cross-cube
+members, segments, ordering, offsets and caller-supplied limits.
+
+### Per-item totals and calendar windows
+
+The optional `group_by` and `time_window` fields can be used together or
+individually. This fragment of the [runnable January example](../examples/measure-oracle/item-window.json)
+checks a separate SUM for each qualifying part.
+
+```json
+{
+  "group_by": "part_id",
+  "time_window": {"column": "ordered_on", "start": "2026-01-01", "end": "2026-02-01"},
+  "cube_query": {
+    "measures": ["m_dated_total.value"],
+    "dimensions": ["m_dated_total.key"],
+    "timeDimensions": [{"dimension": "m_dated_total.ts", "dateRange": ["2026-01-01", "2026-01-31"]}]
+  }
+}
+```
+
+- `group_by` names one raw integer, numeric, text/varchar or boolean
+  column. Supply exactly one corresponding public Cube dimension in
+  `cube_query.dimensions`. Its model type must match the source kind even for
+  empty data. A qualifying NULL key forms one group. Specify `is_not_null`
+  explicitly when the business measure excludes such rows.
+- Each key's value and the complete set of keys must agree, independently of
+  result order. Text keys retain case and leading zeros. Numeric keys compare
+  exactly, and boolean keys accept JSON booleans or the lowercase wire
+  encodings `true`, `false`, `t`, `f`. A duplicate Cube key, including one
+  repeated with a different numeric representation, yields `error/duplicate_cube_group`.
+- `time_window` uses two strict ISO calendar dates (`YYYY-MM-DD`) with
+  `start < end`. The raw calculation includes the UTC start day and excludes
+  the end day. It reads PostgreSQL `date` as a calendar day, interprets a
+  timestamp without time zone as UTC, converts a timestamp with time zone to
+  UTC, and excludes NULL times. Independently specify one Cube time dimension
+  and two inclusive calendar dates, using Cube's default UTC timezone. The
+  validator accepts different ranges so an incorrect endpoint can be detected
+  when rows populate the difference between the two intervals. Sub-day
+  windows, local-time calendars and time buckets fall
+  outside this contract.
+- A grouped comparison admits at most 10,000 keys per side. The Cube request
+  asks for one additional row to detect truncation. Either side exceeding the
+  bound yields `not_run/group_limit`. An empty grouped result can match only a
+  valid empty Cube row list and discloses the lack of qualifying values.
 
 ## Execution and bounds
 
@@ -85,8 +130,9 @@ REPEATABLE READ transaction. The statement timeout is the configured source
 timeout capped at 30 seconds. The transaction is rolled back and the connection
 closed before waiting for Cube.
 
-The catalog allowlist is PostgreSQL's built-in `smallint`, `integer`, `bigint`,
-`numeric`, `text`, `varchar` and `boolean`. Domains, floats, dates, arrays,
+The measure, grouping and predicate allowlist is PostgreSQL's built-in
+`smallint`, `integer`, `bigint`, `numeric`, `text`, `varchar` and `boolean`.
+Only the window column admits the three temporal types above. Domains, floats, arrays,
 custom types and other unsupported catalog types produce `not_run`, including
 for empty sources. Floats, nonfinite numbers or unexpected driver value types
 also produce `not_run`. Raw values are evaluated in Python with the explicit
@@ -95,7 +141,7 @@ typed predicate. SUM uses the shared pure exact-numeric helper, bounded to
 context. Exceeded row/numeric bounds produce `not_run` with no partial answer.
 The row limit bounds cardinality; it is not a bound on source row byte width.
 
-Cube must return exactly one global row containing exactly the requested
+For a global comparison Cube must return exactly one row containing exactly the requested
 measure. Missing/extra members, missing/multiple rows, floats, booleans,
 nonfinite or oversized numeric representations are errors. Exact integer,
 Decimal and bounded decimal-text values compare numerically, with NULL
@@ -115,16 +161,18 @@ receipts or models.
 
 ## Meaning and retained evidence
 
-PASS means that one supplied Cube scalar matched the independent computation
-over the entire visible source within the row bound. FAIL means a value
-disagreement. Unsupported inputs or exhausted bounds yield `not_run`; invalid
+PASS means that the scalar or every key and value in the supplied grouped query
+matched the independent computation over the entire bounded visible source.
+FAIL means a missing group, an extra group or a different aggregate value.
+Unsupported inputs or exhausted bounds yield `not_run`; invalid
 specs, missing/stale prerequisites and execution/response errors yield `error`.
 Every new attempt invalidates its prior receipt before execution, including
 attempts that subsequently fail. Unsafe output aliases are rejected while
 preserving the selected input.
 
 The result retains source/qualifying/non-NULL/Cube row counts, the row bound,
-fixed check/reason identifiers and input hashes. Raw values, aggregate answers,
+fixed check/reason identifiers and input hashes. A grouped result also records
+counts of source, missing, extra and value-mismatched groups. Raw values, aggregate answers,
 filter constants, SQL, source identifiers, local paths, credentials and
 exception messages are never serialized. Empty sources, no qualifying rows
 and all-NULL selections are disclosed explicitly in `not_proven`.

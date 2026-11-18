@@ -10,6 +10,12 @@ with `sum.json` or `count.json` in the same output directory. The independent
 answers are SUM `15.25` and COUNT(column) `2`. NULL measure values do not count;
 the row with a NULL grouping key is explicitly excluded by the authored spec.
 
+`item-window.json` checks each part separately for January in UTC. The raw
+window includes January 1 and excludes February 1. The Cube range includes
+both January 1 and January 31. Two parts qualify, one with SUM 13 and one
+with SUM NULL. Extending just the Cube end date to February 1 adds a third
+part and produces a FAIL with one extra group.
+
 To demonstrate a shared filter mistake, copy the configuration outside the
 example directory, change its configured measure filters from `FIRM` to
 `DRAFT`, regenerate Cube, and rerun the unchanged independently authored

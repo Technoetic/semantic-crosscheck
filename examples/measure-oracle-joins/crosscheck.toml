@@ -1,0 +1,37 @@
+version = 1
+
+[source]
+dsn_env = "SXC_PG_DSN"
+owner_dsn_env = "SXC_PG_OWNER_DSN"
+schemas = ["sxc_demo"]
+output_schema = "sxc_out"
+
+[entities.sales_orders]
+table = "sxc_demo.oracle_sales_order"
+key = ["id"]
+
+[entities.sales_lines]
+table = "sxc_demo.oracle_sales_line"
+key = ["id"]
+
+[entities.eligible_orders]
+table = "sxc_demo.oracle_eligible_orders"
+key = ["id"]
+
+[entities.orders_per_line]
+table = "sxc_demo.oracle_orders_per_line"
+key = ["line_id"]
+
+[measures.eligible]
+entity = "eligible_orders"
+column = "amount"
+by = "id"
+agg = "sum"
+filter = { state = ["posted"] }
+
+[measures.multiplied]
+entity = "orders_per_line"
+column = "amount"
+by = "id"
+agg = "sum"
+filter = { state = ["posted"] }

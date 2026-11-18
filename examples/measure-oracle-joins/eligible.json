@@ -1,0 +1,10 @@
+{
+  "schema_version": 2,
+  "entity": "sales_orders",
+  "column": "amount",
+  "aggregation": "sum",
+  "where": [{"column": "state", "type": "text", "operator": "eq", "value": "posted"}],
+  "related_exists": {"entity": "sales_lines", "fact_key": "id", "foreign_key": "order_id"},
+  "cube_query": {"measures": ["m_eligible.value"]},
+  "max_rows": 20
+}

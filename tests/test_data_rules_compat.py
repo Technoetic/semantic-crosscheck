@@ -1,10 +1,11 @@
-"""A configuration without [data_rules] behaves exactly as in v0.21.1.
+"""Compatibility goldens for a configuration without [data_rules].
 
 The goldens in tests/fixtures/compat_v0_21_1 were written by its capture.py on v0.21.1, before any data-rules code
 existed: the SQL of every shape view, shapes.ttl, fk_review.sql, report.TRUSTED_NOTE, stage_build.BUILD_SQL_HEADER,
 the inputs_fingerprint keys, and two offline `build` + `report` runs of demo/crosscheck.toml through sxc.main with a
 recording stand-in for the database (every statement build sends, build.sql, result.json, the console summaries,
-report.md and report.json, and the check lists). Every golden must stay byte-identical; capture.py normalises only
+report.md and report.json, and the check lists). The v0.29.0 report.md / report.json snapshots include the
+metric table. Every golden must stay byte-identical to its baseline; capture.py normalises only
 run times, the engine fingerprint (new modules change it by design) and output paths. The command-line stage list
 may gain data-rules and the explicitly optional measure-oracle/plan-compare diagnostics and nothing else, here and
 in capture.py's check mode. With [data_rules] and views = false, build still sends exactly the v0.21.1

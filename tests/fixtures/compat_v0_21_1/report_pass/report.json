@@ -83,5 +83,70 @@
   "binding": "unbound",
   "scope_note": "runtime evidence is unbound: actual PostgreSQL, Node, Java, HermiT and selected Cube installation were not bound; local engine/package metadata alone does not establish the executing runtime"
  },
- "next_safe_action": "run the stages that have not run yet (reason, cube, verify), in this order, then rerun report"
+ "next_safe_action": "run the stages that have not run yet (reason, cube, verify), in this order, then rerun report",
+ "metric_evidence": [
+  {
+   "measure": "firm_open",
+   "facet": "m_firm_open.value",
+   "basis": "not_run",
+   "reason": "verify_missing",
+   "sources": []
+  },
+  {
+   "measure": "firm_open",
+   "facet": "has_component_closure+m_firm_open",
+   "basis": "not_run",
+   "reason": "verify_missing",
+   "sources": []
+  },
+  {
+   "measure": "firm_open",
+   "facet": "part+m_firm_open",
+   "basis": "not_run",
+   "reason": "verify_missing",
+   "sources": []
+  },
+  {
+   "measure": "firm_open_dated",
+   "facet": "m_firm_open_dated.value",
+   "basis": "not_run",
+   "reason": "verify_missing",
+   "sources": []
+  },
+  {
+   "measure": "firm_open_dated",
+   "facet": "m_firm_open_dated.ts",
+   "basis": "not_run",
+   "reason": "verify_missing",
+   "sources": []
+  },
+  {
+   "measure": "on_hand",
+   "facet": "m_on_hand.value",
+   "basis": "not_run",
+   "reason": "verify_missing",
+   "sources": []
+  },
+  {
+   "measure": "on_hand",
+   "facet": "part+m_on_hand",
+   "basis": "not_run",
+   "reason": "verify_missing",
+   "sources": []
+  },
+  {
+   "measure": "consigned",
+   "facet": "m_consigned.value",
+   "basis": "not_run",
+   "reason": "verify_missing",
+   "sources": []
+  },
+  {
+   "measure": "consigned",
+   "facet": "part+m_consigned",
+   "basis": "not_run",
+   "reason": "verify_missing",
+   "sources": []
+  }
+ ]
 }

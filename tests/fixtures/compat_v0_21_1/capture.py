@@ -1,6 +1,7 @@
 """Compatibility goldens of v0.21.1 for a configuration without [data_rules] (demo/crosscheck.toml).
 
-The goldens next to this file were written by this script on v0.21.1, before any data-rules code existed:
+The goldens next to this file were written by this script on v0.21.1, before any data-rules code existed.
+Only the two report.md and two report.json snapshots were updated in v0.29.0 for the first-page metric table:
 
     python -X utf8 tests/fixtures/compat_v0_21_1/capture.py --write     # write the goldens (done once, in P0)
     python -X utf8 tests/fixtures/compat_v0_21_1/capture.py             # compare the current code with them

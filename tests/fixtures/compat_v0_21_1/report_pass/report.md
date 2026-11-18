@@ -2,6 +2,23 @@
 
 Overall: **NOT_RUN**, config `crosscheck.toml`, generated <time>
 
+## Metric evidence
+
+Authored coverage is undetermined for all 9 configured measure facets.
+This table reads `verify`. Standalone `measure-oracle` and `expect` runs have separate receipts.
+
+| Measure | Facet | Evidence observed | Source or gap |
+|---|---|---|---|
+| `firm_open` | `m_firm_open.value` | Not judged | Run verify |
+| `firm_open` | `has_component_closure+m_firm_open` | Not judged | Run verify |
+| `firm_open` | `part+m_firm_open` | Not judged | Run verify |
+| `firm_open_dated` | `m_firm_open_dated.value` | Not judged | Run verify |
+| `firm_open_dated` | `m_firm_open_dated.ts` | Not judged | Run verify |
+| `on_hand` | `m_on_hand.value` | Not judged | Run verify |
+| `on_hand` | `part+m_on_hand` | Not judged | Run verify |
+| `consigned` | `m_consigned.value` | Not judged | Run verify |
+| `consigned` | `part+m_consigned` | Not judged | Run verify |
+
 Required stages: build, reason, cube, verify. The overall status passes only when each of them ran after the stages it depends on and passed.
 
 | Stage | Status | Pass | Fail | Error | Not run | Not proven | Finished |

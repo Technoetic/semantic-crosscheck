@@ -214,7 +214,7 @@ def parser(*, audit_errors=False) -> argparse.ArgumentParser:
 
     s = sub.add_parser("measure-oracle", parents=[common], allow_abbrev=False,
                        help="independently recompute one bounded raw-row SUM/COUNT and compare Cube (optional diagnostic)")
-    s.add_argument("--spec", required=True, metavar="FILE", help="strict version 1 independent raw predicate and Cube query")
+    s.add_argument("--spec", required=True, metavar="FILE", help="version 1 or 2 independent raw rule and Cube query")
 
     s = sub.add_parser("plan-compare", parents=[common], allow_abbrev=False,
                        help="compare full synthetic row bags under two observed PostgreSQL plans (optional diagnostic)")

@@ -6,7 +6,7 @@ now sorts every check of an included stage under its evidence kind (authored, re
 mutation, and unclassified only when some check has no rule), and repeats what verify recorded: the mutant split,
 the facets without authored evidence, the checks and gold queries that compared no row, and gold SQL with generated
 text. It writes report.json `evidence`, a `## Evidence` section before `## Not proven` and `  EVIDENCE  ` console
-lines, and only when a verify result exists, so a run without verify (the compatibility goldens) is unchanged. A
+lines, and only when a verify result exists. The separate metric table also covers missing verify results. A
 narrowed, stale or unrecorded verify run is said to be one, never shown as "0 of 0". Nothing of the gold text, the
 rows or the parameters reaches these outputs. No database is needed.
 """
@@ -176,7 +176,7 @@ class ReportOutputs(unittest.TestCase):
 
 class GoldenAbsenceTest(ReportOutputs):
     def test_golden_absence(self):
-        """The compatibility goldens (build and report without verify) gain no key, section or line."""
+        """Without verify there is no detailed observation, even when the metric table lists the missing evidence."""
         spec = importlib.util.spec_from_file_location("sxc_compat_capture_report_evidence", GOLDEN / "capture.py")
         capture = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(capture)

@@ -1,0 +1,62 @@
+{
+  "schema_version": 1,
+  "arm": "candidate",
+  "plan_sha256": "0996fb0a0f55b6a0e6c4a3fe398dfc74260ac486f59da8be8436c1010107df34",
+  "checks": [
+    "v1-row-agreement",
+    "authored-expected-rows"
+  ],
+  "budget": 10,
+  "observations": [
+    {
+      "id": "dev-one-sided-drop",
+      "status": "flag",
+      "fixture_sha256": "e00d37ef1681d8d3124257dce148d3b838d40b3c405fc7560c720b12ee7f26a4"
+    },
+    {
+      "id": "dev-return",
+      "status": "clear",
+      "fixture_sha256": "4f98cddc7d5daef46512218447c54c9c69123498d5177822f00a0809d329b72e"
+    },
+    {
+      "id": "dev-shared-drop",
+      "status": "flag",
+      "fixture_sha256": "c56d1f18a65985e2b3893d962ab74e9815b3aba074690b8136758a5618648e22"
+    },
+    {
+      "id": "dev-shared-fanout",
+      "status": "flag",
+      "fixture_sha256": "22f2b44ef60b69b71f68261b6242862b1b1b2134382161812b9ea8915562cf42"
+    },
+    {
+      "id": "dev-single-tag",
+      "status": "clear",
+      "fixture_sha256": "668275cf629e0efd3f472e2324915bcbf7b418fd6f7c4691df5443fa9cdcaf25"
+    },
+    {
+      "id": "sealed-a1",
+      "status": "flag",
+      "fixture_sha256": "4427df00116ece6f11953ca52399ed230448c0c681425ee3a3aab2038ecb0068"
+    },
+    {
+      "id": "sealed-a2",
+      "status": "flag",
+      "fixture_sha256": "1e2cd5e9583dbc36d224cafd61c5f2707a32dfdab564a8f9e173c64ba037d26e"
+    },
+    {
+      "id": "sealed-a3",
+      "status": "clear",
+      "fixture_sha256": "8c72c31cd6c0a6ff4be071ad0152a8250b0da0903d56e6a79537e39cb4c47058"
+    },
+    {
+      "id": "sealed-a4",
+      "status": "flag",
+      "fixture_sha256": "0491d72aaa1c3211d189a2d380738ac8dcaa6184dbb7e938946fa3aa7a1b321b"
+    },
+    {
+      "id": "sealed-a5",
+      "status": "clear",
+      "fixture_sha256": "edd9720cd7acc89fc46e92e5b1a3b1a2a6b50aac9e565c9f0b1cfd978585c316"
+    }
+  ]
+}

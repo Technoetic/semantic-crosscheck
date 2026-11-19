@@ -236,3 +236,10 @@ settings are not plan evidence; observed physical plan diversity and complete ty
 
 The measure oracle's raw-row evaluation is independent of the generators, but not a proof that its authored
 specification is the correct business rule. These diagnostics do not extend default report authority.
+
+## v0.30.0 paired evaluation and numerical release claims
+
+Chulmin Pyo's [connectome-cognition-benchmark v1.1.0 software record](https://doi.org/10.5281/zenodo.24361690) inspired the evaluation design.
+The preregistration documents [prior exposure](https://github.com/ai3inc/connectome-cognition-benchmark/blob/9c5d863256fdc20c341b94b874e62921e92f22c1/preregistration/PREREG_EXTERNAL_COHORT.md#L8-L22) and the [registered test and subsequent outcome](https://github.com/ai3inc/connectome-cognition-benchmark/blob/9c5d863256fdc20c341b94b874e62921e92f22c1/preregistration/PREREG_EXTERNAL_COHORT.md#L228-L267).
+The [numbers index builder](https://github.com/ai3inc/connectome-cognition-benchmark/blob/9c5d863256fdc20c341b94b874e62921e92f22c1/paper/build_numbers.py#L1-L25) records input provenance. The [manuscript claim checker](https://github.com/ai3inc/connectome-cognition-benchmark/blob/9c5d863256fdc20c341b94b874e62921e92f22c1/paper/claims.py#L139-L146) checks claims against values in that index.
+We adapted these methods to synthetic inventory totals and added a check of the release note's marked table. The fixtures, checks and release tooling are independently implemented. The upstream project's neuroscience data, metrics and software are outside this distribution.

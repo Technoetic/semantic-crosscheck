@@ -1,5 +1,9 @@
 # 단계·옵션·종료 코드
 
+## 릴리스 검증 도구
+
+소스 저장소에서 `python tools/run_paired_example.py`를 실행하면 두 검사의 결과가 기록과 일치하는지 확인할 수 있다. `python tools/paired_release.py`는 같은 사례의 판정 변화를 집계하며, `--check-markdown`으로 릴리스 노트 수치를 확인한다. [입력 형식과 실행 예](../paired-release.md).
+
 ## v0.29.0 선택형 독립 검산·계획 비교
 
 | 단계 | 입력과 범위 | 단계별 옵션 | 주요 산출물 |
@@ -9,7 +13,7 @@
 
 둘 다 `--out DIR`·`--quiet`를 지원하고, counts-only `measure_oracle`/`plan_compare` 결과를 쓴다. 기본 report 판정에는 포함되지 않는다. 두 진단의 종료 코드 0은 명시한 범위의 비교 성공, 1은 불일치·미실행(`not_run`), 2는 오류·사용법·명세 오류다. 현재 `plan-compare`의 DSN 누락·연결 실패는 `not_run`(종료 1), `measure-oracle`의 Cube·원시 조회 환경 부족은 오류(종료 2)로 처리한다. 아래 공통 종료 코드 3의 환경 부족 규약을 두 진단에 그대로 적용하지 않는다.
 
-이 문서는 README의 '단계·옵션·종료 코드' 절과 선택 진단 절의 참조 문서입니다(v0.29.0). 설치와 첫 실행은 [README의 빠른 시작](../../README.md#quick-start-with-the-demo)에 있습니다.
+이 문서는 README의 '단계·옵션·종료 코드' 절과 선택 진단 절의 참조 문서입니다(v0.30.0). 설치와 첫 실행은 [README의 빠른 시작](../../README.md#quick-start-with-the-demo)에 있습니다.
 
 
 ```text

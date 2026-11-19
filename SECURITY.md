@@ -117,7 +117,7 @@ leaves the database host.
 ## Maintainer checklist for a public release
 
 - Turn on private vulnerability reporting in the repository settings, so the link above works.
-- Tag the release (`git tag -a v0.29.0`) and push the tag: README's Codex command pins `--ref v0.29.0`, and the
+- Tag the release (`git tag -a v0.30.0`) and push the tag: README's Codex command pins `--ref v0.30.0`, and the
   release archive is made from the tag with `git archive` and published with its SHA256SUMS.
 - Enable the hooks in the publishing clone with `git config core.hooksPath .githooks`, and set
   `SXC_DENYLIST` to the private deny-list (or `none`).

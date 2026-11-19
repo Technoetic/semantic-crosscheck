@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.30.0] - 2026-11-19
+
+- Compare a baseline with one added check on identical fixtures and case-attempt budgets. Report newly detected errors, new false positives, lost detections, corrected false positives and inconclusive cases by prior exposure.
+- Replay a synthetic inventory example, verify byte-identical receipts, and recalculate the registered release-note counts from individual observations.
+- See [release scope and verification](docs/releases/v0.30.0.md).
+
 ## [0.29.0] - 2026-11-18
 
 - Show configured measure facets and their evidence in the opening Markdown table and JSON report. Preserve missing, stale and empty evidence as distinct reasons. Existing exit criteria still apply.
@@ -1177,3 +1183,5 @@ First release. Release notes: [docs/releases/v0.1.0.md](docs/releases/v0.1.0.md)
 [0.28.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.28.0
 
 [0.29.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.29.0
+
+[0.30.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.30.0

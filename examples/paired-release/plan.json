@@ -1,0 +1,78 @@
+{
+  "schema_version": 1,
+  "experiment": "sku-unit-totals",
+  "added_check": "authored-expected-rows",
+  "baseline_checks": [
+    "v1-row-agreement"
+  ],
+  "budget": 10,
+  "registered_claims": [
+    "heldout.added_detections",
+    "heldout.new_false_positives",
+    "heldout.inconclusive",
+    "heldout.lost_detections",
+    "heldout.cases"
+  ],
+  "cases": [
+    {
+      "id": "dev-one-sided-drop",
+      "expected": "error",
+      "exposure": "development",
+      "fixture_sha256": "e00d37ef1681d8d3124257dce148d3b838d40b3c405fc7560c720b12ee7f26a4"
+    },
+    {
+      "id": "dev-return",
+      "expected": "clean",
+      "exposure": "development",
+      "fixture_sha256": "4f98cddc7d5daef46512218447c54c9c69123498d5177822f00a0809d329b72e"
+    },
+    {
+      "id": "dev-shared-drop",
+      "expected": "error",
+      "exposure": "development",
+      "fixture_sha256": "c56d1f18a65985e2b3893d962ab74e9815b3aba074690b8136758a5618648e22"
+    },
+    {
+      "id": "dev-shared-fanout",
+      "expected": "error",
+      "exposure": "development",
+      "fixture_sha256": "22f2b44ef60b69b71f68261b6242862b1b1b2134382161812b9ea8915562cf42"
+    },
+    {
+      "id": "dev-single-tag",
+      "expected": "clean",
+      "exposure": "development",
+      "fixture_sha256": "668275cf629e0efd3f472e2324915bcbf7b418fd6f7c4691df5443fa9cdcaf25"
+    },
+    {
+      "id": "sealed-a1",
+      "expected": "error",
+      "exposure": "heldout",
+      "fixture_sha256": "4427df00116ece6f11953ca52399ed230448c0c681425ee3a3aab2038ecb0068"
+    },
+    {
+      "id": "sealed-a2",
+      "expected": "error",
+      "exposure": "heldout",
+      "fixture_sha256": "1e2cd5e9583dbc36d224cafd61c5f2707a32dfdab564a8f9e173c64ba037d26e"
+    },
+    {
+      "id": "sealed-a3",
+      "expected": "clean",
+      "exposure": "heldout",
+      "fixture_sha256": "8c72c31cd6c0a6ff4be071ad0152a8250b0da0903d56e6a79537e39cb4c47058"
+    },
+    {
+      "id": "sealed-a4",
+      "expected": "error",
+      "exposure": "heldout",
+      "fixture_sha256": "0491d72aaa1c3211d189a2d380738ac8dcaa6184dbb7e938946fa3aa7a1b321b"
+    },
+    {
+      "id": "sealed-a5",
+      "expected": "clean",
+      "exposure": "heldout",
+      "fixture_sha256": "edd9720cd7acc89fc46e92e5b1a3b1a2a6b50aac9e565c9f0b1cfd978585c316"
+    }
+  ]
+}

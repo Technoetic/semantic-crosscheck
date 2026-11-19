@@ -1,0 +1,7 @@
+{
+  "facts": [{"sku":"N","units":0},{"sku":"M","units":3}],
+  "tags": [{"sku":"N","tag":"press"},{"sku":"N","tag":"weld"},{"sku":"M","tag":"press"}],
+  "gold_mode": "tag_join",
+  "model_mode": "tag_join",
+  "expected_rows": [{"sku":"M","units":3},{"sku":"N","units":0}]
+}

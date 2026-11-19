@@ -1,0 +1,7 @@
+{
+  "facts": [{"sku":"U","units":5},{"sku":"V","units":6},{"sku":"U","units":5}],
+  "tags": [{"sku":"U","tag":"pack"},{"sku":"V","tag":"cut"}],
+  "gold_mode": "all",
+  "model_mode": "tag_join",
+  "expected_rows": [{"sku":"U","units":10},{"sku":"V","units":6}]
+}

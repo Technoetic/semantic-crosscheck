@@ -1,0 +1,7 @@
+{
+  "facts": [{"sku":"P","units":3},{"sku":"P","units":7},{"sku":"Q","units":11}],
+  "tags": [{"sku":"P","tag":"cut"},{"sku":"P","tag":"drill"},{"sku":"Q","tag":"cut"}],
+  "gold_mode": "tag_join",
+  "model_mode": "tag_join",
+  "expected_rows": [{"sku":"P","units":10},{"sku":"Q","units":11}]
+}

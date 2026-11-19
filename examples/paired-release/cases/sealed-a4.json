@@ -1,0 +1,7 @@
+{
+  "facts": [{"sku":"T","units":8},{"sku":"W","units":1}],
+  "tags": [{"sku":"T","tag":"ship"},{"sku":"T","tag":"box"},{"sku":"W","tag":"ship"}],
+  "gold_mode": "all",
+  "model_mode": "tag_join",
+  "expected_rows": [{"sku":"T","units":8},{"sku":"W","units":1}]
+}

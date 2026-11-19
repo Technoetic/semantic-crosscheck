@@ -1,0 +1,7 @@
+{
+  "facts": [{"sku":"R","units":4},{"sku":"S","units":9}],
+  "tags": [{"sku":"S","tag":"paint"}],
+  "gold_mode": "tag_join",
+  "model_mode": "tag_join",
+  "expected_rows": [{"sku":"R","units":4},{"sku":"S","units":9}]
+}

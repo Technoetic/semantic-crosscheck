@@ -1,0 +1,7 @@
+{
+  "facts": [{"sku": "A", "units": 11}, {"sku": "B", "units": 4}],
+  "tags": [{"sku": "B", "tag": "sale"}],
+  "gold_mode": "all",
+  "model_mode": "tag_join",
+  "expected_rows": [{"sku": "A", "units": 11}, {"sku": "B", "units": 4}]
+}

@@ -3,8 +3,10 @@
 import argparse
 import hashlib
 import json
+import math
 import re
 from pathlib import Path
+from statistics import NormalDist
 
 
 EXPOSURES = ("heldout", "development", "unknown")
@@ -17,6 +19,9 @@ TRANSITIONS = {
 }
 METRICS = ("cases", *TRANSITIONS.values(), "inconclusive")
 REQUIRED_TRUTH = {metric: truth for (truth, _, _), metric in TRANSITIONS.items()}
+MIN_DISCORDANT_MIDP_005 = 5
+MIN_DISCORDANT_EXACT_005 = 6
+Z_975 = NormalDist().inv_cdf(0.975)
 
 
 def unique_object(items):
@@ -151,8 +156,105 @@ def validate_receipt(receipt, arm, plan, digest, cases):
     return rows
 
 
+def _round6(value: float) -> float:
+    rounded = round(value, 6)
+    return 0.0 if rounded == 0.0 else rounded
+
+
+def _pow2_ratio(numerator: int, exponent: int) -> float:
+    """Compute numerator / 2**exponent without IEEE-754 overflow for large m."""
+    if numerator == 0:
+        return 0.0
+    shift = max(0, numerator.bit_length() - 1000)
+    return math.ldexp(float(numerator >> shift), shift - exponent)
+
+
+def mcnemar_pvalues(b: int, c: int) -> tuple[float, float]:
+    """Two-sided exact conditional and Mid-P McNemar p-values (Fagerland et al., 2013)."""
+    if b < 0 or c < 0:
+        raise ValueError("discordant counts must be nonnegative")
+    m = b + c
+    if m == 0:
+        return 1.0, 1.0
+    if b == c:
+        exact_p = 1.0
+        midp = 1.0 - _pow2_ratio(math.comb(m, b), m + 1)
+        return exact_p, midp
+    k = min(b, c)
+    tail_strict = sum(math.comb(m, i) for i in range(k))
+    point = math.comb(m, k)
+    exact_p = min(1.0, _pow2_ratio(tail_strict + point, m - 1))
+    midp = min(1.0, _pow2_ratio(2 * tail_strict + point, m))
+    return exact_p, midp
+
+
+def _wilson_bounds(successes: int, total: int, z: float) -> tuple[float, float]:
+    p = successes / total
+    z2 = z * z
+    denom = 2.0 * (total + z2)
+    center = 2.0 * total * p + z2
+    half = z * math.sqrt(z2 + 4.0 * total * p * (1.0 - p))
+    return (center - half) / denom, (center + half) / denom
+
+
+def newcombe_paired_ci95(a: int, b: int, c: int, d: int) -> list[float]:
+    """Newcombe (1998) Method 10 95% Wilson-score CI for candidate - baseline rate difference."""
+    n = a + b + c + d
+    if n <= 0:
+        raise ValueError("total count must be positive")
+    p1 = (a + b) / n
+    p2 = (a + c) / n
+    diff = (b - c) / n
+    l1, u1 = _wilson_bounds(a + b, n, Z_975)
+    l2, u2 = _wilson_bounds(a + c, n, Z_975)
+    denom_prod = (a + b) * (c + d) * (a + c) * (b + d)
+    if denom_prod == 0:
+        phi = 0.0
+    else:
+        cross = a * d - b * c
+        num = max(cross - n / 2.0, 0.0) if cross > 0 else float(cross)
+        phi = num / math.sqrt(denom_prod)
+    delta_sq = (p1 - l1) ** 2 - 2.0 * phi * (p1 - l1) * (u2 - p2) + (u2 - p2) ** 2
+    eps_sq = (u1 - p1) ** 2 - 2.0 * phi * (u1 - p1) * (p2 - l2) + (p2 - l2) ** 2
+    lower = max(-1.0, diff - math.sqrt(max(0.0, delta_sq)))
+    upper = min(1.0, diff + math.sqrt(max(0.0, eps_sq)))
+    return [_round6(lower), _round6(upper)]
+
+
+def _paired_stats(a: int, b: int, c: int, d: int, lost_key: str) -> dict[str, object]:
+    n = a + b + c + d
+    discordant = b + c
+    base: dict[str, object] = {
+        "n": n,
+        "both_flag": a,
+        "added": b,
+        lost_key: c,
+        "both_clear": d,
+        "discordant": discordant,
+        "baseline_rate": _round6((a + c) / n) if n else None,
+        "candidate_rate": _round6((a + b) / n) if n else None,
+        "rate_diff": _round6((b - c) / n) if n else None,
+        "diff_ci_95": newcombe_paired_ci95(a, b, c, d) if n else None,
+        "exact_mcnemar_p": None,
+        "midp_mcnemar_p": None,
+        "min_discordant_for_midp_005": MIN_DISCORDANT_MIDP_005,
+        "min_discordant_for_exact_005": MIN_DISCORDANT_EXACT_005,
+        "underpowered_for_midp_005": discordant < MIN_DISCORDANT_MIDP_005,
+        "underpowered_for_exact_005": discordant < MIN_DISCORDANT_EXACT_005,
+    }
+    if n:
+        exact_p, midp = mcnemar_pvalues(b, c)
+        base["exact_mcnemar_p"] = exact_p
+        base["midp_mcnemar_p"] = midp
+    return base
+
+
 def summarize(cases, baseline, candidate):
     members = {exposure: {metric: [] for metric in METRICS} for exposure in EXPOSURES}
+    cells = {
+        exposure: {truth: [0, 0, 0, 0] for truth in ("error", "clean")}
+        for exposure in EXPOSURES
+    }
     pairs = []
     for case_id, case in cases.items():
         before = baseline[case_id]["status"]
@@ -161,6 +263,15 @@ def summarize(cases, baseline, candidate):
         exposure = case["exposure"]
         if before in EXECUTED and after in EXECUTED:
             outcome = TRANSITIONS.get((truth, before, after), "unchanged")
+            bucket = cells[exposure][truth]
+            if before == "flag" and after == "flag":
+                bucket[0] += 1
+            elif before == "clear" and after == "flag":
+                bucket[1] += 1
+            elif before == "flag" and after == "clear":
+                bucket[2] += 1
+            else:
+                bucket[3] += 1
         else:
             outcome = "inconclusive"
         members[exposure]["cases"].append(case_id)
@@ -171,7 +282,13 @@ def summarize(cases, baseline, candidate):
     groups = {}
     for exposure, ids in members.items():
         counts = {metric: len(cases_for_metric) for metric, cases_for_metric in ids.items()}
-        groups[exposure] = dict(counts, case_ids=ids)
+        err = cells[exposure]["error"]
+        cln = cells[exposure]["clean"]
+        statistics = {
+            "detections": _paired_stats(err[0], err[1], err[2], err[3], "lost"),
+            "false_positives": _paired_stats(cln[0], cln[1], cln[2], cln[3], "fixed"),
+        }
+        groups[exposure] = dict(counts, case_ids=ids, statistics=statistics)
     return groups, pairs
 
 

@@ -230,6 +230,121 @@ class PairedReleaseTest(unittest.TestCase):
                 self.baseline["plan_sha256"] = self.candidate["plan_sha256"] = hashlib.sha256(raw).hexdigest()
                 self.assertEqual(self.compare()[0], 2)
 
+    def _compare_table(self, expected, a, b, c, d):
+        """Build a single-stratum heldout comparison from a 2x2 matched-pair table."""
+        rows = (
+            [("flag", "flag")] * a
+            + [("clear", "flag")] * b
+            + [("flag", "clear")] * c
+            + [("clear", "clear")] * d
+        )
+        n = len(rows)
+        self.plan = dict(schema_version=1, experiment="stats", added_check="new",
+                         baseline_checks=["old"], budget=max(n, 1), cases=[])
+        self.baseline = dict(schema_version=1, arm="baseline", checks=["old"],
+                             budget=max(n, 1), observations=[])
+        self.candidate = dict(schema_version=1, arm="candidate", checks=["new", "old"],
+                              budget=max(n, 1), observations=[])
+        for idx, (before, after) in enumerate(rows):
+            case_id = f"c{idx}"
+            identity = dict(id=case_id, fixture_sha256=hashlib.sha256(case_id.encode()).hexdigest())
+            self.plan["cases"].append(dict(identity, expected=expected, exposure="heldout"))
+            self.baseline["observations"].append(dict(identity, status=before))
+            self.candidate["observations"].append(dict(identity, status=after))
+        self.refresh_plan()
+        code, report = self.compare()
+        self.assertEqual(code, 0, report)
+        bucket = "detections" if expected == "error" else "false_positives"
+        return report["groups"]["heldout"]["statistics"][bucket]
+
+    def test_small_sample_mcnemar_and_newcombe_wilson_statistics(self):
+        # Heldout v0.30.0 error table: n=3, a=1, b=2, c=0, d=0
+        stats = self._compare_table("error", a=1, b=2, c=0, d=0)
+        self.assertEqual(stats["n"], 3)
+        self.assertEqual((stats["both_flag"], stats["added"], stats["lost"], stats["both_clear"]), (1, 2, 0, 0))
+        self.assertEqual(stats["discordant"], 2)
+        self.assertAlmostEqual(stats["baseline_rate"], 0.333333, places=6)
+        self.assertEqual(stats["candidate_rate"], 1.0)
+        self.assertAlmostEqual(stats["rate_diff"], 0.666667, places=6)
+        self.assertEqual(stats["exact_mcnemar_p"], 0.5)
+        self.assertEqual(stats["midp_mcnemar_p"], 0.25)
+        self.assertEqual(stats["min_discordant_for_midp_005"], 5)
+        self.assertEqual(stats["min_discordant_for_exact_005"], 6)
+        self.assertTrue(stats["underpowered_for_midp_005"])
+        self.assertTrue(stats["underpowered_for_exact_005"])
+        # Zero-denominator Newcombe Method 10 (A=0 -> phi=0) crosses zero on n=3.
+        lo, hi = stats["diff_ci_95"]
+        self.assertAlmostEqual(lo, -0.058569, places=5)
+        self.assertAlmostEqual(hi, 0.938510, places=5)
+
+    def test_mcnemar_thresholds_ties_and_symmetry(self):
+        # b=5, c=0 crosses Mid-P 0.05 (0.03125) but not exact 0.05 (0.0625).
+        s5 = self._compare_table("error", a=0, b=5, c=0, d=0)
+        self.assertEqual(s5["exact_mcnemar_p"], 0.0625)
+        self.assertEqual(s5["midp_mcnemar_p"], 0.03125)
+        self.assertFalse(s5["underpowered_for_midp_005"])
+        self.assertTrue(s5["underpowered_for_exact_005"])
+
+        # b=6, c=0 crosses both Mid-P (0.015625) and exact (0.03125).
+        s6 = self._compare_table("error", a=0, b=6, c=0, d=0)
+        self.assertEqual(s6["exact_mcnemar_p"], 0.03125)
+        self.assertEqual(s6["midp_mcnemar_p"], 0.015625)
+        self.assertFalse(s6["underpowered_for_midp_005"])
+        self.assertFalse(s6["underpowered_for_exact_005"])
+
+        # Tie b=c=0 gives p=1.0 for both; tie b=c=1 gives exact=1.0, midp=1 - 0.5*C(2,1)/4 = 0.75.
+        s_zero = self._compare_table("clean", a=0, b=0, c=0, d=4)
+        self.assertEqual((s_zero["exact_mcnemar_p"], s_zero["midp_mcnemar_p"]), (1.0, 1.0))
+        self.assertEqual(s_zero["fixed"], 0)
+        s_tie = self._compare_table("error", a=2, b=1, c=1, d=2)
+        self.assertEqual(s_tie["exact_mcnemar_p"], 1.0)
+        self.assertEqual(s_tie["midp_mcnemar_p"], 0.75)
+
+        # Positive correlation (ad > bc) and negative correlation (ad < bc) plus antisymmetry of CI.
+        pos_fwd = self._compare_table("error", a=10, b=6, c=1, d=8)
+        pos_rev = self._compare_table("error", a=10, b=1, c=6, d=8)
+        self.assertAlmostEqual(pos_fwd["exact_mcnemar_p"], 0.125, places=12)
+        self.assertAlmostEqual(pos_fwd["midp_mcnemar_p"], 0.0703125, places=12)
+        self.assertEqual(pos_fwd["diff_ci_95"][0], -pos_rev["diff_ci_95"][1])
+        self.assertEqual(pos_fwd["diff_ci_95"][1], -pos_rev["diff_ci_95"][0])
+        self.assertGreaterEqual(pos_fwd["diff_ci_95"][0], -1.0)
+        self.assertLessEqual(pos_fwd["diff_ci_95"][1], 1.0)
+        self.assertLessEqual(pos_fwd["diff_ci_95"][0], pos_fwd["rate_diff"])
+        self.assertLessEqual(pos_fwd["rate_diff"], pos_fwd["diff_ci_95"][1])
+
+        neg = self._compare_table("error", a=1, b=5, c=4, d=1)
+        self.assertLessEqual(neg["diff_ci_95"][0], neg["rate_diff"])
+        self.assertLessEqual(neg["rate_diff"], neg["diff_ci_95"][1])
+
+    def test_empty_stratum_and_statistics_claim_path_rejection(self):
+        code, report = self.compare()
+        self.assertEqual(code, 0, report)
+        # unknown stratum in default setUp has no conclusive error cases
+        unk_det = report["groups"]["unknown"]["statistics"]["detections"]
+        self.assertEqual(unk_det["n"], 0)
+        self.assertIsNone(unk_det["baseline_rate"])
+        self.assertIsNone(unk_det["candidate_rate"])
+        self.assertIsNone(unk_det["rate_diff"])
+        self.assertIsNone(unk_det["diff_ci_95"])
+        self.assertIsNone(unk_det["exact_mcnemar_p"])
+        self.assertIsNone(unk_det["midp_mcnemar_p"])
+        self.assertTrue(unk_det["underpowered_for_midp_005"])
+        self.assertTrue(unk_det["underpowered_for_exact_005"])
+        # statistics is never accepted as an integer claim path
+        self.assertEqual(self.compare({"heldout.statistics": 0})[0], 2)
+
+    def test_large_discordant_count_does_not_overflow_float(self):
+        import sys as _sys
+        tools_dir = str(SCRIPT.parent)
+        if tools_dir not in _sys.path:
+            _sys.path.insert(0, tools_dir)
+        import paired_release
+        exact_p, midp = paired_release.mcnemar_pvalues(1200, 300)
+        self.assertGreaterEqual(exact_p, 0.0)
+        self.assertLessEqual(exact_p, 1.0)
+        self.assertGreaterEqual(midp, 0.0)
+        self.assertLessEqual(midp, exact_p)
+
 
 if __name__ == "__main__":
     unittest.main()

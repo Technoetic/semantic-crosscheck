@@ -8,7 +8,7 @@ from pathlib import Path
 
 UTF8_BOM = b"\xef\xbb\xbf"
 ROOT = Path(__file__).resolve().parents[1]
-SKIP_DIRS = {".git", ".sxc", "__pycache__", "node_modules"}
+SKIP_DIRS = {".git", ".sxc", "__pycache__", "node_modules", ".venv", "venv", ".ruff_cache"}
 
 
 def tracked_files(root: Path) -> list[Path]:

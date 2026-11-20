@@ -195,7 +195,7 @@ $$
 Cube는 항상 Tesseract SQL 플래너(`CUBEJS_TESSERACT_SQL_PLANNER=true`)로 실행하고 `cube:meta`에 Cube 버전과 플래너를 기록합니다. 기록이 없거나 다르면 report가 이전 결과를 최신으로 인정하지 않으므로, 0.3.0에서 만든 cube·verify 결과는 다시 실행합니다. Cube 1.8.3의 파일 크기와 SHA-256은 [native-sha256.json](skills/semantic-crosscheck/adapters/cube/native-sha256.json)에 고정되어 있습니다. Linux는 x64에서 **glibc 2.34** 이상, arm64에서 **glibc 2.30** 이상이 필요하며 musl은 지원하지 않습니다.
 
 > [!NOTE]
-> **지원 목록과 실제 통합 시험 범위는 다릅니다.** CI 단위 테스트는 Linux·Windows·macOS 15 Intel(x64, `macos-15-intel`) × Python 3.11/3.13으로 구성하고, Linux x64에서 PostgreSQL 17·Java 21·Node.js 22 통합과 데모를 실행합니다. 새 Intel CI의 실제 성공 여부는 실행 후 검증 JSON에 기록합니다. macOS arm64 단위 테스트 성공은 주장하지 않으며, Java 11 자체, macOS 및 Linux arm64의 Cube 전체 실행은 통합 시험하지 않았습니다.
+> **지원 목록과 실제 통합 시험 범위는 다릅니다.** CI 단위 테스트는 Linux·Windows·macOS 15 Intel(x64, `macos-15-intel`)·macOS 15 Apple Silicon(arm64, `macos-15`) × Python 3.11/3.13으로 구성하고, Linux x64에서 PostgreSQL 17·Java 21·Node.js 22 통합과 데모를 실행합니다. 각 단위·통합 CI의 실제 성공 여부는 실행 후 검증 JSON에 기록합니다. Java 11 자체, macOS 및 Linux arm64의 Cube 전체 실행은 통합 시험하지 않았습니다.
 
 ---
 

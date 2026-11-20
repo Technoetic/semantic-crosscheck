@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.31.0] - 2026-11-21
+
+- Add standard-library small-sample paired statistics (`exact_mcnemar_p`, `midp_mcnemar_p`, Newcombe Method 10 paired Wilson 95% `diff_ci_95`, minimum discordant-pair thresholds `5`/`6` and `underpowered_for_*` flags) to `tools/paired_release.py` and experimental-hygiene guidance to `docs/paired-release.md`.
+- Remove UTF-8 BOM bytes from three test files (`tests/test_contract_evidence.py`, `tests/test_gold_metadata.py`, `tests/test_shacl_corpus.py`) and add `tools/check_bom.py` enforced by unit tests and CI hygiene.
+- Add CI-only `static quality checks` job (`ruff==0.17.6`, `ty==0.0.107` on curated core/tool modules, `sqruff==0.44.0` on `demo/gold/*.sql` via `.sqruff`) and expand unit CI to include Apple Silicon `macos-15` alongside `macos-15-intel` (11 CI jobs total, zero new runtime dependencies).
+- Align GitHub repository governance (`main` branch protection, `refs/tags/v*` immutable tag ruleset, Dependabot security updates).
+- See [release scope and verification](docs/releases/v0.31.0.md).
+
 ## [0.30.0] - 2026-11-19
 
 - Compare a baseline with one added check on identical fixtures and case-attempt budgets. Report newly detected errors, new false positives, lost detections, corrected false positives and inconclusive cases by prior exposure.
@@ -1185,3 +1193,5 @@ First release. Release notes: [docs/releases/v0.1.0.md](docs/releases/v0.1.0.md)
 [0.29.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.29.0
 
 [0.30.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.30.0
+
+[0.31.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.31.0

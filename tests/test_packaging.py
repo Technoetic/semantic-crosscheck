@@ -541,6 +541,7 @@ class WorkflowTest(unittest.TestCase):
         self.assertIn("python tools/leak_scan.py --worktree --history", workflow_jobs["hygiene"])
         self.assertIn("python tools/check_bom.py --tracked", workflow_jobs["hygiene"])
         static = workflow_jobs["static"]
+        self.assertIn("-r requirements/core.txt", static)
         for pin in ("ruff==0.17.6", "ty==0.0.107", "sqruff==0.44.0"):
             with self.subTest(static_pin=pin):
                 self.assertIn(pin, static)

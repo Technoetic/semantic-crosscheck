@@ -289,9 +289,9 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: '3.12'
-      # CI-only static tools; never added to runtime requirements/*.txt.
+      # CI-only static tools plus existing core requirements for type resolution; never added to runtime requirements/*.txt.
       - name: Install pinned CI static tools
-        run: python -m pip install --disable-pip-version-check ruff==0.17.6 ty==0.0.107 sqruff==0.44.0
+        run: python -m pip install --disable-pip-version-check -r requirements/core.txt ruff==0.17.6 ty==0.0.107 sqruff==0.44.0
       - name: Ruff correctness checks
         run: |
           ruff check --isolated --select E9,F skills/semantic-crosscheck/scripts tools

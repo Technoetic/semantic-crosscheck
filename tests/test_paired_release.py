@@ -274,8 +274,8 @@ class PairedReleaseTest(unittest.TestCase):
         self.assertTrue(stats["underpowered_for_exact_005"])
         # Zero-denominator Newcombe Method 10 (A=0 -> phi=0) crosses zero on n=3.
         lo, hi = stats["diff_ci_95"]
-        self.assertAlmostEqual(lo, -0.058569, places=5)
-        self.assertAlmostEqual(hi, 0.938510, places=5)
+        self.assertAlmostEqual(lo, -0.058569, places=6)
+        self.assertAlmostEqual(hi, 0.938508, places=6)
 
     def test_mcnemar_thresholds_ties_and_symmetry(self):
         # b=5, c=0 crosses Mid-P 0.05 (0.03125) but not exact 0.05 (0.0625).

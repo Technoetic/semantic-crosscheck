@@ -199,6 +199,8 @@ def _wilson_bounds(successes: int, total: int, z: float) -> tuple[float, float]:
 
 def newcombe_paired_ci95(a: int, b: int, c: int, d: int) -> list[float]:
     """Newcombe (1998) Method 10 95% Wilson-score CI for candidate - baseline rate difference."""
+    if a < 0 or b < 0 or c < 0 or d < 0:
+        raise ValueError("cell counts must be nonnegative")
     n = a + b + c + d
     if n <= 0:
         raise ValueError("total count must be positive")

@@ -243,3 +243,21 @@ Chulmin Pyo's [connectome-cognition-benchmark v1.1.0 software record](https://do
 The preregistration documents [prior exposure](https://github.com/ai3inc/connectome-cognition-benchmark/blob/9c5d863256fdc20c341b94b874e62921e92f22c1/preregistration/PREREG_EXTERNAL_COHORT.md#L8-L22) and the [registered test and subsequent outcome](https://github.com/ai3inc/connectome-cognition-benchmark/blob/9c5d863256fdc20c341b94b874e62921e92f22c1/preregistration/PREREG_EXTERNAL_COHORT.md#L228-L267).
 The [numbers index builder](https://github.com/ai3inc/connectome-cognition-benchmark/blob/9c5d863256fdc20c341b94b874e62921e92f22c1/paper/build_numbers.py#L1-L25) records input provenance. The [manuscript claim checker](https://github.com/ai3inc/connectome-cognition-benchmark/blob/9c5d863256fdc20c341b94b874e62921e92f22c1/paper/claims.py#L139-L146) checks claims against values in that index.
 We adapted these methods to synthetic inventory totals and added a check of the release note's marked table. The fixtures, checks and release tooling are independently implemented. The upstream project's neuroscience data, metrics and software are outside this distribution.
+
+## v0.31.0 paired-release statistics, CI static checks and repository governance
+
+The offline small-sample statistics in `tools/paired_release.py` are original Python standard-library
+implementations (`math.comb`, `statistics.NormalDist`) with zero new runtime dependencies. They follow:
+
+- [Fagerland, Lydersen & Laake (2013), "The McNemar test for binary matched-pairs data: mid-p and asymptotic are better than exact conditional"](https://doi.org/10.1186/1471-2288-13-91) for exact conditional and Mid-P McNemar two-sided p-values;
+- [Newcombe (1998), "Improved confidence intervals for the difference between binomial proportions based on paired data"](https://doi.org/10.1002/%28SICI%291097-0258%2819981130%2917:22%3C2635::AID-SIM954%3E3.0.CO;2-C) (Method 10) for paired Wilson-score 95% confidence intervals;
+- [Dietterich (1998), "Approximate Statistical Tests for Comparing Supervised Classification Learning Algorithms"](https://doi.org/10.1162/089976698300017197), [Arcuri & Briand (2014), "A Hitchhiker's guide to statistical tests for assessing randomized algorithms in software engineering"](https://doi.org/10.1002/stvr.1486), and [Klees, Ruef, Cooper, Wei & Hicks (CCS 2018), "Evaluating Fuzz Testing"](https://doi.org/10.1145/3243734.3243804) for paired evaluation design and experimental hygiene in `docs/paired-release.md`.
+
+CI-only static quality checks in `.github/workflows/tests.yml` run pinned third-party linters that are
+never added to `requirements/*.txt`, never installed by users, and never grant semantic verdict authority:
+
+- [ruff](https://github.com/astral-sh/ruff) `0.17.6` (MIT) for Python syntax and correctness checks;
+- [ty](https://github.com/astral-sh/ty) `0.0.107` (MIT) for curated core and tool static type checks;
+- [sqruff](https://github.com/quarylabs/sqruff) `0.44.0` (Apache-2.0) for PostgreSQL SQL parsing and semantic anti-pattern checks on `demo/gold/*.sql` (configured in `.sqruff`, advisory style/lint only, not SQL equivalence or verdict authority).
+
+Repository release-tag immutability (`refs/tags/v*`) and branch governance follow [GitHub Docs: About rulesets](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/about-rulesets). No third-party source code from any of these tools is copied or bundled.

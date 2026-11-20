@@ -1,4 +1,4 @@
-﻿import json
+import json
 import unittest
 
 import pgfixture  # adds scripts to sys.path

@@ -20,3 +20,10 @@ class ReleaseClaimTableTests(unittest.TestCase):
         report = json.loads(result.stdout)
         self.assertIs(report["markdown_matches"], True)
         self.assertEqual(report["claim_mismatches"], {})
+        det = report["groups"]["heldout"]["statistics"]["detections"]
+        self.assertEqual((det["n"], det["added"], det["lost"]), (3, 2, 0))
+        self.assertEqual(det["exact_mcnemar_p"], 0.5)
+        self.assertEqual(det["midp_mcnemar_p"], 0.25)
+        self.assertTrue(det["underpowered_for_midp_005"])
+        self.assertTrue(det["underpowered_for_exact_005"])
+        self.assertEqual(det["diff_ci_95"], [-0.058569, 0.938508])

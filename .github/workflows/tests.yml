@@ -16,7 +16,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-15-intel]
+        os: [ubuntu-latest, windows-latest, macos-15-intel, macos-15]
         python: ['3.11', '3.13']
     env:
       PYTHONUTF8: '1'
@@ -270,8 +270,47 @@ jobs:
       # `git diff --check` only compares the working tree with the index, which is clean after checkout.
       - name: Whitespace validation (whole committed tree)
         run: git diff --check 4b825dc642cb6eb9a060e54bf8d69288fbee4904 HEAD
+      - name: Reject UTF-8 BOM in tracked files
+        run: python tools/check_bom.py --tracked
       # Generic patterns and tools/leak-allow.txt only. A deny-list never exists in CI: SXC_DENYLIST=none says so.
       - name: Leak scan (working tree and whole history)
         env:
           SXC_DENYLIST: none
         run: python tools/leak_scan.py --worktree --history
+
+  static:
+    name: static quality checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+      # CI-only static tools; never added to runtime requirements/*.txt.
+      - name: Install pinned CI static tools
+        run: python -m pip install --disable-pip-version-check ruff==0.17.6 ty==0.0.107 sqruff==0.44.0
+      - name: Ruff correctness checks
+        run: |
+          ruff check --isolated --select E9,F skills/semantic-crosscheck/scripts tools
+          ruff check --isolated --select E9,F63,F82 tests
+      - name: ty static type checks (curated core and tools)
+        run: |
+          ty check --python-version 3.11 --extra-search-path skills/semantic-crosscheck/scripts \
+            tools/paired_release.py \
+            tools/run_paired_example.py \
+            tools/check_bom.py \
+            skills/semantic-crosscheck/scripts/semantic_crosscheck/ident.py \
+            skills/semantic-crosscheck/scripts/semantic_crosscheck/provenance.py \
+            skills/semantic-crosscheck/scripts/semantic_crosscheck/db.py \
+            skills/semantic-crosscheck/scripts/semantic_crosscheck/compare.py \
+            skills/semantic-crosscheck/scripts/semantic_crosscheck/canon.py \
+            skills/semantic-crosscheck/scripts/semantic_crosscheck/closure.py \
+            skills/semantic-crosscheck/scripts/semantic_crosscheck/expect.py \
+            skills/semantic-crosscheck/scripts/semantic_crosscheck/doctor.py \
+            skills/semantic-crosscheck/scripts/semantic_crosscheck/metric_evidence.py \
+            skills/semantic-crosscheck/scripts/semantic_crosscheck/result_contract.py
+      - name: sqruff PostgreSQL SQL lint (demo gold queries)
+        run: sqruff lint --ignore-local-config --config .sqruff demo/gold

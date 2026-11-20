@@ -1,4 +1,4 @@
-﻿"""Independent, hand-derived report expectations and fail-closed runtime boundaries."""
+"""Independent, hand-derived report expectations and fail-closed runtime boundaries."""
 import argparse
 import contextlib
 import importlib

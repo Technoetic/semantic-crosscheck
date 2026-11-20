@@ -1,4 +1,4 @@
-﻿"""Configured preflight evidence must bind the declared files, not any saved pass."""
+"""Configured preflight evidence must bind the declared files, not any saved pass."""
 import argparse
 import contextlib
 import io

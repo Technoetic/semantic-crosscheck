@@ -72,3 +72,8 @@ GRANT TEMPORARY ON DATABASE :"sxc_database" TO :"check_role";
 -- Check: `sxc.py doctor --config crosscheck.toml` verifies that the check role can read every source table, cannot
 -- write any of them (nor own their schema or create objects in it), may create temporary tables and can create
 -- objects in the output schema.
+--
+-- Tip (PostgreSQL 17): when creating a new dedicated database for semantic-crosscheck, consider
+-- `LOCALE_PROVIDER = builtin BUILTIN_LOCALE = 'C.UTF-8' TEMPLATE = template0` (deterministic, immune to OS
+-- glibc/ICU collation drift, and aligned with Python code-point ordering used by `data-rules`). Existing databases
+-- do not need to be recreated.

@@ -148,6 +148,12 @@ gold SQL and `crosscheck.toml` avoid them too.
   the column types (text and CSV formats only) and reports how many were skipped. Rows with the wrong
   number of columns and other errors still abort the `COPY`. Keep the default `LOG_VERBOSITY`:
   `verbose` reports each skipped row and can quote its input.
+- **Prefer PostgreSQL 17 built-in `C.UTF-8` collation for deterministic text order.** OS `libc` and
+  external ICU collations can drift across operating-system upgrades and break index or sort order, and
+  nondeterministic ICU collations are refused by `data-rules`. For new dedicated databases or view casts,
+  PostgreSQL 17's built-in collation provider (`provider = builtin, locale = 'C.UTF-8'`) is deterministic,
+  avoids OS `glibc`/ICU drift, matches Python's code-point `sorted()` order (`tests/test_collation_builtin_pg.py`),
+  and preserves Unicode case mapping (`upper('é') = 'É'`). Existing user databases are left untouched.
 
 ## OWL
 

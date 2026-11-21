@@ -167,7 +167,13 @@ different deterministic collations PostgreSQL cannot choose one: a rule that com
 and is an `error` without a verdict, and with a `stored_metric` rule, parent and child columns of different
 collations already fail the height gate with 42P21, which ends the snapshot (`data_rules:snapshot` `error`, no rule
 decided). `next_safe_action` names the mismatch. Cast every compared column to the same collation (for example
-`COLLATE "C"`) in database views and point the entities at them; casting only one side is what produces the mismatch.
+`COLLATE "C"`, or a PostgreSQL 17 built-in `C.UTF-8` collation created with
+`provider = builtin, locale = 'C.UTF-8'`) in database views and point the entities at them; casting only one side is
+what produces the mismatch. For new dedicated databases or comparison views, PostgreSQL 17's built-in `C.UTF-8`
+collation ([PostgreSQL 17 Documentation, 23.2. Collation Support](https://www.postgresql.org/docs/17/collation.html))
+is recommended over OS `libc` or external ICU locales: it is deterministic, avoids OS `glibc`/ICU collation drift across
+upgrades, orders strings in code-point order matching Python `sorted()`, and keeps Unicode-aware case mapping
+(`upper('é') = 'É'`). Existing databases and tables are never altered by the harness.
 
 ### Pattern subset (`text_quantity`)
 

@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.31.1] - 2026-11-21
+
+- Add `tools/build_release_zip.py` (standard-library `git archive --format=tar` + `SOURCE_DATE_EPOCH` UTC deterministic ZIP builder, `create_system = 3`, sorted POSIX entries, deflate `-9`) and unit tests (`tests/test_build_release_zip.py`) so release archives reproduce identically across time zones (`TZ=KST-9`, `TZ=UTC0`, `TZ=EST5`).
+- Add `tools/check_unicode.py` (standard-library guard against Trojan Source bidirectional overrides/isolates/marks and dangerous `Default_Ignorable` invisible smuggling code points, reporting location and code point only without echoing line text) enforced by `tests/test_check_unicode.py` and the CI hygiene job.
+- Document PostgreSQL 17's built-in deterministic `C.UTF-8` collation (`provider = builtin, locale = 'C.UTF-8'`) in `docs/data-rules.md`, `skills/semantic-crosscheck/references/pitfalls.md` and `docs/setup-roles.sql`, and add PostgreSQL 17 integration test `tests/test_collation_builtin_pg.py` verifying code-point order parity with Python `sorted()` and Unicode `upper('é') = 'É'`.
+- Expand CI-only workflow, supply-chain, SBOM and code hygiene checks in `.github/workflows/tests.yml` (keeping all 11 required job names and zero new runtime dependencies): SHA-256 verified `rhysd/actionlint` `v1.7.12`, `zizmor==1.32.0`, `pip-audit==2.10.1`, CycloneDX SBOM checks (`cyclonedx-bom==9.0.0` for `requirements/*.txt` and built-in `npm sbom` for the Cube adapter), `complexipy==9.0.0`, `vulture==2.16`, `deptry==0.25.1`, and `ty==0.0.107` expanded from 13 to 41 clean core and tool modules.
+- See [release scope and verification](docs/releases/v0.31.1.md).
+
 ## [0.31.0] - 2026-11-21
 
 - Add standard-library small-sample paired statistics (`exact_mcnemar_p`, `midp_mcnemar_p`, Newcombe Method 10 paired Wilson 95% `diff_ci_95`, minimum discordant-pair thresholds `5`/`6` and `underpowered_for_*` flags) to `tools/paired_release.py` and experimental-hygiene guidance to `docs/paired-release.md`.
@@ -1195,3 +1203,5 @@ First release. Release notes: [docs/releases/v0.1.0.md](docs/releases/v0.1.0.md)
 [0.30.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.30.0
 
 [0.31.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.31.0
+
+[0.31.1]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.31.1

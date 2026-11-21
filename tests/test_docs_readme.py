@@ -184,9 +184,19 @@ class SupportWindowTest(unittest.TestCase):
 
 class ReleaseArchiveTest(unittest.TestCase):
     def test_archive_command_names_this_version(self):
-        commands = [line for block in quickstart.code_blocks(read(README)) for line in block if "git archive" in line]
-        self.assertEqual(commands, [f"TZ=KST-9 git archive --format=zip -9 --prefix=semantic-crosscheck-{VERSION}/ "
-                                    f"-o semantic-crosscheck-{VERSION}.zip v{VERSION}"])
+        commands = [
+            line
+            for block in quickstart.code_blocks(read(README))
+            for line in block
+            if "tools/build_release_zip.py" in line
+        ]
+        self.assertEqual(
+            commands,
+            [
+                f"python tools/build_release_zip.py --ref v{VERSION} "
+                f"-o semantic-crosscheck-{VERSION}.zip"
+            ],
+        )
 
     def test_archive_record_names_a_release_and_is_not_dated_before_it(self):
         """The record under the command says on which day the command's result was compared with a published asset,

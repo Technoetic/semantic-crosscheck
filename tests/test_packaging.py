@@ -540,12 +540,33 @@ class WorkflowTest(unittest.TestCase):
         self.assertIn("result.wasSuccessful() and result.testsRun > 0 and not result.skipped", integration)
         self.assertIn("python tools/leak_scan.py --worktree --history", workflow_jobs["hygiene"])
         self.assertIn("python tools/check_bom.py --tracked", workflow_jobs["hygiene"])
+        self.assertIn("python tools/check_unicode.py --tracked", workflow_jobs["hygiene"])
+        self.assertIn("actionlint_1.7.12_linux_amd64.tar.gz", workflow_jobs["hygiene"])
+        self.assertIn("8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8", workflow_jobs["hygiene"])
         static = workflow_jobs["static"]
         self.assertIn("-r requirements/core.txt", static)
-        for pin in ("ruff==0.17.6", "ty==0.0.107", "sqruff==0.44.0"):
+        for pin in (
+            "ruff==0.17.6",
+            "ty==0.0.107",
+            "sqruff==0.44.0",
+            "zizmor==1.32.0",
+            "pip-audit==2.10.1",
+            "cyclonedx-bom==9.0.0",
+            "complexipy==9.0.0",
+            "vulture==2.16",
+            "deptry==0.25.1",
+        ):
             with self.subTest(static_pin=pin):
                 self.assertIn(pin, static)
         self.assertIn("sqruff lint --ignore-local-config --config .sqruff demo/gold", static)
+        self.assertIn("zizmor --offline .github/workflows/tests.yml", static)
+        self.assertIn("pip_audit --no-deps --disable-pip", static)
+        self.assertIn("cyclonedx-py", static)
+        self.assertIn("npm", static)
+        self.assertIn("sbom", static)
+        self.assertIn("complexipy tools --max-complexity-allowed 50", static)
+        self.assertIn("vulture tools skills/semantic-crosscheck/scripts --min-confidence 80", static)
+        self.assertIn("deptry skills/semantic-crosscheck/scripts", static)
         self.assertTrue((ROOT / ".sqruff").is_file())
 
     def test_actions_are_pinned_by_commit_sha(self):

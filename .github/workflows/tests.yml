@@ -272,6 +272,20 @@ jobs:
         run: git diff --check 4b825dc642cb6eb9a060e54bf8d69288fbee4904 HEAD
       - name: Reject UTF-8 BOM in tracked files
         run: python tools/check_bom.py --tracked
+      - name: Reject invisible Unicode and Bidi controls in tracked files
+        run: python tools/check_unicode.py --tracked
+      # Pinned official linux_amd64 tarball of rhysd/actionlint v1.7.12 (MIT), SHA-256 verified before extraction.
+      - name: Workflow syntax and expression lint (actionlint)
+        run: |
+          set -euo pipefail
+          tmp_dir="$(mktemp -d)"
+          cleanup() { rm -rf "${tmp_dir}"; }
+          trap cleanup EXIT
+          archive="${tmp_dir}/actionlint_1.7.12_linux_amd64.tar.gz"
+          curl -fsSL "https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz" -o "${archive}"
+          echo "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8  ${archive}" | sha256sum -c -
+          tar -xzf "${archive}" -C "${tmp_dir}" actionlint
+          "${tmp_dir}/actionlint"
       # Generic patterns and tools/leak-allow.txt only. A deny-list never exists in CI: SXC_DENYLIST=none says so.
       - name: Leak scan (working tree and whole history)
         env:
@@ -289,9 +303,17 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: '3.12'
-      # CI-only static tools plus existing core requirements for type resolution; never added to runtime requirements/*.txt.
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+      # CI-only static, supply-chain and hygiene tools plus existing core requirements for type resolution;
+      # never added to runtime requirements/*.txt.
       - name: Install pinned CI static tools
-        run: python -m pip install --disable-pip-version-check -r requirements/core.txt ruff==0.17.6 ty==0.0.107 sqruff==0.44.0
+        run: >-
+          python -m pip install --disable-pip-version-check -r requirements/core.txt
+          ruff==0.17.6 ty==0.0.107 sqruff==0.44.0
+          zizmor==1.32.0 pip-audit==2.10.1 cyclonedx-bom==9.0.0
+          complexipy==9.0.0 vulture==2.16 deptry==0.25.1
       - name: Ruff correctness checks
         run: |
           ruff check --isolated --select E9,F skills/semantic-crosscheck/scripts tools
@@ -302,15 +324,100 @@ jobs:
             tools/paired_release.py \
             tools/run_paired_example.py \
             tools/check_bom.py \
-            skills/semantic-crosscheck/scripts/semantic_crosscheck/ident.py \
-            skills/semantic-crosscheck/scripts/semantic_crosscheck/provenance.py \
-            skills/semantic-crosscheck/scripts/semantic_crosscheck/db.py \
-            skills/semantic-crosscheck/scripts/semantic_crosscheck/compare.py \
+            tools/check_unicode.py \
+            tools/build_release_zip.py \
+            skills/semantic-crosscheck/scripts/semantic_crosscheck/__init__.py \
+            skills/semantic-crosscheck/scripts/semantic_crosscheck/_shacl_repair_worker.py \
+            skills/semantic-crosscheck/scripts/semantic_crosscheck/bom_exhaustive.py \
+            skills/semantic-crosscheck/scripts/semantic_crosscheck/business_contracts.py \
             skills/semantic-crosscheck/scripts/semantic_crosscheck/canon.py \
             skills/semantic-crosscheck/scripts/semantic_crosscheck/closure.py \
-            skills/semantic-crosscheck/scripts/semantic_crosscheck/expect.py \
+            skills/semantic-crosscheck/scripts/semantic_crosscheck/closure_oracle.py \
+            skills/semantic-crosscheck/scripts/semantic_crosscheck/compare.py \
+            skills/semantic-crosscheck/scripts/semantic_crosscheck/contract_evidence.py \
+            skills/semantic-crosscheck/scripts/semantic_crosscheck/counterexample.py \
+            skills/semantic-crosscheck/scripts/semantic_crosscheck/cube_client.py \
+            skills/semantic-crosscheck/scripts/semantic_crosscheck/cube_gen.py \
+            skills/semantic-crosscheck/scripts/semantic_crosscheck/data_rules_eval.py \
+            skills/semantic-crosscheck/scripts/semantic_crosscheck/data_rules_sql.py \
+            skills/semantic-crosscheck/scripts/semantic_crosscheck/db.py \
             skills/semantic-crosscheck/scripts/semantic_crosscheck/doctor.py \
+            skills/semantic-crosscheck/scripts/semantic_crosscheck/expect.py \
+            skills/semantic-crosscheck/scripts/semantic_crosscheck/grain.py \
+            skills/semantic-crosscheck/scripts/semantic_crosscheck/ident.py \
+            skills/semantic-crosscheck/scripts/semantic_crosscheck/knowledge_sources.py \
+            skills/semantic-crosscheck/scripts/semantic_crosscheck/measure_oracle_join.py \
             skills/semantic-crosscheck/scripts/semantic_crosscheck/metric_evidence.py \
-            skills/semantic-crosscheck/scripts/semantic_crosscheck/result_contract.py
+            skills/semantic-crosscheck/scripts/semantic_crosscheck/mutate.py \
+            skills/semantic-crosscheck/scripts/semantic_crosscheck/mutation_fixtures.py \
+            skills/semantic-crosscheck/scripts/semantic_crosscheck/naming.py \
+            skills/semantic-crosscheck/scripts/semantic_crosscheck/procutil.py \
+            skills/semantic-crosscheck/scripts/semantic_crosscheck/provenance.py \
+            skills/semantic-crosscheck/scripts/semantic_crosscheck/provenance_fixtures.py \
+            skills/semantic-crosscheck/scripts/semantic_crosscheck/reduction.py \
+            skills/semantic-crosscheck/scripts/semantic_crosscheck/result_contract.py \
+            skills/semantic-crosscheck/scripts/semantic_crosscheck/search.py \
+            skills/semantic-crosscheck/scripts/semantic_crosscheck/stage_build.py \
+            skills/semantic-crosscheck/scripts/semantic_crosscheck/stage_cube.py \
+            skills/semantic-crosscheck/scripts/semantic_crosscheck/stage_demo.py \
+            skills/semantic-crosscheck/scripts/semantic_crosscheck/tlp_reduction.py \
+            skills/semantic-crosscheck/scripts/semantic_crosscheck/witness.py
       - name: sqruff PostgreSQL SQL lint (demo gold queries)
         run: sqruff lint --ignore-local-config --config .sqruff demo/gold
+      - name: Workflow security static analysis (zizmor)
+        run: zizmor --offline .github/workflows/tests.yml
+      - name: Python requirements vulnerability audit (pip-audit)
+        run: >-
+          python -m pip_audit --no-deps --disable-pip --progress-spinner off
+          -r requirements/core.txt -r requirements/reason.txt
+          -r requirements/witness.txt -r requirements/sql-structure.txt
+      - name: CycloneDX SBOM generation check (Python requirements and Cube adapter)
+        run: |
+          python - <<'EOF'
+          import json
+          import subprocess
+          from pathlib import Path
+
+          for req in (
+              "requirements/core.txt",
+              "requirements/reason.txt",
+              "requirements/witness.txt",
+              "requirements/sql-structure.txt",
+          ):
+              out = subprocess.check_output(
+                  ["cyclonedx-py", "requirements", req, "--output-format", "JSON", "--output-reproducible"],
+                  text=True,
+                  encoding="utf-8",
+              )
+              doc = json.loads(out)
+              assert doc.get("bomFormat") == "CycloneDX", f"{req}: unexpected bomFormat"
+              components = doc.get("components", [])
+              assert len(components) >= 1, f"{req}: empty components"
+              print(f"cyclonedx-py {req}: spec={doc.get('specVersion')} components={len(components)}")
+
+          npm_out = subprocess.check_output(
+              ["npm", "sbom", "--sbom-format", "cyclonedx", "--package-lock-only"],
+              cwd=Path("skills/semantic-crosscheck/adapters/cube"),
+              text=True,
+              encoding="utf-8",
+          )
+          npm_doc = json.loads(npm_out)
+          assert npm_doc.get("bomFormat") == "CycloneDX", "npm sbom: unexpected bomFormat"
+          npm_components = npm_doc.get("components", [])
+          assert len(npm_components) >= 1, "npm sbom: empty components"
+          print(f"npm sbom (cube adapter): spec={npm_doc.get('specVersion')} components={len(npm_components)}")
+          EOF
+      - name: Cognitive complexity check (complexipy)
+        run: |
+          complexipy tools --max-complexity-allowed 50 --color no
+          complexipy skills/semantic-crosscheck/scripts --ignore-complexity --top 10 --sort desc --color no
+      - name: Dead code hygiene check (vulture)
+        run: vulture tools skills/semantic-crosscheck/scripts --min-confidence 80
+      # witness.py loads z3 dynamically via importlib.import_module("z3"), so DEP002 on z3-solver is excluded.
+      - name: Dependency hygiene check (deptry)
+        run: >-
+          deptry skills/semantic-crosscheck/scripts
+          --requirements-files requirements/core.txt,requirements/reason.txt,requirements/witness.txt,requirements/sql-structure.txt
+          --package-module-name-map z3-solver=z3
+          --per-rule-ignores DEP002=z3-solver
+          --no-ansi

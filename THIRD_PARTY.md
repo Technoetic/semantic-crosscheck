@@ -261,3 +261,27 @@ never added to `requirements/*.txt`, never installed by users, and never grant s
 - [sqruff](https://github.com/quarylabs/sqruff) `0.44.0` (Apache-2.0) for PostgreSQL SQL parsing and semantic anti-pattern checks on `demo/gold/*.sql` (configured in `.sqruff`, advisory style/lint only, not SQL equivalence or verdict authority).
 
 Repository release-tag immutability (`refs/tags/v*`) and branch governance follow [GitHub Docs: About rulesets](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/about-rulesets). No third-party source code from any of these tools is copied or bundled.
+
+## v0.31.1 reproducible release archives, Unicode hygiene, PG 17 built-in collation and CI supply-chain checks
+
+The deterministic release archive builder (`tools/build_release_zip.py`) and invisible Unicode smuggling guard (`tools/check_unicode.py`) are original Python standard-library implementations with zero new runtime dependencies. They follow:
+
+- [Reproducible Builds `SOURCE_DATE_EPOCH` specification](https://reproducible-builds.org/specs/source-date-epoch/) for timezone-independent UTC release ZIP timestamps;
+- [Boucher & Anderson (USENIX Security 2023), "Trojan Source: Invisible Vulnerabilities"](https://www.usenix.org/conference/usenixsecurity23/presentation/boucher) for bidirectional control character defenses;
+- [Unicode Technical Standard #39: Unicode Security Mechanisms](https://www.unicode.org/reports/tr39/) for `Default_Ignorable` and invisible smuggling code-point classification;
+- [PostgreSQL 17 Documentation — 23.2. Collation Support](https://www.postgresql.org/docs/17/collation.html) for deterministic `provider = builtin, locale = 'C.UTF-8'` collation guidance in `docs/data-rules.md` and `tests/test_collation_builtin_pg.py`;
+- [G. Ann Campbell (IEEE/ACM TechDebt 2018), "Cognitive complexity: an overview and evaluation"](https://doi.org/10.1145/3194164.3194186) for cognitive complexity tracking;
+- [ECMA-424: OWASP CycloneDX Software Bill of Materials Standard](https://ecma-international.org/publications-and-standards/standards/ecma-424/) for machine-readable CycloneDX SBOM format checks;
+- [npm CLI `npm sbom` documentation](https://docs.npmjs.com/cli/v11/commands/npm-sbom) for built-in Cube adapter CycloneDX SBOM extraction.
+
+CI-only workflow, supply-chain, SBOM and code hygiene checks in `.github/workflows/tests.yml` run pinned third-party tools that are never added to `requirements/*.txt`, never installed by users, and never grant semantic verdict authority:
+
+- [rhysd/actionlint](https://github.com/rhysd/actionlint) `v1.7.12` (MIT, official `linux_amd64` tarball verified by SHA-256) for GitHub Actions workflow syntax and expression linting;
+- [zizmorcore/zizmor](https://github.com/zizmorcore/zizmor) `1.32.0` (MIT) for offline GitHub Actions security static analysis;
+- [pypa/pip-audit](https://github.com/pypa/pip-audit) `2.10.1` (Apache-2.0) for auditing pinned `requirements/*.txt` against PyPI vulnerability advisories;
+- [CycloneDX/cyclonedx-python](https://github.com/CycloneDX/cyclonedx-python) (`cyclonedx-bom==9.0.0`, Apache-2.0) for reproducible CycloneDX JSON SBOM checks on `requirements/*.txt`;
+- [rohaquinlop/complexipy](https://github.com/rohaquinlop/complexipy) `9.0.0` (MIT) for cognitive complexity ceilings on `tools/` and top-10 hotspot visibility on package scripts;
+- [jendrikseipp/vulture](https://github.com/jendrikseipp/vulture) `2.16` (MIT) for high-confidence (`>= 80%`) dead-code hygiene checks;
+- [osprey-oss/deptry](https://github.com/osprey-oss/deptry) `0.25.1` (MIT) for checking Python package imports against `requirements/*.txt`.
+
+No third-party source code from any of these tools is copied or bundled.

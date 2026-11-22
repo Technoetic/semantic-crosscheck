@@ -240,7 +240,9 @@ def safe_mcnemar_log_evalue(b: int, c: int) -> float:
     m = b + c
     if m == 0:
         return 0.0
-    return (m * math.log(2.0) + math.lgamma(b + 0.5) + math.lgamma(c + 0.5)
+    hi, lo = (b, c) if b >= c else (c, b)
+    # Canonicalize order so floating-point addition is bit-for-bit symmetric across libm builds.
+    return (m * math.log(2.0) + math.lgamma(hi + 0.5) + math.lgamma(lo + 0.5)
             - math.lgamma(m + 1.0) - _LOG_BETA_HALF_HALF)
 
 

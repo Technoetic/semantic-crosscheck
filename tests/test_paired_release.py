@@ -361,6 +361,7 @@ class PairedReleaseTest(unittest.TestCase):
 
         # Symmetry and zero-discordant identity.
         self.assertEqual(paired_release.safe_mcnemar_evalue(0, 0), (1.0, 0.0, 1.0))
+        self.assertEqual(paired_release.safe_mcnemar_log_evalue(7, 1), paired_release.safe_mcnemar_log_evalue(1, 7))
         self.assertEqual(paired_release.safe_mcnemar_evalue(7, 1), paired_release.safe_mcnemar_evalue(1, 7))
 
         # Threshold crossing: b=6, c=0 stays below 20; b=7, c=0 crosses 20 (anytime p < 0.05).

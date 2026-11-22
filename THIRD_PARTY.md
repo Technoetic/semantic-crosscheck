@@ -285,3 +285,14 @@ CI-only workflow, supply-chain, SBOM and code hygiene checks in `.github/workflo
 - [osprey-oss/deptry](https://github.com/osprey-oss/deptry) `0.25.1` (MIT) for checking Python package imports against `requirements/*.txt`.
 
 No third-party source code from any of these tools is copied or bundled.
+
+## v0.32.0 catalog guards, anytime-valid e-values, summarizability and boundary seeds
+
+All v0.32.0 additions are original Python standard-library and `pg8000` implementations with zero new runtime dependencies. They follow:
+
+- [PostgreSQL 17 Documentation — 5.9. Row Security Policies](https://www.postgresql.org/docs/17/ddl-rowsecurity.html) and [52.26. `pg_index`](https://www.postgresql.org/docs/17/catalog-pg-index.html) for `relrowsecurity`, `relforcerowsecurity`, `rolbypassrls` and `indnullsnotdistinct` inspection in `doctor.py` and fail-closed `row_level_security` handling in `grain.py`;
+- [Grünwald, de Heide & Koolen (JRSS-B 2024), "Safe Testing"](https://doi.org/10.1093/jrsssb/qkae011), [Ramdas, Grünwald, Vovk & Shafer (Statistical Science 2023), "Game-Theoretic Statistics and Safe Anytime-Valid Inference"](https://doi.org/10.1214/23-STS894), and [Howard, Ramdas, McAuliffe & Sekhon (Annals of Statistics 2021), "Time-uniform, nonparametric, nonasymptotic confidence sequences"](https://doi.org/10.1214/20-AOS1991) for exact Jeffreys Beta(1/2, 1/2) mixture-martingale e-values in `tools/paired_release.py`;
+- [Mazón, Lechtenbörger & Trujillo (Data & Knowledge Engineering 2009), "A survey on summarizability issues in multidimensional modeling"](https://doi.org/10.1016/j.datak.2009.07.010) for summarizability classification in `business_contracts.py` and failure-dimension mapping in `grain.py`;
+- [Fu, Liang, Wu, Zhao, Li & Jiang (EuroSys 2025), "Understanding and Detecting SQL Function Bugs: Using Simple Boundary Arguments to Trigger Hundreds of DBMS Bugs"](https://doi.org/10.1145/3689031.3696064) for the deterministic `function_boundary` synthetic fixture family in `counterexample.py` and `tlp.py`.
+
+No external source code, paper artifact or runtime library from these references is copied, installed or bundled.

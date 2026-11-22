@@ -37,7 +37,7 @@ python "${CLAUDE_PLUGIN_ROOT}/skills/semantic-crosscheck/scripts/sxc.py" counter
 - `--metamorphic-sql FILE` instead checks one trusted closure SELECT returning `ancestor`, `descendant`
   and `qty` against four BOM metamorphic relations, without gold; it cannot be combined with the two files
   above and supports only `--scenario bom_diamond` (its default) and `bom_exhaustive`. `--max-shrink-steps` is not used.
-- `--scenario`: `nulls` (default), `duplicate_join`, `bom_diamond`, `date_boundary`; `bom_exhaustive` only with
+- `--scenario`: `nulls` (default), `duplicate_join`, `bom_diamond`, `date_boundary`, `function_boundary`; `bom_exhaustive` only with
   `--metamorphic-sql`: every connected acyclic BOM of 2 to 4 parts with 1 to 5 lines, at most 2 per pair and
   `qty_per` in {1, 2} (1,743 structures under two label placements, 3,486 cases), judged by the exact closure oracle.
   It always runs every case: omit `--max-examples` (a value below 3,486 is a configuration error).

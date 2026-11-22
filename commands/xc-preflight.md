@@ -1,6 +1,6 @@
 ---
 description: "Check authored business definitions and structured-plan declarations offline without executing SQL"
-argument-hint: "--config FILE --contract FILE --plan FILE [--out DIR] [--quiet]"
+argument-hint: "--config FILE --contract FILE --plan FILE [--reject-semi-additive] [--out DIR] [--quiet]"
 ---
 
 Run the optional offline `semantic-preflight` diagnostic. User arguments
@@ -11,7 +11,9 @@ python "${CLAUDE_PLUGIN_ROOT}/skills/semantic-crosscheck/scripts/sxc.py" semanti
 ```
 
 `--config`, `--contract` and `--plan` are explicit required inputs. `--out`
-selects the result location; `--quiet` prints only the summary. Each option may
+selects the result location; `--quiet` prints only the summary; `--reject-semi-additive`
+optionally fails contracts declaring `period_kind = "as_of"` with `sum` or `count`
+aggregation (semi-additive stock summarizability conflict). Each option may
 occur only once. Abbreviated, duplicate or unknown arguments are rejected without
 output writes. No database, SQL execution, network or model call is made, and no
 Gold or revision SQL body is read. No runtime dependency is added.

@@ -5,7 +5,7 @@ It uses PostgreSQL read-only transactions and bound values in CTE tables, withou
 source tables. Use a dedicated test database; arbitrary SQL can explicitly reference other objects.
 
 The built-in scenarios target NULL aggregation, duplicate join keys, two paths through a BOM diamond,
-and date-window boundaries (with `--metamorphic-sql`, also every small acyclic BOM: `bom_exhaustive`, below). The fixture schema and runnable reference/candidate pairs are in
+date-window boundaries, and SQL built-in function boundary arguments (`function_boundary`, since v0.32.0; with `--metamorphic-sql`, also every small acyclic BOM: `bom_exhaustive`, below). The fixture schema and runnable reference/candidate pairs are in
 `examples/counterexamples/`. Both query outputs must have matching column names and equal exact
 row multisets to agree; row ordering is irrelevant and duplicate multiplicity matters.
 

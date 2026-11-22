@@ -19,7 +19,7 @@ import re
 from . import canon, constraints, db, ident
 from .result import EXIT_CONFIG, Result, StageError
 
-SCENARIOS = ('nulls', 'duplicate_join', 'bom_diamond', 'date_boundary')
+SCENARIOS = ('nulls', 'duplicate_join', 'bom_diamond', 'date_boundary', 'function_boundary')
 SCHEMA = {
     'part': (('part_id', 'text'), ('part_class', 'text'), ('unit', 'text'), ('procure', 'text'), ('name', 'text')),
     'bom_line': (('parent_id', 'text'), ('child_id', 'text'), ('line_no', 'integer'), ('qty_per', 'numeric(18,6)')),
@@ -39,7 +39,7 @@ def _int(value, low, high, name):
 
 
 def generate(scenario, seed, case_index):
-    """Four small, deterministic families; no source reads, random module or Faker."""
+    """Five small, deterministic families; no source reads, random module or Faker."""
     if scenario not in SCENARIOS:
         raise StageError('counterexample: unsupported scenario', EXIT_CONFIG)
     _int(seed, -(2**63), 2**63 - 1, 'seed')
@@ -57,10 +57,40 @@ def generate(scenario, seed, case_index):
     elif scenario == 'bom_diamond':
         fixture['bom_line'] = [[a, b, i + 1, str(numbers[i])] for i, (a, b) in enumerate((('A', 'B'), ('B', 'D'), ('A', 'C'), ('C', 'D')))]
         fixture['stock'] = [['noise', 'L0', str(numbers[4])]]
-    else:
+    elif scenario == 'date_boundary':
         fixture['sales_order'] = [order('o' + str(i), 'A', day, numbers[i]) for i, day in enumerate(
             ('2025-12-31', '2026-01-01', '2026-01-31', '2026-02-01', '2026-02-02'))]
         fixture['stock'] = [['noise', 'L0', str(numbers[5])]]
+    else:
+        # Soft (EuroSys 2025) empirical SQL built-in function boundary-argument seeds:
+        # empty/whitespace/case/quoted/Unicode strings, INT32_MIN/MAX, signed zero,
+        # full-precision numeric(18,3)/(18,6) bounds, extreme calendar dates and NULLs.
+        fixture['part'] = [
+            ['A', '', ' ', 'make', "edge'quote"],
+            ['B', '  synthetic  ', 'UNIT', 'buy', 'É_é_0'],
+            ['C', None, '', None, None],
+            ['D', 'synthetic', 'unit', 'make', f'seed_{numbers[0]}'],
+            ['noise', 'synthetic', 'unit', 'make', 'synthetic_noise'],
+        ]
+        fixture['bom_line'] = [
+            ['A', 'B', 0, '0.000000'],
+            ['A', 'C', -1, '-0.000001'],
+            ['B', 'D', 2147483647, f'999999999999.{numbers[1]:06d}'],
+            ['C', 'D', -2147483648, None],
+        ]
+        fixture['sales_order'] = [
+            ['o0', 'A', '', '0.000', '-0.000', '1970-01-01'],
+            ['o1', 'A', '  firm  ', f'999999999999999.{numbers[2]:03d}', f'-{numbers[3]}.001', '2000-02-29'],
+            ['o2', 'B', None, None, '0.001', '9999-12-31'],
+            ['o3', 'C', 'FIRM', f'{numbers[4]}.500', f'{numbers[5]}.500', '0001-01-01'],
+        ]
+        fixture['stock'] = [
+            ['A', '', '0.000'],
+            ['A', 'L0', None],
+            ['B', '  L1  ', f'-{numbers[6]}.001'],
+            ['C', 'L2', f'999999999999999.{numbers[7]:03d}'],
+            ['noise', 'L3', '0.001'],
+        ]
     return fixture
 
 
@@ -395,7 +425,7 @@ def run(cfg, args, out):
         if reduced['shrink_errors']:
             result.not_proven.append('Some row deletions could not execute; those trials were never accepted and deletion 1-minimality is not proven.')
         result.not_proven.append(('Deletion 1-minimality covers only admissible single-row deletions within the bound profile, not simultaneous deletions or a global minimum.' if profile else
-                                  'Deletion 1-minimality is not a global minimum; only these four synthetic scenario families are searched.'))
+                                  'Deletion 1-minimality is not a global minimum; only these five synthetic scenario families are searched.'))
         result.next_safe_action = 'Replay fixture.json with the same two trusted SQL files, then review the SQL disagreement.'
     except StageError:
         raise

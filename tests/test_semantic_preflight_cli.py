@@ -218,6 +218,18 @@ cube_query = {dimensions=["m_stock.key"], measures=["m_stock.value"]}
             self.assertEqual(self.invoke()[0], 2)
         self.assertFalse((self.out / 'semantic_preflight' / 'result.json').exists())
 
+    def test_reject_semi_additive_flag_fails_as_of_sum_and_rejects_duplicate_flag(self):
+        # Default fixture uses period_kind=as_of with aggregation=sum.
+        self.assertEqual(self.invoke(self.args() + ['--reject-semi-additive'])[0], 1)
+        saved = self.saved()
+        self.assertEqual(saved['status'], 'fail')
+        self.assertEqual(saved['checks'][0]['detail']['reason'], 'semi_additive_stock_conflict')
+        self.assertEqual(saved['checks'][0]['detail']['summarizability'], 'semi_additive_stock')
+        self.assertNotIn('private-', json.dumps(saved))
+
+        # Duplicate flag is rejected without mutating output.
+        self.assertEqual(self.invoke(self.args() + ['--reject-semi-additive', '--reject-semi-additive'])[0], 2)
+
 
 if __name__ == '__main__':
     unittest.main()

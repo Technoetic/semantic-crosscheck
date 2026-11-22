@@ -21,6 +21,9 @@ METRICS = ("cases", *TRANSITIONS.values(), "inconclusive")
 REQUIRED_TRUTH = {metric: truth for (truth, _, _), metric in TRANSITIONS.items()}
 MIN_DISCORDANT_MIDP_005 = 5
 MIN_DISCORDANT_EXACT_005 = 6
+MIN_DISCORDANT_E_005 = 7
+_LOG_BETA_HALF_HALF = 2.0 * math.lgamma(0.5) - math.lgamma(1.0)
+_MAX_SAFE_EXP = 700.0
 Z_975 = NormalDist().inv_cdf(0.975)
 
 
@@ -223,6 +226,34 @@ def newcombe_paired_ci95(a: int, b: int, c: int, d: int) -> list[float]:
     return [_round6(lower), _round6(upper)]
 
 
+def safe_mcnemar_log_evalue(b: int, c: int) -> float:
+    """Natural log of the exact Jeffreys Beta(1/2, 1/2) mixture e-value for H0: theta = 0.5.
+
+    Exact anytime-valid test martingale under optional stopping and optional
+    continuation (Grunwald, de Heide & Koolen, JRSS-B 2024; Ramdas et al.,
+    Statistical Science 2023). Log-space evaluation via math.lgamma avoids
+    overflow for large discordant counts and lets independent cohorts pool by
+    adding log e-values.
+    """
+    if b < 0 or c < 0:
+        raise ValueError("discordant counts must be nonnegative")
+    m = b + c
+    if m == 0:
+        return 0.0
+    hi, lo = (b, c) if b >= c else (c, b)
+    # Canonicalize order so floating-point addition is bit-for-bit symmetric across libm builds.
+    return (m * math.log(2.0) + math.lgamma(hi + 0.5) + math.lgamma(lo + 0.5)
+            - math.lgamma(m + 1.0) - _LOG_BETA_HALF_HALF)
+
+
+def safe_mcnemar_evalue(b: int, c: int) -> tuple[float | None, float, float]:
+    """Return (e_value_or_none_if_overflow, log_e_value, anytime_valid_p)."""
+    log_e = safe_mcnemar_log_evalue(b, c)
+    e_val = _round6(math.exp(log_e)) if log_e <= _MAX_SAFE_EXP else None
+    anytime_p = _round6(min(1.0, math.exp(-log_e))) if log_e > 0.0 else 1.0
+    return e_val, _round6(log_e), anytime_p
+
+
 def _paired_stats(a: int, b: int, c: int, d: int, lost_key: str) -> dict[str, object]:
     n = a + b + c + d
     discordant = b + c
@@ -239,15 +270,24 @@ def _paired_stats(a: int, b: int, c: int, d: int, lost_key: str) -> dict[str, ob
         "diff_ci_95": newcombe_paired_ci95(a, b, c, d) if n else None,
         "exact_mcnemar_p": None,
         "midp_mcnemar_p": None,
+        "safe_e_value": None,
+        "safe_e_log": None,
+        "safe_anytime_p": None,
         "min_discordant_for_midp_005": MIN_DISCORDANT_MIDP_005,
         "min_discordant_for_exact_005": MIN_DISCORDANT_EXACT_005,
+        "min_discordant_for_e_005": MIN_DISCORDANT_E_005,
         "underpowered_for_midp_005": discordant < MIN_DISCORDANT_MIDP_005,
         "underpowered_for_exact_005": discordant < MIN_DISCORDANT_EXACT_005,
+        "underpowered_for_e_005": discordant < MIN_DISCORDANT_E_005,
     }
     if n:
         exact_p, midp = mcnemar_pvalues(b, c)
+        e_val, log_e, anytime_p = safe_mcnemar_evalue(b, c)
         base["exact_mcnemar_p"] = exact_p
         base["midp_mcnemar_p"] = midp
+        base["safe_e_value"] = e_val
+        base["safe_e_log"] = log_e
+        base["safe_anytime_p"] = anytime_p
     return base
 
 

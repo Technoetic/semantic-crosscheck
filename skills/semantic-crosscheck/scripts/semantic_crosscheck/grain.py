@@ -21,6 +21,25 @@ _AGGS = {'sum', 'count', 'min', 'max'}
 _KEY_VIOLATIONS = ('source_null_key_rows', 'source_duplicate_groups',
                    'node_null_key_rows', 'node_duplicate_groups',
                    'orphan_groups', 'fanout_groups')
+_RLS_NOT_PROVEN = (
+    'Row-level security is active on a checked relation; another database role '
+    '(such as Cube) may see a different row subset.'
+)
+
+
+def summarizability_failures(evidence: dict, allow_excluded_rows: bool) -> list[str]:
+    """Map observed grain counts to Mazon et al. (2009) summarizability failure classes."""
+    failures: list[str] = []
+    if evidence.get('orphan_groups', 0):
+        failures.append('incompleteness')
+    if (evidence.get('fanout_groups', 0) or evidence.get('source_duplicate_groups', 0)
+            or evidence.get('node_duplicate_groups', 0)):
+        failures.append('non_strictness')
+    if evidence.get('source_null_key_rows', 0) or evidence.get('node_null_key_rows', 0):
+        failures.append('null_key')
+    if evidence.get('excluded_null_rows', 0) and not allow_excluded_rows:
+        failures.append('null_exclusion')
+    return failures
 
 
 def _error():
@@ -260,17 +279,31 @@ def _where(actual):
 def evaluate(conn, actual, max_rows):
     """Return bounded counts only; caller supplies a read-only repeatable snapshot.
 
-    At most five statements: two physical-relation provenance checks, two bounded
-    row counts, then one materialized aggregation/key/join count query. Relation
-    counts inspect max_rows+1; an overflow never executes partial evidence.
+    At most five statements: two physical-relation provenance/RLS/index checks,
+    two bounded row counts, then one materialized aggregation/key/join count
+    query. Relation counts inspect max_rows+1; an overflow never executes
+    partial evidence. Active row-level security without BYPASSRLS fails closed.
     """
+    catalog_flags: dict[str, bool] = {}
     for side in ('source', 'node'):
         schema, table = ident.split(actual[side]['table'])
-        kind = db.scalar(conn, '''SELECT c.relkind FROM pg_catalog.pg_class c
+        meta_rows = db.rows(conn, '''SELECT c.relkind,
+          coalesce(c.relrowsecurity, false) AS relrowsecurity,
+          coalesce((SELECT r.rolbypassrls FROM pg_catalog.pg_roles r WHERE r.rolname = current_user), false) AS rolbypassrls,
+          coalesce((SELECT bool_or(i.indisunique AND i.indnullsnotdistinct)
+                    FROM pg_catalog.pg_index i WHERE i.indrelid = c.oid), false) AS unique_nulls_not_distinct
+          FROM pg_catalog.pg_class c
           JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
           WHERE n.nspname = :schema AND c.relname = :table''', schema=schema, table=table)
-        if kind not in ('r', 'p'):
+        if not meta_rows or meta_rows[0]['relkind'] not in ('r', 'p'):
             return {'reason': 'unsupported_relation', 'complete': False}
+        meta = meta_rows[0]
+        row_security = bool(meta['relrowsecurity'])
+        bypass_rls = bool(meta['rolbypassrls'])
+        catalog_flags[side + '_row_security'] = row_security
+        catalog_flags[side + '_unique_nulls_not_distinct'] = bool(meta['unique_nulls_not_distinct'])
+        if row_security and not bypass_rls:
+            return {**catalog_flags, 'reason': 'row_level_security', 'complete': False}
     sizes = {}
     for side in ('source', 'node'):
         table = ident.qualified(actual[side]['table'])
@@ -278,7 +311,7 @@ def evaluate(conn, actual, max_rows):
             f'SELECT count(*) FROM (SELECT 1 FROM {table} LIMIT :row_limit) AS bounded',
             row_limit=max_rows + 1))
         if sizes[side + '_rows'] > max_rows:
-            return dict(sizes, reason='row_budget', complete=False)
+            return {**sizes, **catalog_flags, 'reason': 'row_budget', 'complete': False}
     source, node = ident.qualified(actual['source']['table']), ident.qualified(actual['node']['table'])
     by = ident.quote(actual['group_by'][0])
     value = ident.quote(actual['aggregate']['column'])
@@ -318,7 +351,7 @@ def evaluate(conn, actual, max_rows):
     if len(rows) != 1:
         raise ValueError('evidence shape')
     counts = {key: int(value) for key, value in rows[0].items()}
-    return dict(sizes, **counts, complete=True)
+    return {**sizes, **catalog_flags, **counts, 'complete': True}
 
 
 def run(cfg, args, out: Path) -> Result:
@@ -350,21 +383,31 @@ def run(cfg, args, out: Path) -> Result:
     try:
         conn = db.connect(cfg.source.dsn_env)
         with db.read_only(conn, timeout, isolation='repeatable read'):
+            rls_seen = False
             for index, (contract, actual) in enumerate(zip(spec['contracts'], operations), 1):
                 evidence = evaluate(conn, actual, max_rows)
+                if evidence.get('source_row_security') or evidence.get('node_row_security'):
+                    rls_seen = True
                 if not evidence['complete']:
                     status = 'not_run'
-                elif any(evidence[key] for key in _KEY_VIOLATIONS):
-                    status = 'fail'
-                elif evidence['excluded_null_rows'] and not contract['null_policy']['allow_excluded_rows']:
-                    status = 'fail'
-                elif not evidence['source_rows'] or not evidence['node_rows'] or not evidence['selected_rows']:
-                    status = 'not_run'
-                    evidence['reason'] = 'empty_scope'
                 else:
-                    status = 'pass'
-                result.add(f'grain:c{index:04d}:evidence', status,
-                           null_exclusion_allowed=contract['null_policy']['allow_excluded_rows'], **evidence)
+                    evidence['summarizability_failures'] = summarizability_failures(
+                        evidence, contract['null_policy']['allow_excluded_rows']
+                    )
+                    if any(evidence[key] for key in _KEY_VIOLATIONS):
+                        status = 'fail'
+                    elif evidence['excluded_null_rows'] and not contract['null_policy']['allow_excluded_rows']:
+                        status = 'fail'
+                    elif not evidence['source_rows'] or not evidence['node_rows'] or not evidence['selected_rows']:
+                        status = 'not_run'
+                        evidence['reason'] = 'empty_scope'
+                    else:
+                        status = 'pass'
+                result.add(f'grain:c{index:04d}:evidence', status, '',
+                           null_exclusion_allowed=contract['null_policy']['allow_excluded_rows'],
+                           **evidence)
+            if rls_seen:
+                result.not_proven.append(_RLS_NOT_PROVEN)
         # Bind completion to exactly the files checked at startup.
         if hashlib.sha256(_read(source)).hexdigest() != spec['spec_sha256'] or hashlib.sha256(Path(cfg.path).read_bytes()).hexdigest() != config_sha:
             raise ValueError('input changed')

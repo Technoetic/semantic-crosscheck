@@ -33,3 +33,11 @@ python tools/paired_release.py --plan examples/paired-release/plan.json --baseli
 - **최소 표본 공시:** 기존 검출 손실이 `0`(`c = 0`)이어도 양측 `p < 0.05`에 도달하려면 최소 `b >= 5`(Mid-P `0.03125`) 또는 `b >= 6`(정확 `0.03125`)의 불일치 쌍이 필요하다. 불일치 쌍(`discordant = b + c`)이 이 하한보다 작으면 `underpowered_for_midp_005` / `underpowered_for_exact_005`가 `true`로 표시된다.
 - **v0.30.0 예시 해석:** v0.30.0의 `heldout` 오류 사례 3건(`a=1, b=2, c=0, d=0`)은 `exact_mcnemar_p = 0.5`, `midp_mcnemar_p = 0.25`, `diff_ci_95 = [-0.058569, 0.938508]`, `underpowered_for_midp_005 = true`다. 따라서 이 수치는 추가 검사의 결정적 동작 시연이며 통계적 유의성 근거가 아니다.
 - **실험 위생:** 동일 시험 집합에서 두 검출기를 비교할 때 쌍체 검정(McNemar 계열)을 선택하는 근거([Dietterich 1998](https://doi.org/10.1162/089976698300017197)), 무작위 생성기·변이 비교 시 비모수 검정과 효과 크기 병기 원칙([Arcuri & Briand 2014](https://doi.org/10.1002/stvr.1486)), 합성 결함 중복 제거·시드 고정·개발 사례 노출 분리 규칙([Klees et al., CCS 2018](https://doi.org/10.1145/3243734.3243804))을 따른다. 같은 스키마에서 파생된 유사 합성 사례를 독립 표본으로 과대 해석하지 않는다.
+
+## 순차 모니터링용 상시 유효 e-값 (v0.32.0)
+
+사례가 점진적으로 추가되는 held-out 코퍼스에서 결과를 반복 확인할 때(optional stopping / optional continuation) 고정 표본 McNemar p-값은 제1종 오류율이 팽창한다. v0.32.0부터 `tools/paired_release.py`는 표준 라이브러리(`math.lgamma`)만으로 불일치 쌍 $(b, c)$에 대한 정확한 Jeffreys $\mathrm{Beta}(1/2, 1/2)$ 혼합 마팅게일 e-값을 함께 출력한다([Grünwald, de Heide & Koolen, JRSS-B 2024](https://doi.org/10.1093/jrsssb/qkae011); [Ramdas et al., Statistical Science 2023](https://doi.org/10.1214/23-STS894); [Howard et al., Annals of Statistics 2021](https://doi.org/10.1214/20-AOS1991)).
+
+- **출력 필드:** `safe_e_value`(오버플로 방지 상한 $\ln E > 700$ 초과 시 `null`), `safe_e_log`(정확한 자연로그 $\ln E$, 독립 코호트 합산용), `safe_anytime_p`($\min(1, 1/E)$), `min_discordant_for_e_005 = 7`, `underpowered_for_e_005`.
+- **임계 기준:** 기존 손실 `c = 0`에서 상시 유효 유의수준 `0.05`($E \ge 20$)에 도달하려면 최소 `b >= 7`의 불일치 쌍이 필요하다(`b = 6, c = 0`은 `E = 14.4375`, `b = 7, c = 0`은 `E = 26.8125`, `safe_anytime_p = 0.037296`). v0.30.0 예시 `(b = 2, c = 0)`은 `safe_e_value = 1.5`, `safe_anytime_p = 0.666667`, `underpowered_for_e_005 = true`다.
+- **코호트 결합:** 서로 독립적인 held-out 코호트의 근거는 각 `safe_e_log`를 더해($E_{\text{total}} = \prod E_i$) 제1종 오류 보장을 유지한 채 결합할 수 있다.

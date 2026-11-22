@@ -111,6 +111,24 @@ class ExactSumTest(unittest.TestCase):
         with self.assertRaises(NumericLimit):
             exact_sum([value])
 
+    def test_soft_function_boundary_numeric_seeds_preserve_exactness(self):
+        # Exercises Soft (EuroSys 2025) numeric(18,3)/(18,6) boundary seeds: signed zero,
+        # full 18-digit boundaries, tiny sub-unit scale, NULLs and exact cancellation.
+        seeds = [
+            Decimal("-0.000"),
+            Decimal("0.000000"),
+            Decimal("999999999999999.999"),
+            Decimal("-999999999999999.999"),
+            Decimal("-0.000001"),
+            Decimal("0.000001"),
+            None,
+        ]
+        self.assertEqual(exact_sum(seeds).as_tuple(), Decimal(0).as_tuple())
+        self.assertEqual(
+            exact_sum([Decimal("999999999999.000001"), Decimal("-0.000001")]),
+            Decimal("999999999999"),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

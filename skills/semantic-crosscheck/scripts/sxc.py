@@ -157,7 +157,7 @@ def parser(*, audit_errors=False) -> argparse.ArgumentParser:
                    help="with --mutation-operator: independently authored gold SELECT, checked against original and mutant on the same fixture")
     s.add_argument("--metamorphic-sql", default=None, metavar="FILE", help="instead of two files: one closure SELECT (ancestor, descendant, qty) "
                                                                          "checked against four BOM metamorphic relations; no gold needed")
-    s.add_argument("--scenario", choices=["nulls", "duplicate_join", "bom_diamond", "date_boundary", "bom_exhaustive"], default=None,
+    s.add_argument("--scenario", choices=["nulls", "duplicate_join", "bom_diamond", "date_boundary", "function_boundary", "bom_exhaustive"], default=None,
                    help="default: nulls, or bom_diamond with --metamorphic-sql, which supports only bom_diamond and "
                         "bom_exhaustive (every connected acyclic BOM up to 4 parts and 5 lines, judged by the exact oracle)")
     s.add_argument("--seed", type=int, default=7, help="deterministic synthetic generator seed")
@@ -204,6 +204,8 @@ def parser(*, audit_errors=False) -> argparse.ArgumentParser:
                        help="check authored business definitions and a structured plan offline")
     s.add_argument("--contract", required=True, metavar="FILE", help="strict version 1 business contract")
     s.add_argument("--plan", required=True, metavar="FILE", help="strict version 1 structured plan")
+    s.add_argument("--reject-semi-additive", action="store_true",
+                   help="fail contracts declaring period_kind=as_of with sum or count aggregation")
 
     s = sub.add_parser("sql-structure", allow_abbrev=False,
                        help="compare PostgreSQL 17 AST syntax with authored expectations offline")

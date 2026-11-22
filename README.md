@@ -10,7 +10,7 @@
 PostgreSQL 17 이상의 부모·자식 계층 데이터(예: BOM)에 대한 데이터 규칙·OWL 분류·Cube 시맨틱 레이어를 설정 하나로 정의하고,<br/>
 이 계층들이 같은 답을 내는지 확인하려는 팀과 그 검증을 맡은 코딩 에이전트(Claude Code · Codex)를 위한 검증 도구입니다.
 
-[![Release](https://img.shields.io/badge/Release-v0.31.1-0D9488?style=for-the-badge)](docs/releases/v0.31.1.md)
+[![Release](https://img.shields.io/badge/Release-v0.32.0-0D9488?style=for-the-badge)](docs/releases/v0.32.0.md)
 [![CI](https://img.shields.io/github/actions/workflow/status/Technoetic/semantic-crosscheck/tests.yml?branch=main&style=for-the-badge&label=CI&logo=github)](https://github.com/Technoetic/semantic-crosscheck/actions/workflows/tests.yml)
 [![MIT](https://img.shields.io/badge/License-MIT-8B5CF6?style=for-the-badge)](LICENSE)
 [![Claude Code](https://img.shields.io/badge/Claude_Code-Plugin-191919?style=for-the-badge&logo=anthropic&logoColor=white)](#claude-code)
@@ -37,7 +37,7 @@ PostgreSQL 17 이상의 부모·자식 계층 데이터(예: BOM)에 대한 데�
 
 **[빠른 시작](#quick-start-with-the-demo) · [설치](#install) · [단계별 명령](#stages) · [결과 읽기](#reading-results) · [검증 한계](#limitations-and-not-proven)**
 
-**v0.31.1**은 시간대 독립 `SOURCE_DATE_EPOCH` UTC 릴리스 ZIP 생성기(`tools/build_release_zip.py`), Trojan Source Bidi·`Default_Ignorable` 불가시 유니코드 차단(`tools/check_unicode.py`), PostgreSQL 17 내장 `builtin` `C.UTF-8` collation 안내·통합 시험, 그리고 CI 전용 워크플로·공급망·코드 위생 게이트(`actionlint`·`zizmor`·`pip-audit`·`cyclonedx-bom`/`npm sbom`·`complexipy`·`vulture`·`deptry` 및 `ty` 41개 모듈 확대)를 더했습니다(새 런타임 의존성 0). [v0.31.1 릴리스 노트](docs/releases/v0.31.1.md) · [실험·통계 안내](docs/paired-release.md)
+**v0.32.0**은 PostgreSQL 17 행 수준 보안(RLS)·`UNIQUE NULLS NOT DISTINCT` 카탈로그 가드(`doctor`·`grain`), `tools/paired_release.py`의 표준 라이브러리 상시 유효 e-값(Safe Testing), `semantic-preflight`·`grain`의 OLAP 요약 가능성 분류(`--reject-semi-additive`), 그리고 `counterexample`·`tlp`의 SQL 내장 함수 경계값 시나리오(`function_boundary`)를 더했습니다(새 런타임 의존성 0). [v0.32.0 릴리스 노트](docs/releases/v0.32.0.md) · [실험·통계 안내](docs/paired-release.md)
 
 </div>
 
@@ -215,7 +215,7 @@ Cube는 항상 Tesseract SQL 플래너(`CUBEJS_TESSERACT_SQL_PLANNER=true`)로 �
 기본 브랜치를 따라가는 설치입니다. 특정 릴리스 태그로 고정하려면 해당 태그를 복제한 뒤 로컬 경로를 등록합니다.
 
 ```bash
-git clone --branch v0.31.1 --depth 1 https://github.com/Technoetic/semantic-crosscheck.git
+git clone --branch v0.32.0 --depth 1 https://github.com/Technoetic/semantic-crosscheck.git
 ```
 
 ```text
@@ -238,7 +238,7 @@ git clone --branch v0.31.1 --depth 1 https://github.com/Technoetic/semantic-cros
 릴리스 태그를 고정해 등록합니다.
 
 ```text
-codex plugin marketplace add Technoetic/semantic-crosscheck --ref v0.31.1
+codex plugin marketplace add Technoetic/semantic-crosscheck --ref v0.32.0
 codex plugin add semantic-crosscheck@semantic-crosscheck-local
 ```
 
@@ -255,7 +255,7 @@ Windows PowerShell에서 실행 정책 때문에 `codex.ps1`이 거부되면 두
    python -m pip install -r "<plugin root>/requirements/reason.txt"
    ```
 
-   `<plugin root>` 예: `~/.claude/plugins/cache/semantic-crosscheck/semantic-crosscheck/0.31.1` 또는 `~/.codex/plugins/cache/semantic-crosscheck-local/semantic-crosscheck/0.31.1`. 패키지가 없으면 `/xc-doctor`가 실제 경로에 맞는 설치 명령을 안내합니다.
+   `<plugin root>` 예: `~/.claude/plugins/cache/semantic-crosscheck/semantic-crosscheck/0.32.0` 또는 `~/.codex/plugins/cache/semantic-crosscheck-local/semantic-crosscheck/0.32.0`. 패키지가 없으면 `/xc-doctor`가 실제 경로에 맞는 설치 명령을 안내합니다.
 2. psql을 사용하는 superuser가 `docs/setup-roles.sql`로 **loader·check 역할**을 만듭니다.
 3. Java를 `PATH`에 추가하거나 `SXC_JAVA`를 지정합니다.
 4. Node.js와 npm을 준비하고 `/xc-install` 또는 `sxc.py cube-install`로 **Cube 어댑터**를 한 번 설치합니다.
@@ -666,23 +666,23 @@ Cube의 기본 오류 로그에는 오류 클래스·코드·대략적인 범주
 <a id="development"></a>
 ## 🧪 검증 근거와 개발
 
-| v0.31.1의 확인 근거 | 범위 |
+| v0.32.0의 확인 근거 | 범위 |
 |---|---|
-| [릴리스 검증 JSON](https://github.com/Technoetic/semantic-crosscheck/releases/download/v0.31.1/verification.json) | 실행 후 실제 공개 소스 커밋, 원시 CI 로그의 테스트·제외·실패·오류, 독립 검증, archive SHA-256 기록 |
+| [릴리스 검증 JSON](https://github.com/Technoetic/semantic-crosscheck/releases/download/v0.32.0/verification.json) | 실행 후 실제 공개 소스 커밋, 원시 CI 로그의 테스트·제외·실패·오류, 독립 검증, archive SHA-256 기록 |
 | [GitHub Actions](https://github.com/Technoetic/semantic-crosscheck/actions/workflows/tests.yml) | 8개 OS/Python 단위 작업(Apple Silicon `macos-15` 포함) + PostgreSQL·HermiT·Cube 통합 + 정적 품질·공급망·SBOM 검사 + 보안·BOM·유니코드·actionlint 검사 = 11개 작업 |
 | 엄격한 통합 runner | 미실행 검사·빈 suite·실패·오류가 있으면 CI 실패 |
 | 실제 runtime 선택 모드 | 완전 실행 환경의 성공·설정 변경·근거 누락 시 PASS 차단을 실행하는 통합 CI |
 | 새 릴리스 브랜치 전체 검증 | 릴리스 메타데이터를 포함한 새 전체 로컬 실행과 공개 CI의 실제 결과를 검증 JSON에 각각 기록하며, 실행 전 성공 집계를 선언하지 않음 |
 | 이번 판의 검증 | 최종 고정 소스의 전체 로컬 실행·독립 검토·공개 CI를 각각 실행한 뒤 실제 결과를 기록한다. 이전 릴리스의 테스트 집계를 이번 버전의 근거로 사용하지 않는다. |
 | 데이터 규칙 | 엄격한 PostgreSQL 17 통합 작업의 데이터 규칙 시험이 모든 규칙 종류와 원자의 컴파일 SQL을 실행하고 독립 Python 평가·직접 쓴 기대 결과와 대조하며, SQL 변이가 `rule_xcheck:<id>` 실패로 드러나는지 확인한다. 실제 실행 결과는 검증 JSON에 기록하며 실행 전에 성공을 선언하지 않는다. |
-| 릴리스 배포 파일 | [소스 ZIP](https://github.com/Technoetic/semantic-crosscheck/releases/download/v0.31.1/semantic-crosscheck-0.31.1.zip) · [SHA256SUMS](https://github.com/Technoetic/semantic-crosscheck/releases/download/v0.31.1/SHA256SUMS) |
+| 릴리스 배포 파일 | [소스 ZIP](https://github.com/Technoetic/semantic-crosscheck/releases/download/v0.32.0/semantic-crosscheck-0.32.0.zip) · [SHA256SUMS](https://github.com/Technoetic/semantic-crosscheck/releases/download/v0.32.0/SHA256SUMS) |
 
-최종 공개 커밋·CI 작업 URL·실제 집계는 실행 후 릴리스와 함께 제공하는 **v0.31.1 검증 JSON**에서 확인합니다. 원시 CI 로그에서 읽은 집계만 공개 커밋의 근거로 사용하며, 이전 구현 단계 검증·새 전체 로컬 검증·전체 엔진 통합 CI를 구분합니다.
+최종 공개 커밋·CI 작업 URL·실제 집계는 실행 후 릴리스와 함께 제공하는 **v0.32.0 검증 JSON**에서 확인합니다. 원시 CI 로그에서 읽은 집계만 공개 커밋의 근거로 사용하며, 이전 구현 단계 검증·새 전체 로컬 검증·전체 엔진 통합 CI를 구분합니다.
 
 v0.31.1부터 릴리스 ZIP은 커밋 시각(`SOURCE_DATE_EPOCH`)의 UTC 시각, 정렬된 POSIX 경로, 고정 Unix 메타데이터(`create_system = 3`), deflate `-9`를 쓰는 `tools/build_release_zip.py`로 만듭니다. 명령에 적힌 태그가 있는 clone에서 아래 명령을 실행하면 `TZ=KST-9`, `TZ=UTC0`, `TZ=EST5` 등 시간대와 무관하게 같은 SHA-256의 ZIP이 생성됩니다. 다른 Python·zlib 버전에서의 바이트 동일성은 주장하지 않습니다. (v0.31.0 이하 과거 릴리스는 `TZ=KST-9 git archive --format=zip -9`로 생성했습니다.)
 
 ```bash
-python tools/build_release_zip.py --ref v0.31.1 -o semantic-crosscheck-0.31.1.zip
+python tools/build_release_zip.py --ref v0.32.0 -o semantic-crosscheck-0.32.0.zip
 ```
 
 확인 기록(2026-11-11, v0.22.0 자산): git 2.55.0(Windows), 시간대 UTC+9에서 버전이 0.22.0인 당시 `git archive` 명령의 결과는 게시된 `semantic-crosscheck-0.22.0.zip`과 바이트 단위로 같았고, SHA-256이 같은 릴리스의 SHA256SUMS 값과 일치했습니다. 이 기록은 그 자산 하나에 대한 것이며, 위 명령의 버전을 바꿀 때 함께 바꾸지 않습니다.
@@ -742,20 +742,20 @@ CI는 전체 이력을 가진 clone의 작업 트리·이력을 일반 패턴과
 
 **MIT** · [LICENSE](LICENSE). 런타임 의존성을 저장소에 포함하지 않으며 의존성 라이선스는 [THIRD_PARTY.md](THIRD_PARTY.md)에 정리했습니다.
 
-[설계 문서](docs/design.md) · [설정 레퍼런스](skills/semantic-crosscheck/references/config.md) · [데이터 규칙](docs/data-rules.md) · [문제와 함정](skills/semantic-crosscheck/references/pitfalls.md) · [변경 이력](CHANGELOG.md) · [v0.31.1 릴리스 노트](docs/releases/v0.31.1.md)
+[설계 문서](docs/design.md) · [설정 레퍼런스](skills/semantic-crosscheck/references/config.md) · [데이터 규칙](docs/data-rules.md) · [문제와 함정](skills/semantic-crosscheck/references/pitfalls.md) · [변경 이력](CHANGELOG.md) · [v0.32.0 릴리스 노트](docs/releases/v0.32.0.md)
 
 <div align="center">
 
 **한 계층의 설명을 믿기 전에, 다른 계층의 답과 대조합니다.**
 
-[빠른 시작으로 이동 ↑](#quick-start-with-the-demo) · [GitHub 릴리스](https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.31.1)
+[빠른 시작으로 이동 ↑](#quick-start-with-the-demo) · [GitHub 릴리스](https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.32.0)
 
 </div>
 
 <a id="recent-changes"></a>
 ## 최근 변경
 
-판마다의 변경은 [CHANGELOG.md](CHANGELOG.md)와 판별 릴리스 노트(이번 판: [v0.31.1](docs/releases/v0.31.1.md))에 있습니다. 선택 기능의 사용법과 한계는 각 문서에 있습니다: [`spec_source` 묶기](docs/knowledge-sources.md), [OKF 메타데이터](docs/okf.md), [지식 변화 평가](docs/knowledge-evolution.md), [변이 관측표](docs/mutation-matrix.md), [변이 재생 범위](docs/mutation-coverage.md), [조인·집계 정답 사례](docs/join-aggregate-fixtures.md), [데이터 규칙](docs/data-rules.md), [계약 보고 근거](docs/contract-report.md), [SQL 구조 진단](docs/sql-structure.md), [출처 범위 fixture](docs/provenance-fixtures.md), [경계 스키마](docs/boundary-schema.md), [TLP 축소](docs/tlp.md), [업무 정의 사전 점검](docs/semantic-preflight.md).
+판마다의 변경은 [CHANGELOG.md](CHANGELOG.md)와 판별 릴리스 노트(이번 판: [v0.32.0](docs/releases/v0.32.0.md))에 있습니다. 선택 기능의 사용법과 한계는 각 문서에 있습니다: [`spec_source` 묶기](docs/knowledge-sources.md), [OKF 메타데이터](docs/okf.md), [지식 변화 평가](docs/knowledge-evolution.md), [변이 관측표](docs/mutation-matrix.md), [변이 재생 범위](docs/mutation-coverage.md), [조인·집계 정답 사례](docs/join-aggregate-fixtures.md), [데이터 규칙](docs/data-rules.md), [계약 보고 근거](docs/contract-report.md), [SQL 구조 진단](docs/sql-structure.md), [출처 범위 fixture](docs/provenance-fixtures.md), [경계 스키마](docs/boundary-schema.md), [TLP 축소](docs/tlp.md), [업무 정의 사전 점검](docs/semantic-preflight.md).
 
 <a id="optional-diagnostic-contracts"></a>
 ## 선택 진단
@@ -771,4 +771,4 @@ CI는 전체 이력을 가진 clone의 작업 트리·이력을 일반 패턴과
 
 설정 하나로 PostgreSQL의 계층·규칙, SHACL, OWL·HermiT, Cube 모델을 만들고 서로와 gold SQL을 비교합니다. `not_run`은 통과가 아니며, 전체 판정은 `report`와 `not_proven`을 함께 읽습니다. 원본 조회와 생성 스키마 기록을 분리하고, 데모 적재는 별도의 loader 역할을 사용합니다. 0.22.0부터 선택 단계 `data-rules`가 별도 규칙 파일의 데이터 규칙을 PostgreSQL과 독립 Python으로 두 번 평가해 둘이 같을 때만 판정하며, 찾은 키는 출력 스키마의 뷰에서 사용자와 함께 조회합니다.
 
-요구 환경은 **Python 3.11 이상 · PostgreSQL 17 이상 · Java 11 이상 · Node.js 22 이상**입니다. Linux Cube에는 **glibc 2.34** 이상(x64), 2.30 이상(arm64)이 필요합니다. 최소 버전 가운데 상류 지원이 가장 먼저 끝나는 것은 Node.js 22(2027-04-30)입니다. Codex 설치 태그는 **v0.31.1**, 라이선스는 MIT입니다.
+요구 환경은 **Python 3.11 이상 · PostgreSQL 17 이상 · Java 11 이상 · Node.js 22 이상**입니다. Linux Cube에는 **glibc 2.34** 이상(x64), 2.30 이상(arm64)이 필요합니다. 최소 버전 가운데 상류 지원이 가장 먼저 끝나는 것은 Node.js 22(2027-04-30)입니다. Codex 설치 태그는 **v0.32.0**, 라이선스는 MIT입니다.

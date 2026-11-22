@@ -47,11 +47,21 @@ from .result import EXIT_CONFIG, Result, StageError
 
 COMPONENTS = ("core", "reason", "cube")
 MIN_PYTHON, MIN_PG, MIN_JAVA = (3, 11), 170000, 11
+MIN_PG_NULLS_NOT_DISTINCT = 150000
 WRITE_PRIVILEGES = ("INSERT", "UPDATE", "DELETE", "TRUNCATE", "TRIGGER")
 PROBE_TIMEOUT_S = 60
 PLUGIN_ROOT = Path(__file__).resolve().parents[4]          # holds requirements/ (the repository root)
 
-_PRIVILEGES_SQL = """
+
+def _privileges_sql(server_version_num: int = MIN_PG) -> str:
+    """Catalog privilege, RLS and UNIQUE NULLS NOT DISTINCT query for one relation."""
+    nulls_not_distinct = (
+        "coalesce((SELECT bool_or(i.indisunique AND i.indnullsnotdistinct) "
+        "FROM pg_catalog.pg_index i WHERE i.indrelid = c.oid), false)"
+        if int(server_version_num) >= MIN_PG_NULLS_NOT_DISTINCT
+        else "false"
+    )
+    return f"""
     SELECT n.oid IS NOT NULL AS schema_exists, c.oid IS NOT NULL AS table_exists,
            coalesce(has_schema_privilege(n.oid, 'USAGE'), false) AS can_use,
            coalesce(has_schema_privilege(n.oid, 'CREATE'), false) AS schema_create,
@@ -62,11 +72,17 @@ _PRIVILEGES_SQL = """
            coalesce(has_table_privilege(c.oid, 'DELETE'), false) AS can_delete,
            coalesce(has_table_privilege(c.oid, 'TRUNCATE'), false) AS can_truncate,
            coalesce(has_table_privilege(c.oid, 'TRIGGER'), false) AS can_trigger,
-           coalesce(pg_has_role(c.relowner, 'MEMBER'), false) AS member_of_owner
+           coalesce(pg_has_role(c.relowner, 'MEMBER'), false) AS member_of_owner,
+           coalesce(c.relrowsecurity, false) AS row_security,
+           coalesce(c.relforcerowsecurity, false) AS force_row_security,
+           coalesce((SELECT r.rolbypassrls FROM pg_catalog.pg_roles r WHERE r.rolname = current_user), false) AS bypass_rls,
+           {nulls_not_distinct} AS unique_nulls_not_distinct
     FROM (SELECT 1) AS one
     LEFT JOIN pg_namespace n ON n.nspname = :schema
     LEFT JOIN pg_class c ON c.relnamespace = n.oid AND c.relname = :table AND c.relkind IN ('r', 'p', 'v', 'm', 'f')
 """
+
+
 _OUTPUT_SCHEMA_SQL = """
     SELECT n.oid IS NOT NULL AS schema_exists,
            coalesce(has_schema_privilege(n.oid, 'CREATE'), false) AS can_create,
@@ -279,17 +295,36 @@ def write_findings(row: dict) -> dict:
             "schema_create": row["schema_create"]}
 
 
-def _privileges(conn, cfg, res: Result, hints: dict):
+def rls_visibility_warning(name: str, row: dict) -> str | None:
+    """Disclose potential row-subset skew when PostgreSQL RLS is enabled on a source relation."""
+    if not row.get("table_exists") or not row.get("row_security"):
+        return None
+    force = bool(row.get("force_row_security", False))
+    bypass = bool(row.get("bypass_rls", False))
+    return (f"entities.{name}: PostgreSQL row-level security is enabled (relrowsecurity=true, "
+            f"relforcerowsecurity={str(force).lower()}, rolbypassrls={str(bypass).lower()}); "
+            "visible rows for the check role can differ from Cube or another role")
+
+
+def _privileges(conn, cfg, res: Result, hints: dict, server_version_num: int = MIN_PG):
+    sql = _privileges_sql(server_version_num)
     rows = {}
     for name, ent in cfg.entities.items():
         schema, table = ident.split(ent.table)
-        rows[name] = db.rows(conn, _PRIVILEGES_SQL, schema=schema, table=table)[0]
+        rows[name] = db.rows(conn, sql, schema=schema, table=table)[0]
     for name, r in rows.items():
         ok = r["table_exists"] and r["can_use"] and r["can_select"]
         res.add(f"privileges:select:{name}", _st(ok), f"entities.{name}", schema_exists=r["schema_exists"],
-                table_exists=r["table_exists"], schema_usage=r["can_use"], select=r["can_select"])
+                table_exists=r["table_exists"], schema_usage=r["can_use"], select=r["can_select"],
+                row_security=bool(r.get("row_security", False)),
+                force_row_security=bool(r.get("force_row_security", False)),
+                bypass_rls=bool(r.get("bypass_rls", False)),
+                unique_nulls_not_distinct=bool(r.get("unique_nulls_not_distinct", False)))
         if not ok:
             hints.setdefault(f"privileges:select:{name}", select_hint(cfg, name, r))
+        warning = rls_visibility_warning(name, r)
+        if warning:
+            res.not_proven.append(warning)
     for name, r in rows.items():
         if not r["table_exists"]:
             res.add(f"privileges:no_write:{name}", "not_run", f"entities.{name}", reason="table_missing")
@@ -361,7 +396,7 @@ def _database(cfg, res: Result, hints: dict, have_pg8000: bool):
                 hints["pg_version"] = "use PostgreSQL 17 or newer (the closure uses MERGE ... RETURNING merge_action())"
             _temporary(conn, ref, res, hints)
             if cfg:
-                _privileges(conn, cfg, res, hints)
+                _privileges(conn, cfg, res, hints, num)
                 _output_schema(conn, cfg, res, hints)
     except (DatabaseError, InterfaceError) as e:
         res.add("database", "error", ref, exception=type(e).__name__, sqlstate=_sqlstate(e))

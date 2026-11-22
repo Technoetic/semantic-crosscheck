@@ -64,7 +64,7 @@ equal full result sets, or operational V1-V5 coverage.
 All five top-level fields and both aggregate fields are required; extra fields,
 duplicate JSON keys, nonfinite JSON numbers, invalid UTF-8 and files larger than
 64 KiB are rejected. The scenario is one of the existing deterministic fixture
-families: `nulls`, `duplicate_join`, `bom_diamond`, or `date_boundary`. Fixtures
+families: `nulls`, `duplicate_join`, `bom_diamond`, `date_boundary`, or `function_boundary`. Fixtures
 define the existing `part`, `bom_line`, `sales_order`, and `stock` CTEs.
 
 `relation_sql` starts with SELECT and may contain joins, nested SELECTs, WHERE,

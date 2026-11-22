@@ -268,10 +268,15 @@ class PairedReleaseTest(unittest.TestCase):
         self.assertAlmostEqual(stats["rate_diff"], 0.666667, places=6)
         self.assertEqual(stats["exact_mcnemar_p"], 0.5)
         self.assertEqual(stats["midp_mcnemar_p"], 0.25)
+        self.assertEqual(stats["safe_e_value"], 1.5)
+        self.assertAlmostEqual(stats["safe_e_log"], 0.405465, places=6)
+        self.assertAlmostEqual(stats["safe_anytime_p"], 0.666667, places=6)
         self.assertEqual(stats["min_discordant_for_midp_005"], 5)
         self.assertEqual(stats["min_discordant_for_exact_005"], 6)
+        self.assertEqual(stats["min_discordant_for_e_005"], 7)
         self.assertTrue(stats["underpowered_for_midp_005"])
         self.assertTrue(stats["underpowered_for_exact_005"])
+        self.assertTrue(stats["underpowered_for_e_005"])
         # Zero-denominator Newcombe Method 10 (A=0 -> phi=0) crosses zero on n=3.
         lo, hi = stats["diff_ci_95"]
         self.assertAlmostEqual(lo, -0.058569, places=6)
@@ -328,12 +333,54 @@ class PairedReleaseTest(unittest.TestCase):
         self.assertIsNone(unk_det["diff_ci_95"])
         self.assertIsNone(unk_det["exact_mcnemar_p"])
         self.assertIsNone(unk_det["midp_mcnemar_p"])
+        self.assertIsNone(unk_det["safe_e_value"])
+        self.assertIsNone(unk_det["safe_e_log"])
+        self.assertIsNone(unk_det["safe_anytime_p"])
         self.assertTrue(unk_det["underpowered_for_midp_005"])
         self.assertTrue(unk_det["underpowered_for_exact_005"])
+        self.assertTrue(unk_det["underpowered_for_e_005"])
         # statistics is never accepted as an integer claim path
         self.assertEqual(self.compare({"heldout.statistics": 0})[0], 2)
 
+    def test_safe_evalue_martingale_validity_thresholds_and_pooling(self):
+        import math
+        import sys as _sys
+        tools_dir = str(SCRIPT.parent)
+        if tools_dir not in _sys.path:
+            _sys.path.insert(0, tools_dir)
+        import paired_release
+
+        # Exact martingale property: E_H0[E(B, m - B)] == 1 for every m.
+        for m in (0, 1, 2, 5, 7, 10):
+            expected = sum(
+                math.comb(m, b) * (0.5 ** m) * math.exp(paired_release.safe_mcnemar_log_evalue(b, m - b))
+                for b in range(m + 1)
+            )
+            with self.subTest(m=m):
+                self.assertAlmostEqual(expected, 1.0, places=12)
+
+        # Symmetry and zero-discordant identity.
+        self.assertEqual(paired_release.safe_mcnemar_evalue(0, 0), (1.0, 0.0, 1.0))
+        self.assertEqual(paired_release.safe_mcnemar_evalue(7, 1), paired_release.safe_mcnemar_evalue(1, 7))
+
+        # Threshold crossing: b=6, c=0 stays below 20; b=7, c=0 crosses 20 (anytime p < 0.05).
+        s6 = self._compare_table("error", a=0, b=6, c=0, d=0)
+        self.assertAlmostEqual(s6["safe_e_value"], 14.4375, places=6)
+        self.assertGreater(s6["safe_anytime_p"], 0.05)
+        self.assertTrue(s6["underpowered_for_e_005"])
+
+        s7 = self._compare_table("error", a=0, b=7, c=0, d=0)
+        self.assertAlmostEqual(s7["safe_e_value"], 26.8125, places=6)
+        self.assertLess(s7["safe_anytime_p"], 0.05)
+        self.assertFalse(s7["underpowered_for_e_005"])
+
+        # Independent cohorts pool multiplicatively (additively in log space).
+        log1 = paired_release.safe_mcnemar_log_evalue(4, 0)
+        log2 = paired_release.safe_mcnemar_log_evalue(4, 0)
+        self.assertAlmostEqual(math.exp(log1) * math.exp(log2), math.exp(log1 + log2), places=10)
+
     def test_large_discordant_count_does_not_overflow_float(self):
+        import math
         import sys as _sys
         tools_dir = str(SCRIPT.parent)
         if tools_dir not in _sys.path:
@@ -344,6 +391,18 @@ class PairedReleaseTest(unittest.TestCase):
         self.assertLessEqual(exact_p, 1.0)
         self.assertGreaterEqual(midp, 0.0)
         self.assertLessEqual(midp, exact_p)
+        e_val, log_e, anytime_p = paired_release.safe_mcnemar_evalue(1200, 300)
+        self.assertTrue(math.isfinite(log_e))
+        self.assertGreater(log_e, 0.0)
+        self.assertGreaterEqual(anytime_p, 0.0)
+        self.assertLessEqual(anytime_p, 1.0)
+        if e_val is not None:
+            self.assertTrue(math.isfinite(e_val))
+        # Extreme discordant counts (> exp(700)) stay JSON-finite with e_val=None and finite log_e.
+        huge_e, huge_log, huge_p = paired_release.safe_mcnemar_evalue(2000, 0)
+        self.assertIsNone(huge_e)
+        self.assertTrue(math.isfinite(huge_log))
+        self.assertEqual(huge_p, 0.0)
 
 
 if __name__ == "__main__":

@@ -211,6 +211,44 @@ class BusinessContractsTests(unittest.TestCase):
         self.assertEqual(result.status, 'pass')
         self.assertEqual(len(result.checks), 128)
 
+    def test_summarizability_classification_and_opt_in_semi_additive_rejection(self):
+        cases = [
+            ('range', 'sum', 'additive_flow'),
+            ('range', 'count', 'additive_flow'),
+            ('as_of', 'sum', 'semi_additive_stock'),
+            ('as_of', 'count', 'semi_additive_stock'),
+            ('as_of', 'min', 'distributive_extremum'),
+            ('range', 'max', 'distributive_extremum'),
+            ('none', 'sum', 'atemporal_additive'),
+            ('range', 'avg', 'non_additive_or_custom'),
+        ]
+        for period_kind, agg, expected in cases:
+            with self.subTest(period_kind=period_kind, agg=agg):
+                self.assertEqual(business_contracts.summarizability_class(period_kind, agg), expected)
+
+        cfg, c, p = fixtures()
+        c['metrics'][0]['period_kind'] = 'as_of'
+        p['selections'][0]['period'] = {'kind': 'as_of', 'date': '2026-01-31'}
+        # Default mode preserves compatibility while disclosing semi-additive risk.
+        default_res = business_contracts.evaluate(cfg, c, p)
+        self.assertEqual(default_res.status, 'pass')
+        self.assertEqual(default_res.checks[0].detail['summarizability'], 'semi_additive_stock')
+        self.assertIn(business_contracts._SEMI_ADDITIVE_NOTE, default_res.not_proven)
+
+        # Opt-in strict mode rejects as_of + sum without leaking authored values.
+        strict_res = business_contracts.evaluate(cfg, c, p, reject_semi_additive=True)
+        self.assertEqual(strict_res.status, 'fail')
+        self.assertEqual(strict_res.checks[0].detail['reason'], 'semi_additive_stock_conflict')
+        self.assertEqual(strict_res.checks[0].detail['summarizability'], 'semi_additive_stock')
+        self.assertNotIn('Net sales', json.dumps(strict_res.to_dict()))
+
+        # Flow range + sum still passes strict mode.
+        cfg_flow, c_flow, p_flow = fixtures()
+        flow_res = business_contracts.evaluate(cfg_flow, c_flow, p_flow, reject_semi_additive=True)
+        self.assertEqual(flow_res.status, 'pass')
+        self.assertEqual(flow_res.checks[0].detail['summarizability'], 'additive_flow')
+        self.assertNotIn(business_contracts._SEMI_ADDITIVE_NOTE, flow_res.not_proven)
+
 
 if __name__ == '__main__':
     unittest.main()

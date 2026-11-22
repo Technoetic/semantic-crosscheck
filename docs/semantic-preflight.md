@@ -36,9 +36,22 @@ nor executed by this diagnostic; the example does not certify that SQL.
 
 `--config`, `--contract` and `--plan` must each be supplied exactly once. There is
 no implicit configuration fallback. Optional `--out DIR` selects the result root,
-and `--quiet` prints only the summary. Pass each argument as a separate argv
+`--quiet` prints only the summary, and `--reject-semi-additive` (since v0.32.0)
+fails contracts declaring `period_kind = "as_of"` with `sum` or `count`
+aggregation (`semi_additive_stock_conflict`). Pass each argument as a separate argv
 element. Argument abbreviation, unknown flags, duplicate flags and malformed
 arguments are rejected without output writes, including flags before the command.
+
+## Summarizability classification (v0.32.0)
+
+Each contract check records a closed `summarizability` enum derived from
+`(period_kind, context.aggregation)` following [Mazón, Lechtenbörger & Trujillo (DKE 2009)](https://doi.org/10.1016/j.datak.2009.07.010):
+
+- `additive_flow`: `range` with `sum` or `count`
+- `semi_additive_stock`: `as_of` with `sum` or `count` (additive within one snapshot, not across time; adds an explicit `not_proven` note by default and fails when `--reject-semi-additive` is supplied; note that `report`'s `[semantic_preflight]` sidecar recomputation uses default mode and fails closed if handed a `--reject-semi-additive` artifact)
+- `distributive_extremum`: any `period_kind` with `min` or `max`
+- `atemporal_additive`: `none` with `sum` or `count`
+- `non_additive_or_custom`: any other aggregation (adds a `not_proven` note that re-aggregation requires numerator/denominator decomposition)
 
 ## Contract version 1
 

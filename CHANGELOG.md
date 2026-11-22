@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.32.0] - 2026-11-22
+
+- Add PostgreSQL 17 row-level security (`relrowsecurity`, `relforcerowsecurity`, `rolbypassrls`) and `UNIQUE NULLS NOT DISTINCT` (`pg_index.indnullsnotdistinct`) catalog inspection to `doctor.py` and `grain.py` (zero extra SQL round trips, zero new runtime dependencies): `doctor` records catalog flags on `privileges:select:<entity>` and discloses active RLS visibility-skew risk in `not_proven`; `grain` fails closed (`not_run`, `reason=row_level_security`) when RLS filters the check role without `BYPASSRLS`. Verified with live PostgreSQL 17 integration tests (`tests/test_rls_catalog_pg.py`).
+- Add standard-library anytime-valid Safe Testing e-values (`safe_e_value`, `safe_e_log`, `safe_anytime_p`, `min_discordant_for_e_005 = 7`, `underpowered_for_e_005`) using exact Jeffreys Beta(1/2, 1/2) mixture martingales (`math.lgamma`) to `tools/paired_release.py` and `docs/paired-release.md`.
+- Add OLAP summarizability classification (`additive_flow`, `semi_additive_stock`, `distributive_extremum`, `atemporal_additive`, `non_additive_or_custom`) and opt-in `--reject-semi-additive` enforcement to `business_contracts.py` / `semantic-preflight`, plus `summarizability_failures` mapping in `grain.py`.
+- Add deterministic `function_boundary` scenario (`counterexample.py`, `sxc.py`, `tlp`, `examples/counterexamples/function_boundary-{reference,candidate}.sql`) exercising SQL built-in function boundary arguments (empty/whitespace/quoted/Unicode text, `INT32_MIN`/`INT32_MAX`, signed zero, 18-digit max precision, extreme dates and `NULL`s) while preserving existing scenarios byte-identically.
+- Engine/config fingerprints change; rerun operational stages after upgrading. See [release scope and verification](docs/releases/v0.32.0.md).
+
 ## [0.31.1] - 2026-11-21
 
 - Add `tools/build_release_zip.py` (standard-library `git archive --format=tar` + `SOURCE_DATE_EPOCH` UTC deterministic ZIP builder, `create_system = 3`, sorted POSIX entries, deflate `-9`) and unit tests (`tests/test_build_release_zip.py`) so release archives reproduce identically across time zones (`TZ=KST-9`, `TZ=UTC0`, `TZ=EST5`).
@@ -1205,3 +1213,5 @@ First release. Release notes: [docs/releases/v0.1.0.md](docs/releases/v0.1.0.md)
 [0.31.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.31.0
 
 [0.31.1]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.31.1
+
+[0.32.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.32.0

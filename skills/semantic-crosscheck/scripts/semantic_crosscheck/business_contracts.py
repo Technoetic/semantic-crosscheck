@@ -19,6 +19,27 @@ _CONTEXT = ('unit', 'grain', 'population', 'aggregation', 'denominator', 'time_b
 _METRIC = ('id', 'label', 'aliases', 'definition', 'review', 'binding', 'context', 'period_kind')
 _SELECTION = ('metric_id', 'term', 'binding', 'context', 'period')
 _KINDS = ('range', 'as_of', 'none')
+_SEMI_ADDITIVE_NOTE = (
+    'Semi-additive stock metrics (period_kind=as_of with sum/count) are additive only within one snapshot; '
+    'summing across time periods is invalid and not validated.'
+)
+_NON_ADDITIVE_NOTE = (
+    'Non-additive or custom aggregations cannot be safely re-aggregated across grains without explicit '
+    'numerator/denominator decomposition.'
+)
+
+
+def summarizability_class(period_kind: str, aggregation: str) -> str:
+    """Classify (period_kind, aggregation) under Mazon, Lechtenborger & Trujillo (2009)."""
+    if aggregation in ('min', 'max'):
+        return 'distributive_extremum'
+    if aggregation in ('sum', 'count'):
+        if period_kind == 'range':
+            return 'additive_flow'
+        if period_kind == 'as_of':
+            return 'semi_additive_stock'
+        return 'atemporal_additive'
+    return 'non_additive_or_custom'
 
 
 def _invalid():
@@ -175,7 +196,7 @@ def _selection_outcome(selection, by_id, by_term):
     return 'pass', 'declarations_match'
 
 
-def evaluate(cfg, contract_document, plan_document) -> Result:
+def evaluate(cfg, contract_document, plan_document, *, reject_semi_additive: bool = False) -> Result:
     """Compare decoded documents to existing Config declarations without IO."""
     metrics, selections = _validate(contract_document, plan_document)
     result = Result('semantic_preflight')
@@ -187,12 +208,26 @@ def evaluate(cfg, contract_document, plan_document) -> Result:
     ]
     result.next_safe_action = 'Clarify incomplete plans and review conflicting declarations before execution.'
     by_id, by_term = {}, {}
+    has_semi_additive = False
+    has_non_additive = False
     for index, metric in enumerate(metrics):
+        summ = summarizability_class(metric['period_kind'], metric['context']['aggregation'])
+        if summ == 'semi_additive_stock':
+            has_semi_additive = True
+        elif summ == 'non_additive_or_custom':
+            has_non_additive = True
         reason = _contract_reason(cfg, metric)
-        result.add(f'contract_{index:03d}', 'pass' if reason == 'declarations_match' else 'fail', reason=reason)
+        if reason == 'declarations_match' and reject_semi_additive and summ == 'semi_additive_stock':
+            reason = 'semi_additive_stock_conflict'
+        result.add(f'contract_{index:03d}', 'pass' if reason == 'declarations_match' else 'fail',
+                   reason=reason, summarizability=summ)
         by_id[metric['id']] = metric
         for term in {_normalize(t) for t in [metric['label'], *metric['aliases']]}:
             by_term.setdefault(term, []).append(metric)
+    if has_semi_additive:
+        result.not_proven.append(_SEMI_ADDITIVE_NOTE)
+    if has_non_additive:
+        result.not_proven.append(_NON_ADDITIVE_NOTE)
     for index, selection in enumerate(selections):
         status, reason = _selection_outcome(selection, by_id, by_term)
         result.add(f'selection_{index:03d}', status, reason=reason)

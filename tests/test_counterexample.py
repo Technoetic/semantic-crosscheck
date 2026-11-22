@@ -178,6 +178,40 @@ class CounterexampleTest(unittest.TestCase):
                     with self.assertRaises(ce.StageError): ce.run(None, self.args(path, **changes), path)
                     connect.assert_not_called()
 
+    def test_function_boundary_scenario_exercises_soft_boundary_seeds_and_tlp_compat(self):
+        import sxc
+        from semantic_crosscheck import tlp
+        self.assertIn('function_boundary', ce.SCENARIOS)
+        fixture = ce.generate('function_boundary', 7, 0)
+        self.assertEqual(fixture, ce.generate('function_boundary', 7, 0))
+        self.assertNotEqual(fixture, ce.generate('function_boundary', 8, 0))
+        # Boundary tokens: empty/whitespace/quote/Unicode text, INT32 extremes, signed zero, max precision, extreme dates, NULL.
+        part_texts = [cell for row in fixture['part'] for cell in row]
+        self.assertIn('', part_texts)
+        self.assertIn('  synthetic  ', part_texts)
+        self.assertIn("edge'quote", part_texts)
+        self.assertIn('É_é_0', part_texts)
+        self.assertIn(None, part_texts)
+        line_nos = [row[2] for row in fixture['bom_line']]
+        self.assertEqual(line_nos, [0, -1, 2147483647, -2147483648])
+        order_dates = [row[5] for row in fixture['sales_order']]
+        self.assertEqual(order_dates, ['1970-01-01', '2000-02-29', '9999-12-31', '0001-01-01'])
+        sql, params = ce.wrap_sql('SELECT part_id FROM sales_order', fixture)
+        self.assertNotIn("edge'quote", sql)
+        self.assertIn("edge'quote", params.values())
+        parsed = sxc.parser().parse_args([
+            'counterexample', '--reference-sql', 'a.sql', '--candidate-sql', 'b.sql', '--scenario', 'function_boundary'
+        ])
+        self.assertEqual(parsed.scenario, 'function_boundary')
+        with tempfile.TemporaryDirectory() as tmp:
+            spec_path = Path(tmp) / 'tlp.json'
+            spec_path.write_text(json.dumps({
+                'schema_version': 1, 'scenario': 'function_boundary',
+                'relation_sql': 'SELECT qty FROM stock', 'predicate_sql': 'qty >= 0',
+                'aggregate': {'function': 'sum', 'column': 'qty'},
+            }), encoding='utf-8')
+            self.assertEqual(tlp.load_spec(spec_path)['scenario'], 'function_boundary')
+
 
 if __name__ == '__main__':
     unittest.main()

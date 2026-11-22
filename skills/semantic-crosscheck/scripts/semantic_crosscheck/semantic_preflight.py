@@ -175,6 +175,7 @@ def _arguments(argv):
         parser.add_argument('--' + name, action='append', required=True, metavar='FILE')
     parser.add_argument('--out', action='append', metavar='DIR')
     parser.add_argument('--quiet', action='count', default=0)
+    parser.add_argument('--reject-semi-additive', action='count', default=0)
     args = parser.parse_args(argv[1:])
     for name in ('config', 'contract', 'plan', 'out'):
         values = getattr(args, name)
@@ -182,7 +183,7 @@ def _arguments(argv):
             if len(values) != 1 or not values[0] or '\x00' in values[0]:
                 raise _Invalid()
             setattr(args, name, values[0])
-    if args.quiet > 1:
+    if args.quiet > 1 or args.reject_semi_additive > 1:
         raise _Invalid()
     return args
 
@@ -258,7 +259,11 @@ def cli(argv, _parser, summary):
         cleared_prior = True
         try:
             cfg = config.loads(inputs[0].raw, inputs[0].path)
-            res = business_contracts.evaluate(cfg, _decode(inputs[1].raw), _decode(inputs[2].raw))
+            if args.reject_semi_additive:
+                res = business_contracts.evaluate(cfg, _decode(inputs[1].raw), _decode(inputs[2].raw),
+                                                  reject_semi_additive=True)
+            else:
+                res = business_contracts.evaluate(cfg, _decode(inputs[1].raw), _decode(inputs[2].raw))
         except (StageError, ValueError, TypeError, UnicodeError, RecursionError, OverflowError, _Invalid):
             res = _failed()
         from .contract_evidence import fingerprints

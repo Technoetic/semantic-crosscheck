@@ -61,7 +61,7 @@ def load_fixture(raw):
     return fixture
 
 
-def judge_fixture(raw, checks):
+def judge_fixture(raw, checks, *, return_activation: bool = False):
     fixture = load_fixture(raw)
     with closing(sqlite3.connect(":memory:")) as db:
         db.row_factory = sqlite3.Row
@@ -76,16 +76,19 @@ def judge_fixture(raw, checks):
         model_rows = [dict(row) for row in db.execute(MODEL_SQL[fixture["model_mode"]])]
     agreement = compare.compare_rows(GOLD, gold_rows, model_rows, TYPES)
     statuses = ["pass" if agreement["pass"] else "fail"]
+    added_calls = 0
     if AUTHORED in checks:
         case = config.Expect(source="authored", rows=fixture["expected_rows"], spec="SKU unit totals")
         status, _ = expect.judge(GOLD, case, gold_rows, model_rows, TYPES)
+        added_calls = 1
         statuses.append(status)
-    if "error" in statuses:
-        return "error"
-    return "flag" if "fail" in statuses else "clear"
+    verdict = "error" if "error" in statuses else ("flag" if "fail" in statuses else "clear")
+    if return_activation:
+        return verdict, {"added_check_calls": added_calls, "fallback_calls": 0}
+    return verdict
 
 
-def generate(plan_path):
+def generate(plan_path, *, include_activation: bool = False):
     raw_plan = plan_path.read_bytes()
     plan = json.loads(raw_plan, object_pairs_hook=unique_object)
     cases = plan["cases"]
@@ -105,8 +108,19 @@ def generate(plan_path):
             digest = hashlib.sha256(raw).hexdigest()
             if digest != case["fixture_sha256"]:
                 raise ValueError(f"fixture hash mismatch: {case['id']}")
-            status = judge_fixture(raw, checks) if index < plan["budget"] else "not_run"
-            observations.append({"id": case["id"], "status": status, "fixture_sha256": digest})
+            if index < plan["budget"]:
+                if include_activation:
+                    status, act = judge_fixture(raw, checks, return_activation=True)
+                    observations.append({"id": case["id"], "status": status,
+                                         "fixture_sha256": digest, "activation": act})
+                else:
+                    status = judge_fixture(raw, checks)
+                    observations.append({"id": case["id"], "status": status, "fixture_sha256": digest})
+            else:
+                row = {"id": case["id"], "status": "not_run", "fixture_sha256": digest}
+                if include_activation:
+                    row["activation"] = {"added_check_calls": 0, "fallback_calls": 0}
+                observations.append(row)
         receipts.append({"schema_version": 1, "arm": arm, "plan_sha256": hashlib.sha256(raw_plan).hexdigest(),
                          "checks": checks, "budget": plan["budget"], "observations": observations})
     return receipts
@@ -118,11 +132,14 @@ def main(argv=None):
     parser.add_argument("--baseline", type=Path, default=EXAMPLE / "baseline.json")
     parser.add_argument("--candidate", type=Path, default=EXAMPLE / "candidate.json")
     parser.add_argument("--write", action="store_true", help="write the two receipts (default: verify exact bytes)")
+    parser.add_argument("--with-activation", action="store_true",
+                        help="include per-observation added_check activation counters")
     args = parser.parse_args(argv)
     try:
         if len({p.resolve() for p in (args.plan, args.baseline, args.candidate)}) != 3:
             raise ValueError("plan and receipt paths must differ")
-        for path, receipt in zip((args.baseline, args.candidate), generate(args.plan)):
+        for path, receipt in zip((args.baseline, args.candidate),
+                                 generate(args.plan, include_activation=args.with_activation)):
             output = (json.dumps(receipt, indent=2) + "\n").encode("utf-8")
             if args.write:
                 path.write_bytes(output)

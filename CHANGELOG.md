@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.33.0] - 2026-11-23
+
+- Add pre-registered core sealing (`frozen_core_sha256`, `--seal-plan`), optional `claim_limit`, append-only `amendments[]` chronology validation (`pre_measurement` vs `post_hoc`), mandatory side-by-side `original_groups` / `amended_groups` disclosure (`amendment_audit`), and `--strict-original` enforcement to `tools/paired_release.py` (stdlib only, full v0.30–v0.32 compatibility).
+- Add opt-in treatment-arm `added_check` activation and control-arm zero-leakage silent no-op auditing (`--check-activation`, dedicated exit code `70`, `activation_audit`) to `tools/paired_release.py`, plus deterministic `--with-activation` replay support in `tools/run_paired_example.py`.
+- Add strict JSON parsing (duplicate keys, `NaN`/`Infinity`, and 256 KiB bound rejected), canonical `manifest_sha256` self-verification (fail-closed `manifest_digest_mismatch` with `unsealed_legacy` compatibility for v0.32.0 and earlier installs), and structured `near_misses` drift diagnostics (`cube_run.diagnose_install`) for Cube `installed.json` across `cube_run.py`, `cube_install.py`, and `doctor.py`.
+- Add read-only, zero-path host/platform/CI verification coverage matrix (`coverage_matrix.py`, `doctor --coverage`, default output and exit code unchanged) distinguishing declared platform support and Cube native pins from live CI unit/integration verification scope.
+- Selectively adapts three stdlib-only patterns informed by `ai3inc/foldboost` (`v0.3.0`, Apache-2.0; zero copied code, zero new runtime dependencies). Engine fingerprints change; rerun operational stages after upgrading. See [release scope and verification](docs/releases/v0.33.0.md).
+
 ## [0.32.0] - 2026-11-22
 
 - Add PostgreSQL 17 row-level security (`relrowsecurity`, `relforcerowsecurity`, `rolbypassrls`) and `UNIQUE NULLS NOT DISTINCT` (`pg_index.indnullsnotdistinct`) catalog inspection to `doctor.py` and `grain.py` (zero extra SQL round trips, zero new runtime dependencies): `doctor` records catalog flags on `privileges:select:<entity>` and discloses active RLS visibility-skew risk in `not_proven`; `grain` fails closed (`not_run`, `reason=row_level_security`) when RLS filters the check role without `BYPASSRLS`. Verified with live PostgreSQL 17 integration tests (`tests/test_rls_catalog_pg.py`).
@@ -1215,3 +1223,5 @@ First release. Release notes: [docs/releases/v0.1.0.md](docs/releases/v0.1.0.md)
 [0.31.1]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.31.1
 
 [0.32.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.32.0
+
+[0.33.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.33.0

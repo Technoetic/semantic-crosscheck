@@ -34,6 +34,50 @@ class PairedExampleTests(unittest.TestCase):
             with self.subTest(change=change), self.assertRaises(ValueError):
                 runner.load_fixture(json.dumps(dict(good, **change)).encode())
 
+    def test_with_activation_replay_passes_paired_release_activation_audit(self):
+        paired_script = Path(__file__).resolve().parents[1] / "tools" / "paired_release.py"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            base_out = root / "baseline.json"
+            cand_out = root / "candidate.json"
+            proc = subprocess.run(
+                [sys.executable, str(Path(runner.__file__)),
+                 "--plan", str(runner.EXAMPLE / "plan.json"),
+                 "--baseline", str(base_out), "--candidate", str(cand_out),
+                 "--write", "--with-activation"],
+                capture_output=True, text=True,
+            )
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            check = subprocess.run(
+                [sys.executable, str(paired_script),
+                 "--plan", str(runner.EXAMPLE / "plan.json"),
+                 "--baseline", str(base_out), "--candidate", str(cand_out),
+                 "--check-activation"],
+                capture_output=True, text=True,
+            )
+            self.assertEqual(check.returncode, 0, check.stdout + check.stderr)
+            report = json.loads(check.stdout)
+            audit = report["activation_audit"]
+            self.assertEqual(audit["status"], "passed")
+            self.assertTrue(audit["passed"])
+            self.assertEqual(audit["baseline_added_check_calls"], 0)
+            self.assertEqual(audit["candidate_added_check_calls"], 10)
+            self.assertEqual(audit["candidate_executed_cases"], 10)
+
+            # Mutating candidate to silent no-op must fail with exit 70.
+            cand_data = json.loads(cand_out.read_text(encoding="utf-8"))
+            cand_data["observations"][0]["activation"]["added_check_calls"] = 0
+            cand_out.write_text(json.dumps(cand_data, indent=2) + "\n", encoding="utf-8")
+            noop = subprocess.run(
+                [sys.executable, str(paired_script),
+                 "--plan", str(runner.EXAMPLE / "plan.json"),
+                 "--baseline", str(base_out), "--candidate", str(cand_out),
+                 "--check-activation"],
+                capture_output=True, text=True,
+            )
+            self.assertEqual(noop.returncode, 70, noop.stdout + noop.stderr)
+            self.assertEqual(json.loads(noop.stdout)["activation_audit"]["status"], "silent_noop")
+
 
 if __name__ == "__main__":
     unittest.main()

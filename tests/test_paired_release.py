@@ -50,7 +50,7 @@ class PairedReleaseTest(unittest.TestCase):
         digest = self.write("plan", self.plan)
         self.baseline["plan_sha256"] = self.candidate["plan_sha256"] = digest
 
-    def compare(self, claims=None, markdown=None):
+    def compare(self, claims=None, markdown=None, extra_args=()):
         self.write("baseline", self.baseline)
         self.write("candidate", self.candidate)
         args = [sys.executable, str(SCRIPT), "--plan", "plan.json",
@@ -61,6 +61,7 @@ class PairedReleaseTest(unittest.TestCase):
         if markdown is not None:
             (self.directory / "release.md").write_text(markdown, encoding="utf-8")
             args += ["--check-markdown", "release.md"]
+        args += list(extra_args)
         result = subprocess.run(args, cwd=self.directory, capture_output=True, text=True)
         self.assertTrue(result.stdout, result.stderr)
         return result.returncode, json.loads(result.stdout)
@@ -404,6 +405,188 @@ class PairedReleaseTest(unittest.TestCase):
         self.assertIsNone(huge_e)
         self.assertTrue(math.isfinite(huge_log))
         self.assertEqual(huge_p, 0.0)
+
+    def test_seal_plan_amendment_dual_verdict_and_strict_original(self):
+        self.plan["frozen_utc"] = "2026-11-23T00:00:00Z"
+        self.plan["claim_limit"] = "Synthetic SQLite inventory fixtures only; not live PostgreSQL."
+        self.refresh_plan()
+
+        seal = subprocess.run(
+            [sys.executable, str(SCRIPT), "--plan", "plan.json", "--seal-plan"],
+            cwd=self.directory, capture_output=True, text=True,
+        )
+        self.assertEqual(seal.returncode, 0, seal.stdout + seal.stderr)
+        sealed_out = json.loads(seal.stdout)
+        core_sha = sealed_out["frozen_core_sha256"]
+        self.assertRegex(core_sha, r"^[0-9a-f]{64}$")
+
+        # Append a post-hoc amendment excluding "noise" (a heldout false positive); core digest stays valid.
+        self.plan["frozen_core_sha256"] = core_sha
+        self.plan["amendments"] = [
+            {
+                "id": "post-hoc-drop-noise",
+                "timing": "post_hoc",
+                "recorded_utc": "2026-11-23T02:00:00Z",
+                "what_changed": "Exclude heldout clean case 'noise' from amended summary",
+                "why": "Owner wanted to inspect impact without the single noisy fixture",
+                "exclude_case_ids": ["noise"],
+            }
+        ]
+        self.baseline["measured_utc"] = "2026-11-23T01:00:00Z"
+        self.candidate["measured_utc"] = "2026-11-23T01:05:00Z"
+        self.refresh_plan()
+
+        code, report = self.compare()
+        self.assertEqual(code, 0, report)
+        self.assertEqual(report["claim_limit"], self.plan["claim_limit"])
+        self.assertEqual(report["frozen_core_sha256"], core_sha)
+        # Original groups stay untouched and still show the heldout false positive.
+        self.assertEqual(report["groups"]["heldout"]["new_false_positives"], 1)
+        aa = report["amendment_audit"]
+        self.assertTrue(aa["has_post_hoc"])
+        self.assertTrue(aa["post_hoc_altered_summary"])
+        self.assertEqual(aa["post_hoc_excluded_case_ids"], ["noise"])
+        self.assertEqual(aa["original_groups"]["heldout"]["new_false_positives"], 1)
+        self.assertEqual(aa["amended_groups"]["heldout"]["new_false_positives"], 0)
+
+        # --strict-original fails closed when a post_hoc amendment alters the summary.
+        strict_code, _ = self.compare(extra_args=("--strict-original",))
+        self.assertEqual(strict_code, 1)
+
+        # Tampering with a pre-registered core field invalidates frozen_core_sha256.
+        self.plan["budget"] = 9
+        self.baseline["budget"] = self.candidate["budget"] = 9
+        self.refresh_plan()
+        bad_code, bad_rep = self.compare()
+        self.assertEqual(bad_code, 2)
+        self.assertIn("frozen_core_sha256", bad_rep["error"])
+
+    def test_amendment_validation_and_chronology_fail_closed(self):
+        self.plan["frozen_utc"] = "2026-11-23T01:00:00Z"
+        self.refresh_plan()
+        seal = json.loads(subprocess.check_output(
+            [sys.executable, str(SCRIPT), "--plan", "plan.json", "--seal-plan"],
+            cwd=self.directory, text=True,
+        ))
+        core_sha = seal["frozen_core_sha256"]
+
+        # Amendments without frozen_core_sha256 are rejected.
+        self.plan["amendments"] = [{
+            "id": "a1", "timing": "pre_measurement", "recorded_utc": "2026-11-23T01:10:00Z",
+            "what_changed": "note", "why": "reason",
+        }]
+        self.refresh_plan()
+        self.assertEqual(self.compare()[0], 2)
+
+        # pre_measurement dated after measured_utc is rejected.
+        self.plan["frozen_core_sha256"] = core_sha
+        self.baseline["measured_utc"] = "2026-11-23T01:05:00Z"
+        self.candidate["measured_utc"] = "2026-11-23T01:06:00Z"
+        self.refresh_plan()
+        code, rep = self.compare()
+        self.assertEqual(code, 2)
+        self.assertIn("dated after receipt measured_utc", rep["error"])
+
+        # measured_utc before frozen_utc is rejected.
+        self.plan["amendments"] = []
+        self.baseline["measured_utc"] = "2026-11-23T00:30:00Z"
+        self.refresh_plan()
+        code2, rep2 = self.compare()
+        self.assertEqual(code2, 2)
+        self.assertIn("precedes plan.frozen_utc", rep2["error"])
+
+        # Non-hashable timing or unknown exclude_case_ids rejected cleanly (exit 2, no TypeError).
+        self.baseline["measured_utc"] = "2026-11-23T01:30:00Z"
+        for bad_amend in (
+            {"id": "bad-t", "timing": ["post_hoc"], "recorded_utc": "2026-11-23T01:10:00Z",
+             "what_changed": "x", "why": "y"},
+            {"id": "bad-id", "timing": "post_hoc", "recorded_utc": "2026-11-23T01:10:00Z",
+             "what_changed": "x", "why": "y", "exclude_case_ids": ["nonexistent"]},
+            {"id": "all-drop", "timing": "post_hoc", "recorded_utc": "2026-11-23T01:10:00Z",
+             "what_changed": "x", "why": "y", "exclude_case_ids": [c["id"] for c in self.plan["cases"]]},
+        ):
+            with self.subTest(bad_amend=bad_amend["id"]):
+                self.plan["amendments"] = [bad_amend]
+                self.refresh_plan()
+                self.assertEqual(self.compare()[0], 2)
+
+    def test_activation_audit_detects_silent_noop_control_leakage_and_missing_telemetry(self):
+        # Without telemetry, --check-activation fails closed with exit 70 (missing_telemetry).
+        code, rep = self.compare(extra_args=("--check-activation",))
+        self.assertEqual(code, 70)
+        self.assertEqual(rep["activation_audit"]["status"], "missing_telemetry")
+
+        # Add valid telemetry: baseline=0, candidate executed=1 (error/not_run=0).
+        for row in self.baseline["observations"]:
+            row["activation"] = {"added_check_calls": 0, "fallback_calls": 0}
+        for row in self.candidate["observations"]:
+            calls = 1 if row["status"] in ("clear", "flag") else 0
+            row["activation"] = {"added_check_calls": calls, "fallback_calls": 0}
+        code_ok, rep_ok = self.compare(extra_args=("--check-activation",))
+        self.assertEqual(code_ok, 0, rep_ok)
+        self.assertEqual(rep_ok["activation_audit"]["status"], "passed")
+        self.assertEqual(rep_ok["activation_audit"]["baseline_added_check_calls"], 0)
+        self.assertEqual(rep_ok["activation_audit"]["candidate_added_check_calls"], 7)
+
+        # Silent no-op on one executed candidate case -> exit 70.
+        executed_row = next(r for r in self.candidate["observations"] if r["status"] in ("clear", "flag"))
+        executed_row["activation"]["added_check_calls"] = 0
+        code_noop, rep_noop = self.compare(extra_args=("--check-activation",))
+        self.assertEqual(code_noop, 70)
+        self.assertEqual(rep_noop["activation_audit"]["status"], "silent_noop")
+        self.assertEqual(rep_noop["activation_audit"]["candidate_inactive_executed_case_ids"], [executed_row["id"]])
+
+        # Control leakage in baseline while candidate also inactive -> both_failed, exit 70.
+        self.baseline["observations"][0]["activation"]["added_check_calls"] = 1
+        code_both, rep_both = self.compare(extra_args=("--check-activation",))
+        self.assertEqual(code_both, 70)
+        self.assertEqual(rep_both["activation_audit"]["status"], "both_failed")
+
+        # Restore candidate -> control_leakage alone, exit 70.
+        executed_row["activation"]["added_check_calls"] = 1
+        code_leak, rep_leak = self.compare(extra_args=("--check-activation",))
+        self.assertEqual(code_leak, 70)
+        self.assertEqual(rep_leak["activation_audit"]["status"], "control_leakage")
+
+        # Invalid bool or negative activation counts are rejected as schema errors (exit 2).
+        for bad_act in ({"added_check_calls": True}, {"added_check_calls": -1}, {"added_check_calls": 0, "fallback_calls": False}, "bad"):
+            with self.subTest(bad_act=bad_act):
+                self.baseline["observations"][0]["activation"] = bad_act
+                self.assertEqual(self.compare(extra_args=("--check-activation",))[0], 2)
+
+    def test_empty_amendments_requires_seal_and_extreme_utc_offset_exits_two(self):
+        # Empty amendments without frozen_core_sha256 must fail closed with JSON error (exit 2).
+        self.plan["amendments"] = []
+        self.refresh_plan()
+        code, rep = self.compare()
+        self.assertEqual(code, 2, rep)
+        self.assertIn("frozen_core_sha256", rep.get("error", ""))
+
+        # Sealing the plan allows empty amendments cleanly.
+        plan_without_amend = {k: v for k, v in self.plan.items() if k != "amendments"}
+        self.write("plan-seal", plan_without_amend)
+        sealed_out = subprocess.run(
+            [sys.executable, str(SCRIPT), "--plan", str(self.directory / "plan-seal.json"), "--seal-plan"],
+            capture_output=True, text=True,
+        )
+        self.assertEqual(sealed_out.returncode, 0, sealed_out.stderr)
+        self.plan["frozen_core_sha256"] = json.loads(sealed_out.stdout)["frozen_core_sha256"]
+        self.refresh_plan()
+        code_ok, rep_ok = self.compare()
+        self.assertEqual(code_ok, 0, rep_ok)
+        self.assertEqual(rep_ok["amendment_audit"]["count"], 0)
+        self.assertFalse(rep_ok["amendment_audit"]["post_hoc_altered_summary"])
+
+        # Extreme timezone offsets that overflow datetime UTC conversion must exit 2 (not crash).
+        for bad_ts in ("9999-12-31T23:59:59-05:00", "0001-01-01T00:00:00+05:00"):
+            with self.subTest(bad_ts=bad_ts):
+                self.plan.pop("frozen_core_sha256", None)
+                self.plan.pop("amendments", None)
+                self.plan["frozen_utc"] = bad_ts
+                self.refresh_plan()
+                code_ts, rep_ts = self.compare()
+                self.assertEqual(code_ts, 2, rep_ts)
+                self.assertIn("error", rep_ts)
 
 
 if __name__ == "__main__":

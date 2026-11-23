@@ -62,7 +62,83 @@ _STATE_HINT = {
     "incomplete": "the Cube adapter install ({where}) is incomplete: run `sxc.py cube-install`",
     "stale": "the Cube adapter install ({where}) was made from other adapter files than this checkout (an upgrade "
              "changed server.js or the lockfile): rerun `sxc.py cube-install` to update it",
+    "corrupt": "the Cube adapter install record ({where}) failed integrity verification (manifest_digest_mismatch): "
+               "rerun `sxc.py cube-install --force` to reinstall cleanly",
 }
+MANIFEST_DIGEST_KEY = "manifest_sha256"
+MAX_RECORD_BYTES = 256 * 1024
+_HEX64 = re.compile(r"[0-9a-f]{64}")
+
+
+def _unique_json_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    out: dict[str, object] = {}
+    for key, value in pairs:
+        if key in out:
+            raise ValueError(f"duplicate JSON key: {key!r}")
+        out[key] = value
+    return out
+
+
+def _reject_json_constant(value: str) -> None:
+    raise ValueError(f"invalid JSON constant: {value}")
+
+
+def canonical_record_sha256(record: dict) -> str:
+    """Canonical SHA-256 of an installed.json record excluding its own manifest_sha256."""
+    body = {k: v for k, v in record.items() if k != MANIFEST_DIGEST_KEY}
+    raw = json.dumps(body, sort_keys=True, ensure_ascii=False,
+                     separators=(",", ":"), allow_nan=False).encode("utf-8")
+    return hashlib.sha256(raw).hexdigest()
+
+
+def seal_install_record(record: dict) -> dict:
+    """Return a copy of an installed.json record carrying its canonical manifest_sha256."""
+    sealed = {k: v for k, v in record.items() if k != MANIFEST_DIGEST_KEY}
+    sealed[MANIFEST_DIGEST_KEY] = canonical_record_sha256(sealed)
+    return sealed
+
+
+def load_install_record(home: Path) -> tuple[dict | None, str]:
+    """Strictly load installed.json and check optional manifest_sha256 integrity.
+
+    Returns (record, status) where status is one of:
+      - 'verified': manifest_sha256 present and matches canonical body digest
+      - 'unsealed_legacy': valid v0.32.0-and-earlier record without manifest_sha256
+      - 'manifest_digest_mismatch': manifest_sha256 present but malformed or mismatched
+      - 'missing': installed.json absent
+      - 'invalid_json': unreadable, oversized, non-object, duplicate keys or NaN/Infinity
+    """
+    path = Path(home) / RECORD
+    if path.is_symlink():
+        return None, "invalid_json"
+    if not path.is_file():
+        return None, "missing"
+    try:
+        with open(path, "rb") as stream:
+            raw_bytes = stream.read(MAX_RECORD_BYTES + 1)
+    except OSError:
+        return None, "invalid_json"
+    if len(raw_bytes) > MAX_RECORD_BYTES:
+        return None, "invalid_json"
+    try:
+        rec = json.loads(raw_bytes.decode("utf-8"), object_pairs_hook=_unique_json_object,
+                         parse_constant=_reject_json_constant)
+    except (UnicodeDecodeError, ValueError, RecursionError):
+        return None, "invalid_json"
+    if not isinstance(rec, dict):
+        return None, "invalid_json"
+    if MANIFEST_DIGEST_KEY not in rec:
+        return rec, "unsealed_legacy"
+    claimed = rec.get(MANIFEST_DIGEST_KEY)
+    if not isinstance(claimed, str) or not _HEX64.fullmatch(claimed):
+        return None, "manifest_digest_mismatch"
+    try:
+        actual = canonical_record_sha256(rec)
+    except (TypeError, ValueError):
+        return None, "manifest_digest_mismatch"
+    if claimed != actual:
+        return None, "manifest_digest_mismatch"
+    return rec, "verified"
 
 
 def cube_home(version: str = "1.8.3") -> Path:
@@ -94,23 +170,82 @@ def adapter_hashes(adapter_dir: Path = ADAPTER_DIR) -> dict:
     return {name: sha256_file(Path(adapter_dir) / name) for name in ADAPTER_FILES}
 
 
-def install_state(home: Path) -> str:
-    """'ok', 'missing' (no adapter), 'incomplete' (packages, native module or install record missing) or 'stale'
-    (installed from other adapter files than this checkout's)."""
+def install_state(home: Path, adapter_dir: Path = ADAPTER_DIR) -> str:
+    """'ok', 'missing', 'incomplete', 'stale', or 'corrupt' (manifest_digest_mismatch)."""
     home = Path(home)
     if not (home / "server.js").is_file():
         return "missing"
     if not (home / SERVER_CORE).is_dir() or not (home / INDEX_NODE).is_file():
         return "incomplete"
-    try:
-        rec = json.loads((home / RECORD).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    rec, integrity = load_install_record(home)
+    if integrity == "manifest_digest_mismatch":
+        return "corrupt"
+    if rec is None:
         return "incomplete"
     try:
-        current = adapter_hashes()
+        current = adapter_hashes(adapter_dir)
     except OSError:
         return "stale"
-    return "ok" if isinstance(rec, dict) and rec.get("files_sha256") == current else "stale"
+    return "ok" if rec.get("files_sha256") == current else "stale"
+
+
+def diagnose_install(
+    home: Path,
+    adapter_dir: Path = ADAPTER_DIR,
+    *,
+    platform_key: str | None = None,
+    pinned_tarball_sha256: str | None = None,
+) -> dict[str, object]:
+    """Read-only, zero-path structured Cube install diagnostics with near_misses codes."""
+    home = Path(home)
+    near_misses: list[str] = []
+    if not (home / "server.js").is_file():
+        near_misses.append("missing_server_js")
+    if not (home / SERVER_CORE).is_dir():
+        near_misses.append("missing_server_core")
+    if not (home / INDEX_NODE).is_file():
+        near_misses.append("missing_index_node")
+    rec, integrity = load_install_record(home)
+    if integrity == "missing":
+        near_misses.append("missing_install_record")
+    elif integrity == "invalid_json":
+        near_misses.append("invalid_install_record")
+    elif integrity == "manifest_digest_mismatch":
+        near_misses.append("manifest_digest_mismatch")
+    elif rec is not None:
+        try:
+            current = adapter_hashes(adapter_dir)
+            recorded_files = rec.get("files_sha256")
+            if isinstance(recorded_files, dict):
+                for name, expected_hash in current.items():
+                    if recorded_files.get(name) != expected_hash:
+                        near_misses.append(f"adapter_file_changed:{name}")
+            else:
+                near_misses.append("missing_files_sha256")
+        except OSError:
+            near_misses.append("adapter_source_missing")
+        if platform_key is not None and rec.get("platform") != platform_key:
+            near_misses.append("platform_mismatch")
+        native = rec.get("native") if isinstance(rec.get("native"), dict) else {}
+        if pinned_tarball_sha256 is not None and native.get("tarball_sha256") != pinned_tarball_sha256:
+            near_misses.append("tarball_pin_mismatch")
+        if (home / INDEX_NODE).is_file():
+            recorded_idx = native.get("index_node_sha256")
+            if not isinstance(recorded_idx, str):
+                near_misses.append("index_node_sha256_mismatch")
+            else:
+                try:
+                    actual_idx = sha256_file(home / INDEX_NODE)
+                except OSError:
+                    near_misses.append("index_node_unreadable")
+                else:
+                    if actual_idx != recorded_idx:
+                        near_misses.append("index_node_sha256_mismatch")
+    return {
+        "state": install_state(home, adapter_dir=adapter_dir),
+        "manifest_integrity": integrity,
+        "near_misses": near_misses,
+    }
 
 
 def installed(home: Path) -> bool:

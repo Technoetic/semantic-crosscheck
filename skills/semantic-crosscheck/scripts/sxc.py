@@ -107,6 +107,8 @@ def parser(*, audit_errors=False) -> argparse.ArgumentParser:
 
     s = sub.add_parser("doctor", parents=[common], help="check Python, PostgreSQL 17, role privileges and optional components")
     s.add_argument("--require", type=_csv, default=["core"], help="components that must be ready: core,reason,cube (default: core)")
+    s.add_argument("--coverage", action="store_true",
+                   help="include read-only platform/CI verification coverage matrix and Cube install near-miss diagnostics")
 
     s = sub.add_parser("demo", parents=[common], help="load the synthetic demo data with the loader role")
     s.add_argument("--variant", choices=["clean", "dirty"], default="clean")
@@ -334,6 +336,10 @@ def _summary(res: Result, path, quiet: bool) -> str:
             lines.append(f"  NOT PROVEN  {n}")
         for n in getattr(res, "_evidence_lines", ()):
             lines.append(f"  EVIDENCE  {n}")
+        coverage = getattr(res, "coverage", None)
+        if isinstance(coverage, dict):
+            from semantic_crosscheck import coverage_matrix
+            lines.append(coverage_matrix.format_coverage_summary(coverage))
         if res.next_safe_action:
             lines.append(f"  next: {res.next_safe_action}")
     text = "\n".join(lines)

@@ -296,3 +296,13 @@ All v0.32.0 additions are original Python standard-library and `pg8000` implemen
 - [Fu, Liang, Wu, Zhao, Li & Jiang (EuroSys 2025), "Understanding and Detecting SQL Function Bugs: Using Simple Boundary Arguments to Trigger Hundreds of DBMS Bugs"](https://doi.org/10.1145/3689031.3696064) for the deterministic `function_boundary` synthetic fixture family in `counterexample.py` and `tlp.py`.
 
 No external source code, paper artifact or runtime library from these references is copied, installed or bundled.
+
+## v0.33.0 pre-registered amendment disclosure, activation audits, install manifest digests and platform coverage matrix
+
+All v0.33.0 additions are original Python standard-library implementations with zero new runtime dependencies. They selectively adapt three non-redundant patterns informed by [ai3inc/foldboost](https://github.com/ai3inc/foldboost) (`v0.3.0`, commit `ff7ad2208cf52d7692d5d016ba5b788d782256c7`, Apache-2.0):
+
+- pre-registered core sealing (`frozen_core_sha256`), declared `claim_limit`, append-only `amendments[]` chronology checks, and mandatory side-by-side `original_groups`/`amended_groups` disclosure (`--strict-original`) in `tools/paired_release.py`;
+- treatment-arm activation and control-arm zero-leakage silent no-op audits (`--check-activation`, exit code `70`) in `tools/paired_release.py` and `tools/run_paired_example.py`;
+- strict JSON parsing and canonical `manifest_sha256` self-verification with `unsealed_legacy` backward compatibility and structured `near_misses` drift codes for Cube `installed.json` (`cube_run.py`, `cube_install.py`, `doctor.py`), plus the read-only host/platform/CI verification boundary matrix (`coverage_matrix.py`, `doctor --coverage`).
+
+`ai3inc/foldboost` is an existing Reference Atlas source previously recorded for `agentic-vault` `v0.56.0` and reused here for `semantic-crosscheck`'s paired detector release ledger, Cube adapter installation integrity, and platform verification disclosures. No biomolecular or GPU/CUDA adapters, `.pth` interpreter hooks, Unix-socket resident servers, NumPy dependencies, or external source files from `ai3inc/foldboost` are copied, installed, or bundled.

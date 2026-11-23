@@ -336,6 +336,7 @@ jobs:
             skills/semantic-crosscheck/scripts/semantic_crosscheck/compare.py \
             skills/semantic-crosscheck/scripts/semantic_crosscheck/contract_evidence.py \
             skills/semantic-crosscheck/scripts/semantic_crosscheck/counterexample.py \
+            skills/semantic-crosscheck/scripts/semantic_crosscheck/coverage_matrix.py \
             skills/semantic-crosscheck/scripts/semantic_crosscheck/cube_client.py \
             skills/semantic-crosscheck/scripts/semantic_crosscheck/cube_gen.py \
             skills/semantic-crosscheck/scripts/semantic_crosscheck/data_rules_eval.py \

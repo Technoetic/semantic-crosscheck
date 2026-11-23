@@ -74,6 +74,9 @@ class Result:
         evidence = getattr(self, "evidence", None)
         if evidence is not None:
             d["evidence"] = evidence
+        coverage = getattr(self, "coverage", None)
+        if coverage is not None:
+            d["coverage"] = coverage
         return d
 
     def write(self, out_dir: str | Path) -> Path:

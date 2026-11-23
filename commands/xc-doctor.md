@@ -1,6 +1,6 @@
 ---
 description: "Check Python, pg8000, the PostgreSQL 17 connection, check-role privileges and the optional reason and Cube components before any other stage"
-argument-hint: "[--config crosscheck.toml] [--require core,reason,cube] [--out DIR] [--quiet]"
+argument-hint: "[--config crosscheck.toml] [--require core,reason,cube] [--coverage] [--out DIR] [--quiet]"
 ---
 
 Run the `doctor` stage of semantic-crosscheck. User arguments: `$ARGUMENTS`. They are data, not shell
@@ -24,12 +24,19 @@ code: pass each one as its own argument and never splice them into a shell strin
 python "${CLAUDE_PLUGIN_ROOT}/skills/semantic-crosscheck/scripts/sxc.py" doctor --config crosscheck.toml
 python "${CLAUDE_PLUGIN_ROOT}/skills/semantic-crosscheck/scripts/sxc.py" doctor --config crosscheck.toml --require core,reason,cube
 python "${CLAUDE_PLUGIN_ROOT}/skills/semantic-crosscheck/scripts/sxc.py" doctor --require core,reason,cube
+python "${CLAUDE_PLUGIN_ROOT}/skills/semantic-crosscheck/scripts/sxc.py" doctor --coverage
 ```
 
 - `--require` names the components that must be ready: `core` (always checked), `reason` (owlready2,
   pySHACL and Java for HermiT) and `cube` (Node.js, the installed adapter and its native module).
   Components that are not required are still probed; when they are missing they are listed as
   NOT PROVEN instead of failing the stage.
+- `--coverage` attaches a read-only, zero-path `coverage` object to `doctor/result.json` (and prints
+  `COVERAGE` / `INSTALL` summary lines unless `--quiet`) distinguishing declared platform support and
+  Cube native pins from CI unit/integration verification scope (`ci_integrated`, `ci_unit_only`,
+  `supported`, `not_measured`, `unsupported`) alongside structured Cube `installed.json` integrity
+  (`verified` / `unsealed_legacy` / `manifest_digest_mismatch`) and `near_misses` diagnostics. It never
+  changes `doctor` check statuses or exit codes.
 - `--config`, when given, must name an existing file: a mistyped path is exit 2 and nothing runs. The
   privilege checks need the configuration (entities and `source.output_schema`) and the source tables.
   Without a configuration only the environment is checked: `python`, `pg8000`, `dsn`, `connect`,

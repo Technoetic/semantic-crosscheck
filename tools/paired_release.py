@@ -1,6 +1,13 @@
-"""Compare two recorded release-development runs against a frozen plan, offline."""
+"""Compare two recorded release-development runs against a frozen plan, offline.
+
+Selectively adapts pre-registered plan sealing, dual-verdict post-hoc amendment
+disclosure, and treatment-activation / control zero-leakage silent no-op audits
+informed by ai3inc/foldboost (commit ff7ad2208c, Apache-2.0), implemented from
+scratch in the Python standard library.
+"""
 
 import argparse
+from datetime import datetime, timezone
 import hashlib
 import json
 import math
@@ -11,6 +18,8 @@ from statistics import NormalDist
 
 EXPOSURES = ("heldout", "development", "unknown")
 EXECUTED = ("clear", "flag")
+AMENDMENT_TIMINGS = ("pre_measurement", "post_hoc")
+EXIT_ACTIVATION_FAILURE = 70
 TRANSITIONS = {
     ("error", "clear", "flag"): "added_detections",
     ("clean", "clear", "flag"): "new_false_positives",
@@ -25,6 +34,11 @@ MIN_DISCORDANT_E_005 = 7
 _LOG_BETA_HALF_HALF = 2.0 * math.lgamma(0.5) - math.lgamma(1.0)
 _MAX_SAFE_EXP = 700.0
 Z_975 = NormalDist().inv_cdf(0.975)
+_HEX64 = re.compile(r"[0-9a-f]{64}")
+_CORE_KEYS = (
+    "schema_version", "experiment", "added_check", "baseline_checks",
+    "budget", "cases", "registered_claims", "claim_limit", "frozen_utc",
+)
 
 
 def unique_object(items):
@@ -69,6 +83,26 @@ def array(value, field):
     return value
 
 
+def parse_utc(value, field) -> datetime:
+    text = identifier(value, field)
+    normalized = text[:-1] + "+00:00" if text.endswith(("Z", "z")) else text
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError as exc:
+        raise ValueError(f"{field} must be an ISO-8601 UTC timestamp") from exc
+    if parsed.tzinfo is None:
+        raise ValueError(f"{field} must include a timezone offset or Z")
+    return parsed.astimezone(timezone.utc)
+
+
+def plan_core_sha256(plan: dict) -> str:
+    """Canonical SHA-256 of the immutable pre-registered fields of a plan."""
+    core = {key: plan[key] for key in _CORE_KEYS if key in plan}
+    raw = json.dumps(core, sort_keys=True, ensure_ascii=False,
+                     separators=(",", ":"), allow_nan=False).encode("utf-8")
+    return hashlib.sha256(raw).hexdigest()
+
+
 def check_ids(value, field):
     items = array(value, field)
     ids = {identifier(item, field) for item in items}
@@ -103,6 +137,53 @@ def claim_path(key):
     return group, metric
 
 
+def _validate_amendments(plan: dict, cases: dict, frozen_dt: datetime | None) -> list[dict]:
+    raw_items = array(plan["amendments"], "plan.amendments")
+    if raw_items and "frozen_core_sha256" not in plan:
+        raise ValueError("plan.amendments requires frozen_core_sha256 to seal pre-registered core")
+    seen_ids: set[str] = set()
+    parsed: list[dict] = []
+    all_excluded: set[str] = set()
+    for index, entry in enumerate(raw_items):
+        prefix = f"plan.amendments[{index}]"
+        if not isinstance(entry, dict):
+            raise ValueError(f"{prefix} must be an object")
+        aid = identifier(entry.get("id"), f"{prefix}.id")
+        if aid in seen_ids:
+            raise ValueError(f"duplicate amendment ID: {aid!r}")
+        seen_ids.add(aid)
+        timing = entry.get("timing")
+        if not isinstance(timing, str) or timing not in AMENDMENT_TIMINGS:
+            raise ValueError(f"{prefix}.timing must be one of {AMENDMENT_TIMINGS}")
+        recorded_dt = parse_utc(entry.get("recorded_utc"), f"{prefix}.recorded_utc")
+        if frozen_dt is not None and recorded_dt < frozen_dt:
+            raise ValueError(f"{prefix}.recorded_utc precedes plan.frozen_utc")
+        identifier(entry.get("what_changed"), f"{prefix}.what_changed")
+        identifier(entry.get("why"), f"{prefix}.why")
+        excluded = _validate_excluded_cases(entry.get("exclude_case_ids", []), cases, f"{prefix}.exclude_case_ids")
+        all_excluded.update(excluded)
+        parsed.append({"id": aid, "timing": timing, "recorded_utc": entry["recorded_utc"],
+                       "recorded_dt": recorded_dt, "exclude_case_ids": excluded})
+    if all_excluded and len(all_excluded) >= len(cases):
+        raise ValueError("plan.amendments cannot exclude every case in plan")
+    return parsed
+
+
+def _validate_excluded_cases(value, cases: dict, field: str) -> list[str]:
+    items = array(value, field)
+    seen: set[str] = set()
+    out: list[str] = []
+    for item in items:
+        cid = identifier(item, field)
+        if cid in seen:
+            raise ValueError(f"duplicate case ID in {field}: {cid!r}")
+        if cid not in cases:
+            raise ValueError(f"unknown case ID in {field}: {cid!r}")
+        seen.add(cid)
+        out.append(cid)
+    return out
+
+
 def validate_plan(plan):
     validate_header(plan, "plan")
     identifier(plan.get("experiment"), "experiment")
@@ -110,6 +191,9 @@ def validate_plan(plan):
     checks = check_ids(plan.get("baseline_checks"), "baseline_checks")
     if added in checks:
         raise ValueError("added_check already belongs to baseline_checks")
+    if "claim_limit" in plan:
+        identifier(plan["claim_limit"], "plan.claim_limit")
+    frozen_dt = parse_utc(plan["frozen_utc"], "plan.frozen_utc") if "frozen_utc" in plan else None
     if "registered_claims" in plan:
         registered = array(plan["registered_claims"], "registered_claims")
         paths = {claim_path(key) for key in registered}
@@ -121,14 +205,37 @@ def validate_plan(plan):
     seen = set()
     for case_id, case in cases.items():
         digest = case.get("fixture_sha256")
-        if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
+        if not isinstance(digest, str) or not _HEX64.fullmatch(digest):
             raise ValueError(f"{case_id!r}: fixture_sha256 must be a lowercase SHA-256 hex digest")
         if digest in seen:
             raise ValueError(f"{case_id!r}: fixture_sha256 reused across case IDs")
         seen.add(digest)
         if case.get("expected") not in ("error", "clean") or case.get("exposure") not in EXPOSURES:
             raise ValueError(f"{case_id!r}: invalid expected or exposure")
+    if "frozen_core_sha256" in plan:
+        claimed_core = plan["frozen_core_sha256"]
+        if not isinstance(claimed_core, str) or not _HEX64.fullmatch(claimed_core):
+            raise ValueError("plan.frozen_core_sha256 must be a lowercase SHA-256 hex digest")
+        if claimed_core != plan_core_sha256(plan):
+            raise ValueError("plan.frozen_core_sha256 does not match pre-registered core fields")
+    if "amendments" in plan:
+        _validate_amendments(plan, cases, frozen_dt)
     return cases
+
+
+def _validate_activation_field(row: dict, label: str) -> None:
+    if "activation" not in row:
+        return
+    act = row["activation"]
+    if not isinstance(act, dict):
+        raise ValueError(f"{label}.activation must be an object")
+    calls = act.get("added_check_calls")
+    if type(calls) is not int or calls < 0:
+        raise ValueError(f"{label}.activation.added_check_calls must be a nonnegative integer")
+    if "fallback_calls" in act:
+        fb = act["fallback_calls"]
+        if type(fb) is not int or fb < 0:
+            raise ValueError(f"{label}.activation.fallback_calls must be a nonnegative integer")
 
 
 def validate_receipt(receipt, arm, plan, digest, cases):
@@ -139,6 +246,10 @@ def validate_receipt(receipt, arm, plan, digest, cases):
         raise ValueError(f"{arm}.plan_sha256 differs from supplied plan bytes")
     if receipt["budget"] != plan["budget"]:
         raise ValueError(f"{arm}.budget differs from plan")
+    if "measured_utc" in receipt:
+        measured_dt = parse_utc(receipt["measured_utc"], f"{arm}.measured_utc")
+        if "frozen_utc" in plan and measured_dt < parse_utc(plan["frozen_utc"], "plan.frozen_utc"):
+            raise ValueError(f"{arm}.measured_utc precedes plan.frozen_utc")
     checks = set(plan["baseline_checks"])
     if arm == "candidate":
         checks.add(plan["added_check"])
@@ -154,9 +265,26 @@ def validate_receipt(receipt, arm, plan, digest, cases):
             raise ValueError(f"{arm} {case_id!r}: fixture_sha256 differs from plan")
         if row.get("status") not in (*EXECUTED, "not_run", "error"):
             raise ValueError(f"{arm} {case_id!r}: invalid observation status")
+        _validate_activation_field(row, f"{arm} {case_id!r}")
     if sum(row["status"] != "not_run" for row in rows.values()) > plan["budget"]:
         raise ValueError(f"{arm}: attempted case count exceeds budget")
     return rows
+
+
+def _check_amendment_chronology(amendments: list[dict], receipts: dict[str, dict]) -> None:
+    measured_dts = [
+        parse_utc(receipt["measured_utc"], f"{arm}.measured_utc")
+        for arm, receipt in receipts.items()
+        if "measured_utc" in receipt
+    ]
+    if not measured_dts:
+        return
+    earliest = min(measured_dts)
+    for entry in amendments:
+        if entry["timing"] == "pre_measurement" and entry["recorded_dt"] > earliest:
+            raise ValueError(
+                f"pre_measurement amendment {entry['id']!r} dated after receipt measured_utc"
+            )
 
 
 def _round6(value: float) -> float:
@@ -227,21 +355,13 @@ def newcombe_paired_ci95(a: int, b: int, c: int, d: int) -> list[float]:
 
 
 def safe_mcnemar_log_evalue(b: int, c: int) -> float:
-    """Natural log of the exact Jeffreys Beta(1/2, 1/2) mixture e-value for H0: theta = 0.5.
-
-    Exact anytime-valid test martingale under optional stopping and optional
-    continuation (Grunwald, de Heide & Koolen, JRSS-B 2024; Ramdas et al.,
-    Statistical Science 2023). Log-space evaluation via math.lgamma avoids
-    overflow for large discordant counts and lets independent cohorts pool by
-    adding log e-values.
-    """
+    """Natural log of the exact Jeffreys Beta(1/2, 1/2) mixture e-value for H0: theta = 0.5."""
     if b < 0 or c < 0:
         raise ValueError("discordant counts must be nonnegative")
     m = b + c
     if m == 0:
         return 0.0
     hi, lo = (b, c) if b >= c else (c, b)
-    # Canonicalize order so floating-point addition is bit-for-bit symmetric across libm builds.
     return (m * math.log(2.0) + math.lgamma(hi + 0.5) + math.lgamma(lo + 0.5)
             - math.lgamma(m + 1.0) - _LOG_BETA_HALF_HALF)
 
@@ -334,6 +454,84 @@ def summarize(cases, baseline, candidate):
     return groups, pairs
 
 
+def audit_activation(cases: dict, baseline: dict, candidate: dict) -> dict[str, object]:
+    """Verify treatment activation on executed candidate cases and zero leakage in baseline."""
+    missing_baseline = [cid for cid in cases if baseline[cid]["status"] in EXECUTED and "activation" not in baseline[cid]]
+    missing_candidate = [cid for cid in cases if candidate[cid]["status"] in EXECUTED and "activation" not in candidate[cid]]
+    base_calls = 0
+    base_leaked: list[str] = []
+    for cid in cases:
+        act = baseline[cid].get("activation")
+        if act is not None:
+            calls = act["added_check_calls"]
+            base_calls += calls
+            if calls > 0:
+                base_leaked.append(cid)
+    cand_executed = [cid for cid in cases if candidate[cid]["status"] in EXECUTED]
+    cand_calls = 0
+    cand_fallbacks = 0
+    cand_inactive: list[str] = []
+    for cid in cases:
+        act = candidate[cid].get("activation")
+        if act is not None:
+            calls = act["added_check_calls"]
+            cand_calls += calls
+            cand_fallbacks += act.get("fallback_calls", 0)
+            if candidate[cid]["status"] in EXECUTED and calls == 0:
+                cand_inactive.append(cid)
+    control_leakage = bool(base_leaked)
+    missing = bool(missing_baseline or missing_candidate)
+    silent_noop = (not missing) and (not cand_executed or bool(cand_inactive) or cand_calls == 0)
+    if missing:
+        status = "missing_telemetry"
+    elif silent_noop and control_leakage:
+        status = "both_failed"
+    elif silent_noop:
+        status = "silent_noop"
+    elif control_leakage:
+        status = "control_leakage"
+    else:
+        status = "passed"
+    return {
+        "schema": "semantic-crosscheck/activation-audit/v1",
+        "status": status,
+        "passed": status == "passed",
+        "baseline_added_check_calls": base_calls,
+        "baseline_leaked_case_ids": base_leaked,
+        "candidate_executed_cases": len(cand_executed),
+        "candidate_added_check_calls": cand_calls,
+        "candidate_fallback_calls": cand_fallbacks,
+        "candidate_inactive_executed_case_ids": cand_inactive,
+        "missing_baseline_case_ids": missing_baseline,
+        "missing_candidate_case_ids": missing_candidate,
+    }
+
+
+def _build_amendment_audit(plan: dict, cases: dict, baseline: dict, candidate: dict,
+                           original_groups: dict, amendments: list[dict]) -> dict[str, object]:
+    pre_excluded = sorted({cid for a in amendments if a["timing"] == "pre_measurement" for cid in a["exclude_case_ids"]})
+    post_excluded = sorted({cid for a in amendments if a["timing"] == "post_hoc" for cid in a["exclude_case_ids"]})
+    all_excluded = set(pre_excluded) | set(post_excluded)
+    kept_cases = {cid: row for cid, row in cases.items() if cid not in all_excluded}
+    amended_groups, _ = summarize(kept_cases, baseline, candidate)
+    has_post_hoc = any(a["timing"] == "post_hoc" for a in amendments)
+    pre_only_cases = {cid: row for cid, row in cases.items() if cid not in set(pre_excluded)}
+    pre_groups, _ = summarize(pre_only_cases, baseline, candidate)
+    post_hoc_altered = has_post_hoc and (amended_groups != pre_groups or bool(post_excluded))
+    return {
+        "frozen_core_sha256": plan["frozen_core_sha256"],
+        "count": len(amendments),
+        "pre_measurement_count": sum(a["timing"] == "pre_measurement" for a in amendments),
+        "post_hoc_count": sum(a["timing"] == "post_hoc" for a in amendments),
+        "has_post_hoc": has_post_hoc,
+        "pre_measurement_excluded_case_ids": pre_excluded,
+        "post_hoc_excluded_case_ids": post_excluded,
+        "post_hoc_altered_summary": post_hoc_altered,
+        "original_groups": original_groups,
+        "amended_groups": amended_groups,
+    }
+
+
 def verify_claims(claims, groups, pairs, registered):
     if not claims:
         raise ValueError("claims must contain at least one numeric claim")
@@ -371,18 +569,63 @@ def verify_markdown(document, observed):
     return lines[first + 1:last] == expected
 
 
+def seal_plan(args) -> tuple[int, dict[str, object]]:
+    if any((args.baseline, args.candidate, args.claims, args.check_markdown,
+            args.check_activation, args.strict_original)):
+        raise ValueError("--seal-plan cannot be combined with comparison options")
+    digests: dict[str, str] = {}
+    plan = read_object(args.plan, "plan", digests)
+    validate_plan(plan)
+    return 0, {
+        "schema_version": 1,
+        "experiment": plan["experiment"],
+        "plan_sha256": digests["plan"],
+        "frozen_core_sha256": plan_core_sha256(plan),
+    }
+
+
+def _has_any_activation(observations: dict[str, dict]) -> bool:
+    return any("activation" in row for row in observations.values())
+
+
 def compare(args):
+    if getattr(args, "seal_plan", False):
+        return seal_plan(args)
+    if args.baseline is None or args.candidate is None:
+        raise ValueError("--baseline and --candidate are required unless --seal-plan is set")
     digests = {}
     plan = read_object(args.plan, "plan", digests)
     cases = validate_plan(plan)
+    frozen_dt = parse_utc(plan["frozen_utc"], "plan.frozen_utc") if "frozen_utc" in plan else None
+    amendments = _validate_amendments(plan, cases, frozen_dt) if "amendments" in plan else []
+    raw_receipts: dict[str, dict] = {}
     observations = {}
     for arm in ("baseline", "candidate"):
         receipt = read_object(getattr(args, arm), arm, digests)
+        raw_receipts[arm] = receipt
         observations[arm] = validate_receipt(receipt, arm, plan, digests["plan"], cases)
+    if amendments:
+        _check_amendment_chronology(amendments, raw_receipts)
     groups, pairs = summarize(cases, **observations)
-    report = dict(schema_version=1, experiment=plan["experiment"], added_check=plan["added_check"],
-                  baseline_checks=plan["baseline_checks"], budget=plan["budget"],
-                  input_sha256=digests, groups=groups, pairs=pairs)
+    report: dict[str, object] = dict(
+        schema_version=1, experiment=plan["experiment"], added_check=plan["added_check"],
+        baseline_checks=plan["baseline_checks"], budget=plan["budget"],
+        input_sha256=digests, groups=groups, pairs=pairs,
+    )
+    if "claim_limit" in plan:
+        report["claim_limit"] = plan["claim_limit"]
+    if "frozen_core_sha256" in plan:
+        report["frozen_core_sha256"] = plan["frozen_core_sha256"]
+    amendment_audit = None
+    if "amendments" in plan:
+        amendment_audit = _build_amendment_audit(plan, cases, observations["baseline"], observations["candidate"],
+                                                 groups, amendments)
+        report["amendment_audit"] = amendment_audit
+    check_activation = getattr(args, "check_activation", False)
+    activation_report = None
+    if check_activation or _has_any_activation(observations["baseline"]) or _has_any_activation(observations["candidate"]):
+        activation_report = audit_activation(cases, observations["baseline"], observations["candidate"])
+        report["activation_audit"] = activation_report
     if args.check_markdown and not args.claims:
         raise ValueError("--check-markdown requires --claims")
     if args.claims:
@@ -392,17 +635,27 @@ def compare(args):
         if args.check_markdown:
             document = read_input(args.check_markdown, "markdown", digests)
             report["markdown_matches"] = verify_markdown(document, observed)
-    failed = bool(report.get("claim_mismatches")) or report.get("markdown_matches") is False
+    if check_activation and activation_report is not None and not activation_report["passed"]:
+        return EXIT_ACTIVATION_FAILURE, report
+    strict_fail = (getattr(args, "strict_original", False) and amendment_audit is not None
+                   and bool(amendment_audit["post_hoc_altered_summary"]))
+    failed = bool(report.get("claim_mismatches")) or report.get("markdown_matches") is False or strict_fail
     return int(failed), report
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--plan", required=True, type=Path, help="frozen plan JSON")
+    parser.add_argument("--seal-plan", action="store_true",
+                        help="compute and print canonical frozen_core_sha256 for --plan and exit")
     for arm in ("baseline", "candidate"):
-        parser.add_argument("--" + arm, required=True, type=Path, help=f"{arm} observations JSON")
+        parser.add_argument("--" + arm, type=Path, help=f"{arm} observations JSON")
     parser.add_argument("--claims", type=Path, help="optional group.metric to exact integer JSON object")
     parser.add_argument("--check-markdown", type=Path, help="release note with a marked table of the supplied claims")
+    parser.add_argument("--check-activation", action="store_true",
+                        help="require treatment added_check activation and zero baseline leakage (exit 70 on failure)")
+    parser.add_argument("--strict-original", action="store_true",
+                        help="fail with exit 1 when any post_hoc amendment alters the pre-registered summary")
     try:
         code, report = compare(parser.parse_args())
     except (ValueError, OSError) as exc:

@@ -34,7 +34,6 @@ root). They are the only local paths doctor writes; everything else names its so
 import contextlib
 import importlib
 import importlib.metadata
-import json
 import os
 import platform
 import re
@@ -42,7 +41,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from . import config, cube_install, cube_run, db, demo, ident, procutil
+from . import config, coverage_matrix, cube_install, cube_run, db, demo, ident, procutil
 from .result import EXIT_CONFIG, Result, StageError
 
 COMPONENTS = ("core", "reason", "cube")
@@ -191,11 +190,8 @@ def _home_source() -> str:
 
 
 def _install_record(home: Path) -> dict | None:
-    try:
-        rec = json.loads((home / cube_install.RECORD).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
-    return rec if isinstance(rec, dict) else None
+    rec, _integrity = cube_run.load_install_record(home)
+    return rec
 
 
 def changed_adapter_files(home: Path, adapter_dir: Path = cube_run.ADAPTER_DIR) -> list[str] | None:
@@ -213,6 +209,11 @@ def probe_adapter(home: Path, adapter_dir: Path = cube_run.ADAPTER_DIR) -> tuple
     """The adapter is installed in home, from the adapter files this plugin ships now (installed.json files_sha256):
     after an upgrade that changed server.js or the lockfile, the old install would keep serving the old adapter."""
     install = f"run {sxc_hint('cube-install')}"
+    reinstall = f"run {sxc_hint('cube-install --force')}"
+    _rec, integrity = cube_run.load_install_record(home)
+    if integrity == "manifest_digest_mismatch":
+        return False, {"installed": (home / "server.js").is_file(), "reason": "manifest_digest_mismatch",
+                       "home": _home_source()}, reinstall
     try:
         changed = changed_adapter_files(home, adapter_dir)
     except OSError:
@@ -234,10 +235,14 @@ def probe_adapter(home: Path, adapter_dir: Path = cube_run.ADAPTER_DIR) -> tuple
 def probe_native(home: Path) -> tuple[bool, dict, str]:
     """index.node on disk hashes to the value cube-install recorded, and that record matches this platform's pin."""
     reinstall = f"run {sxc_hint('cube-install --force')} to reinstall the verified native module"
+    rec, integrity = cube_run.load_install_record(home)
+    if integrity == "manifest_digest_mismatch":
+        return False, {"reason": "manifest_digest_mismatch", "home": _home_source()}, reinstall
+    if rec is None:
+        return False, {"reason": "no_install_record", "home": _home_source()}, f"run {sxc_hint('cube-install')}"
     try:
-        rec = json.loads((home / cube_install.RECORD).read_text(encoding="utf-8"))
         recorded = rec["native"]["index_node_sha256"]
-    except (OSError, ValueError, KeyError, TypeError):
+    except (KeyError, TypeError):
         return False, {"reason": "no_install_record", "home": _home_source()}, f"run {sxc_hint('cube-install')}"
     index = home / cube_install.INDEX_NODE
     if not index.is_file():
@@ -468,5 +473,8 @@ def run(cfg, args, out: Path) -> Result:
         res.not_proven.append("the check role's privileges on the source tables and the output schema were not checked "
                               "(no crosscheck.toml; rerun doctor with --config)")
     _components(cfg, require, res, hints)
+    if getattr(args, "coverage", False):
+        home = cube_run.cube_home(cfg.cube.version if cfg else config.CUBE_VERSION)
+        setattr(res, "coverage", coverage_matrix.build_coverage_report(home))
     res.next_safe_action = _next_action(cfg, res, hints)
     return res

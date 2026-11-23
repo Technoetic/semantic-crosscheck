@@ -41,3 +41,11 @@ python tools/paired_release.py --plan examples/paired-release/plan.json --baseli
 - **출력 필드:** `safe_e_value`(오버플로 방지 상한 $\ln E > 700$ 초과 시 `null`), `safe_e_log`(정확한 자연로그 $\ln E$, 독립 코호트 합산용), `safe_anytime_p`($\min(1, 1/E)$), `min_discordant_for_e_005 = 7`, `underpowered_for_e_005`.
 - **임계 기준:** 기존 손실 `c = 0`에서 상시 유효 유의수준 `0.05`($E \ge 20$)에 도달하려면 최소 `b >= 7`의 불일치 쌍이 필요하다(`b = 6, c = 0`은 `E = 14.4375`, `b = 7, c = 0`은 `E = 26.8125`, `safe_anytime_p = 0.037296`). v0.30.0 예시 `(b = 2, c = 0)`은 `safe_e_value = 1.5`, `safe_anytime_p = 0.666667`, `underpowered_for_e_005 = true`다.
 - **코호트 결합:** 서로 독립적인 held-out 코호트의 근거는 각 `safe_e_log`를 더해($E_{\text{total}} = \prod E_i$) 제1종 오류 보장을 유지한 채 결합할 수 있다.
+
+## 사전 등록 핵심 봉인·사후 개정 이중 공시 및 발동 감사 (v0.33.0)
+
+[`ai3inc/foldboost`](https://github.com/ai3inc/foldboost)(`v0.3.0`, 커밋 `ff7ad2208cf52d7692d5d016ba5b788d782256c7`, Apache-2.0)의 실험 규율 패턴을 Python 표준 라이브러리만으로 `tools/paired_release.py`와 `tools/run_paired_example.py`에 선택 반영했다(기존 v0.30.0–v0.32.0 입력·출력 하위호환).
+
+- **사전 등록 핵심 봉인과 `claim_limit`:** `python tools/paired_release.py --plan plan.json --seal-plan`으로 불변 사전 등록 핵심 필드(`schema_version`, `experiment`, `added_check`, `baseline_checks`, `budget`, `cases`, 선택형 `registered_claims`·`claim_limit`·`frozen_utc`)의 정규화 SHA-256(`frozen_core_sha256`)을 계산할 수 있다. `plan.json`에 `amendments[]`(`timing: pre_measurement | post_hoc`, `recorded_utc`, `what_changed`, `why`, 선택형 `exclude_case_ids`)를 덧붙이려면 `frozen_core_sha256`이 필수이며, `pre_measurement` 개정이 영수증 `measured_utc`보다 늦거나 `measured_utc`가 `frozen_utc`보다 이르면 종료 코드 `2`로 거부한다.
+- **이중 판정 공시와 `--strict-original`:** `amendments`가 존재해도 `groups`와 `pairs`는 원래 사전 등록 전체 사례의 집계(McNemar·Wilson CI·Safe e-value)를 그대로 유지하며, `amendment_audit` 안에 `original_groups`와 `amended_groups` 및 `post_hoc_altered_summary`를 나란히 기록한다. `--strict-original`은 사후(`post_hoc`) 개정이 원 집계를 변경하면 종료 코드 `1`로 실패한다.
+- **처치군 발동 · 대조군 0-누출 감사 (`--check-activation`, 종료 코드 `70`):** 관측 항목에 선택형 `activation`(`added_check_calls`, `fallback_calls`)을 기록하고 `--check-activation`을 주면, 실행 완료(`clear`/`flag`)된 후보군 사례에서 `added_check`가 실제로 발동했는지(`silent_noop` 차단)와 기준군에서 0회 누출됐는지(`control_leakage` 차단)를 감사한다. 텔레메트리 누락·미발동·누출 시 `activation_audit`와 함께 전용 종료 코드 `70`을 반환한다. `python tools/run_paired_example.py --with-activation`으로 예제 영수증에 발동 카운터를 붙여 결정론적으로 검증할 수 있다.

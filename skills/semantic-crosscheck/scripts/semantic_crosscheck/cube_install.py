@@ -130,11 +130,10 @@ def installed_record(home: Path, key: str, asset: dict, files: dict) -> dict | N
     """installed.json of a complete install that still matches the pins and the adapter files, else None."""
     if not cube_run.installed(home):
         return None
-    try:
-        rec = json.loads((home / RECORD).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    rec, integrity = cube_run.load_install_record(home)
+    if rec is None or integrity not in ("verified", "unsealed_legacy"):
         return None
-    if not isinstance(rec, dict) or not isinstance(rec.get("native"), dict):
+    if not isinstance(rec.get("native"), dict):
         return None
     native = rec["native"]
     if rec.get("platform") != key or native.get("tarball_sha256") != asset["sha256"] or rec.get("files_sha256") != files:
@@ -450,11 +449,13 @@ def run(cfg, args, out: Path) -> Result:
             res.add("cube_install:smoke", "pass" if ok else "fail", "", node=node_version, log="cube_install/smoke.log", **sm)
             if ok:
                 shutil.copyfile(cube_run.ADAPTER_DIR / "server.js", home / "server.js")
-                record = {"installer": f"semantic-crosscheck {VERSION}", "cube_version": config.CUBE_VERSION,
-                          "platform": key, "node": node_version,
-                          "packages": {name: _package_version(home, name) for name in PACKAGES},
-                          "native": native, "files_sha256": files,
-                          "installed_at": time.strftime("%Y-%m-%dT%H:%M:%S%z")}
+                record = cube_run.seal_install_record({
+                    "installer": f"semantic-crosscheck {VERSION}", "cube_version": config.CUBE_VERSION,
+                    "platform": key, "node": node_version,
+                    "packages": {name: _package_version(home, name) for name in PACKAGES},
+                    "native": native, "files_sha256": files,
+                    "installed_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+                })
                 (home / RECORD).write_text(json.dumps(record, indent=1) + "\n", encoding="utf-8", newline="\n")
     _mark_rest(res)
     action = _next_action(res)

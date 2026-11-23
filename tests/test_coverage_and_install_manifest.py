@@ -127,6 +127,47 @@ class InstallManifestIntegrityTests(unittest.TestCase):
         serialized = json.dumps(diag)
         self.assertNotIn(self.tmp.name, serialized)
 
+    def test_symlink_record_rejected_and_diagnose_handles_unreadable_index_and_custom_adapter_dir(self):
+        home = _make_home(self.tmp / "edge", sealed=False)
+        custom_adapter = self.tmp / "custom-adapter"
+        custom_adapter.mkdir(parents=True)
+        for name in cube_run.ADAPTER_FILES:
+            (custom_adapter / name).write_text(f"// {name}\n", encoding="utf-8")
+        custom_hashes = cube_run.adapter_hashes(custom_adapter)
+        rec = json.loads((home / cube_run.RECORD).read_text(encoding="utf-8"))
+        rec["files_sha256"] = custom_hashes
+        rec = cube_run.seal_install_record(rec)
+        (home / cube_run.RECORD).write_text(json.dumps(rec, indent=1) + "\n", encoding="utf-8")
+
+        # Custom adapter_dir propagates into state ('ok' against custom adapter_dir).
+        diag_custom = cube_run.diagnose_install(home, adapter_dir=custom_adapter)
+        self.assertEqual(diag_custom["state"], "ok")
+        self.assertEqual(diag_custom["near_misses"], [])
+
+        # Symlinked installed.json fails closed as invalid_json.
+        record_path = home / cube_run.RECORD
+        orig_is_symlink = Path.is_symlink
+
+        def fake_is_symlink(p: Path) -> bool:
+            return True if p == record_path else orig_is_symlink(p)
+
+        with mock.patch.object(Path, "is_symlink", fake_is_symlink):
+            loaded, integrity = cube_run.load_install_record(home)
+        self.assertIsNone(loaded)
+        self.assertEqual(integrity, "invalid_json")
+
+        # OSError while hashing index.node records index_node_unreadable instead of raising.
+        orig_sha = cube_run.sha256_file
+
+        def failing_index_sha(p: Path) -> str:
+            if p.name == "index.node":
+                raise OSError("unreadable")
+            return orig_sha(p)
+
+        with mock.patch.object(cube_run, "sha256_file", side_effect=failing_index_sha):
+            diag_err = cube_run.diagnose_install(home, adapter_dir=custom_adapter)
+        self.assertIn("index_node_unreadable", diag_err["near_misses"])
+
 
 class CoverageMatrixAndDoctorTests(unittest.TestCase):
     def setUp(self):

@@ -554,6 +554,40 @@ class PairedReleaseTest(unittest.TestCase):
                 self.baseline["observations"][0]["activation"] = bad_act
                 self.assertEqual(self.compare(extra_args=("--check-activation",))[0], 2)
 
+    def test_empty_amendments_requires_seal_and_extreme_utc_offset_exits_two(self):
+        # Empty amendments without frozen_core_sha256 must fail closed with JSON error (exit 2).
+        self.plan["amendments"] = []
+        self.refresh_plan()
+        code, rep = self.compare()
+        self.assertEqual(code, 2, rep)
+        self.assertIn("frozen_core_sha256", rep.get("error", ""))
+
+        # Sealing the plan allows empty amendments cleanly.
+        plan_without_amend = {k: v for k, v in self.plan.items() if k != "amendments"}
+        self.write("plan-seal", plan_without_amend)
+        sealed_out = subprocess.run(
+            [sys.executable, str(SCRIPT), "--plan", str(self.directory / "plan-seal.json"), "--seal-plan"],
+            capture_output=True, text=True,
+        )
+        self.assertEqual(sealed_out.returncode, 0, sealed_out.stderr)
+        self.plan["frozen_core_sha256"] = json.loads(sealed_out.stdout)["frozen_core_sha256"]
+        self.refresh_plan()
+        code_ok, rep_ok = self.compare()
+        self.assertEqual(code_ok, 0, rep_ok)
+        self.assertEqual(rep_ok["amendment_audit"]["count"], 0)
+        self.assertFalse(rep_ok["amendment_audit"]["post_hoc_altered_summary"])
+
+        # Extreme timezone offsets that overflow datetime UTC conversion must exit 2 (not crash).
+        for bad_ts in ("9999-12-31T23:59:59-05:00", "0001-01-01T00:00:00+05:00"):
+            with self.subTest(bad_ts=bad_ts):
+                self.plan.pop("frozen_core_sha256", None)
+                self.plan.pop("amendments", None)
+                self.plan["frozen_utc"] = bad_ts
+                self.refresh_plan()
+                code_ts, rep_ts = self.compare()
+                self.assertEqual(code_ts, 2, rep_ts)
+                self.assertIn("error", rep_ts)
+
 
 if __name__ == "__main__":
     unittest.main()

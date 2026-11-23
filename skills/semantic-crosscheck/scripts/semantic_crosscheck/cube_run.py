@@ -109,6 +109,8 @@ def load_install_record(home: Path) -> tuple[dict | None, str]:
       - 'invalid_json': unreadable, oversized, non-object, duplicate keys or NaN/Infinity
     """
     path = Path(home) / RECORD
+    if path.is_symlink():
+        return None, "invalid_json"
     if not path.is_file():
         return None, "missing"
     try:
@@ -168,7 +170,7 @@ def adapter_hashes(adapter_dir: Path = ADAPTER_DIR) -> dict:
     return {name: sha256_file(Path(adapter_dir) / name) for name in ADAPTER_FILES}
 
 
-def install_state(home: Path) -> str:
+def install_state(home: Path, adapter_dir: Path = ADAPTER_DIR) -> str:
     """'ok', 'missing', 'incomplete', 'stale', or 'corrupt' (manifest_digest_mismatch)."""
     home = Path(home)
     if not (home / "server.js").is_file():
@@ -181,7 +183,7 @@ def install_state(home: Path) -> str:
     if rec is None:
         return "incomplete"
     try:
-        current = adapter_hashes()
+        current = adapter_hashes(adapter_dir)
     except OSError:
         return "stale"
     return "ok" if rec.get("files_sha256") == current else "stale"
@@ -229,10 +231,18 @@ def diagnose_install(
             near_misses.append("tarball_pin_mismatch")
         if (home / INDEX_NODE).is_file():
             recorded_idx = native.get("index_node_sha256")
-            if not isinstance(recorded_idx, str) or sha256_file(home / INDEX_NODE) != recorded_idx:
+            if not isinstance(recorded_idx, str):
                 near_misses.append("index_node_sha256_mismatch")
+            else:
+                try:
+                    actual_idx = sha256_file(home / INDEX_NODE)
+                except OSError:
+                    near_misses.append("index_node_unreadable")
+                else:
+                    if actual_idx != recorded_idx:
+                        near_misses.append("index_node_sha256_mismatch")
     return {
-        "state": install_state(home),
+        "state": install_state(home, adapter_dir=adapter_dir),
         "manifest_integrity": integrity,
         "near_misses": near_misses,
     }

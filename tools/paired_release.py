@@ -92,7 +92,10 @@ def parse_utc(value, field) -> datetime:
         raise ValueError(f"{field} must be an ISO-8601 UTC timestamp") from exc
     if parsed.tzinfo is None:
         raise ValueError(f"{field} must include a timezone offset or Z")
-    return parsed.astimezone(timezone.utc)
+    try:
+        return parsed.astimezone(timezone.utc)
+    except OverflowError as exc:
+        raise ValueError(f"{field} must be a valid ISO-8601 UTC timestamp") from exc
 
 
 def plan_core_sha256(plan: dict) -> str:
@@ -139,7 +142,7 @@ def claim_path(key):
 
 def _validate_amendments(plan: dict, cases: dict, frozen_dt: datetime | None) -> list[dict]:
     raw_items = array(plan["amendments"], "plan.amendments")
-    if raw_items and "frozen_core_sha256" not in plan:
+    if "frozen_core_sha256" not in plan:
         raise ValueError("plan.amendments requires frozen_core_sha256 to seal pre-registered core")
     seen_ids: set[str] = set()
     parsed: list[dict] = []

@@ -49,3 +49,13 @@ python tools/paired_release.py --plan examples/paired-release/plan.json --baseli
 - **사전 등록 핵심 봉인과 `claim_limit`:** `python tools/paired_release.py --plan plan.json --seal-plan`으로 불변 사전 등록 핵심 필드(`schema_version`, `experiment`, `added_check`, `baseline_checks`, `budget`, `cases`, 선택형 `registered_claims`·`claim_limit`·`frozen_utc`)의 정규화 SHA-256(`frozen_core_sha256`)을 계산할 수 있다. `plan.json`에 `amendments[]`(`timing: pre_measurement | post_hoc`, `recorded_utc`, `what_changed`, `why`, 선택형 `exclude_case_ids`)를 덧붙이려면 `frozen_core_sha256`이 필수이며, `pre_measurement` 개정이 영수증 `measured_utc`보다 늦거나 `measured_utc`가 `frozen_utc`보다 이르면 종료 코드 `2`로 거부한다.
 - **이중 판정 공시와 `--strict-original`:** `amendments`가 존재해도 `groups`와 `pairs`는 원래 사전 등록 전체 사례의 집계(McNemar·Wilson CI·Safe e-value)를 그대로 유지하며, `amendment_audit` 안에 `original_groups`와 `amended_groups` 및 `post_hoc_altered_summary`를 나란히 기록한다. `--strict-original`은 사후(`post_hoc`) 개정이 원 집계를 변경하면 종료 코드 `1`로 실패한다.
 - **처치군 발동 · 대조군 0-누출 감사 (`--check-activation`, 종료 코드 `70`):** 관측 항목에 선택형 `activation`(`added_check_calls`, `fallback_calls`)을 기록하고 `--check-activation`을 주면, 실행 완료(`clear`/`flag`)된 후보군 사례에서 `added_check`가 실제로 발동했는지(`silent_noop` 차단)와 기준군에서 0회 누출됐는지(`control_leakage` 차단)를 감사한다. 텔레메트리 누락·미발동·누출 시 `activation_audit`와 함께 전용 종료 코드 `70`을 반환한다. `python tools/run_paired_example.py --with-activation`으로 예제 영수증에 발동 카운터를 붙여 결정론적으로 검증할 수 있다.
+
+## 분할 간 픽스처 구조 중복·누출 감사 (v0.34.0)
+
+원시 바이트 `fixture_sha256` 고유성 검사는 공백·키 순서만 바꾼 재포맷 복제나 도메인 문자열(예: SKU·태그 이름)과 행 순서만 바꾼 알파-리네이밍 복제를 걸러내지 못한다. v0.34.0부터 `tools/paired_release.py`는 Python 표준 라이브러리만으로 선택형 `--fixtures-dir <DIR>`와 `--check-fixture-leakage` 옵션을 제공한다(기존 v0.30.0–v0.33.0 CLI·출력 100% 하위호환).
+
+- **실패 폐쇄 입력 검증 (종료 코드 `2`):** `--fixtures-dir`의 심볼릭 링크·재분석 지점, 안전하지 않은 `case_id` 경로 탐색, 누락·1 MiB 초과·`plan.json`의 `fixture_sha256` 불일치, 중복 키·`NaN`/`Infinity`·비객체 JSON을 모두 거부한다.
+- **2단계 구조 지문 (`fixture_leakage_audit`):**
+  1. `canonical_json_sha256`: JSON 타입(`bool`/`int`/`float`/`null`/`str`)과 배열 순서를 유지한 채 공백과 딕셔너리 키 순서에 불변인 정규화 다이제스트.
+  2. `alpha_structural_sha256`: 딕셔너리 키, 최상위 모드 문자열(`gold_mode`, `model_mode` 등), 숫자·불리언·`null` 값과 행 간 문자열 동치 그래프를 보존하면서 중첩 도메인 문자열을 알파-리네이밍하고 배열 행 순서를 정규화한 구조 다이제스트.
+- **결과 공시와 강제 (`--check-fixture-leakage`):** 보고서의 `fixture_leakage_audit`에는 원본 행 값이나 로컬 경로 없이 다이제스트·사례 ID·노출 구간(`development`/`heldout`/`unknown`)과 상태(`passed`, `cross_split_leakage`, `within_split_duplicate`, `both_failed`)만 기록한다. `--check-fixture-leakage`를 지정하면 `development`↔`heldout` 간 누출이나 동일 분할 내 구조 복제가 하나라도 있을 때 종료 코드 `1`로 실패한다. 저장소의 `examples/paired-release/cases` 10건은 두 수준 모두 중복 `0`건으로 통과한다.

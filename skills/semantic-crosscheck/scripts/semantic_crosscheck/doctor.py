@@ -53,15 +53,19 @@ PLUGIN_ROOT = Path(__file__).resolve().parents[4]          # holds requirements/
 
 
 def _privileges_sql(server_version_num: int = MIN_PG) -> str:
-    """Catalog privilege, RLS and UNIQUE NULLS NOT DISTINCT query for one relation."""
+    """Catalog privilege, RLS, index and relation-hygiene query for one relation."""
     nulls_not_distinct = (
-        "coalesce((SELECT bool_or(i.indisunique AND i.indnullsnotdistinct) "
+        "coalesce((SELECT bool_or(i.indisunique AND i.indisvalid AND i.indisready "
+        "AND i.indpred IS NULL AND i.indexprs IS NULL AND i.indnullsnotdistinct) "
         "FROM pg_catalog.pg_index i WHERE i.indrelid = c.oid), false)"
         if int(server_version_num) >= MIN_PG_NULLS_NOT_DISTINCT
         else "false"
     )
     return f"""
     SELECT n.oid IS NOT NULL AS schema_exists, c.oid IS NOT NULL AS table_exists,
+           coalesce(c.relkind::text, '') AS relkind,
+           coalesce(c.relispopulated, true) AS is_populated,
+           coalesce(c.relhasrules, false) AS has_rules,
            coalesce(has_schema_privilege(n.oid, 'USAGE'), false) AS can_use,
            coalesce(has_schema_privilege(n.oid, 'CREATE'), false) AS schema_create,
            coalesce(pg_has_role(n.nspowner, 'MEMBER'), false) AS schema_owner,
@@ -75,7 +79,18 @@ def _privileges_sql(server_version_num: int = MIN_PG) -> str:
            coalesce(c.relrowsecurity, false) AS row_security,
            coalesce(c.relforcerowsecurity, false) AS force_row_security,
            coalesce((SELECT r.rolbypassrls FROM pg_catalog.pg_roles r WHERE r.rolname = current_user), false) AS bypass_rls,
-           {nulls_not_distinct} AS unique_nulls_not_distinct
+           {nulls_not_distinct} AS unique_nulls_not_distinct,
+           coalesce((SELECT count(*) FROM pg_catalog.pg_constraint con
+                     WHERE con.conrelid = c.oid AND con.contype IN ('c', 'f') AND NOT con.convalidated), 0)::integer
+             AS unvalidated_constraints,
+           coalesce((WITH RECURSIVE parts(oid) AS (
+                       SELECT inh.inhrelid FROM pg_catalog.pg_inherits inh WHERE inh.inhparent = c.oid
+                       UNION
+                       SELECT inh.inhrelid FROM pg_catalog.pg_inherits inh JOIN parts p ON inh.inhparent = p.oid
+                     )
+                     SELECT bool_or(ch.relrowsecurity)
+                     FROM parts p
+                     JOIN pg_catalog.pg_class ch ON ch.oid = p.oid), false) AS child_partition_row_security
     FROM (SELECT 1) AS one
     LEFT JOIN pg_namespace n ON n.nspname = :schema
     LEFT JOIN pg_class c ON c.relnamespace = n.oid AND c.relname = :table AND c.relkind IN ('r', 'p', 'v', 'm', 'f')
@@ -281,7 +296,7 @@ def _db_checks(cfg) -> list[tuple[str, str]]:
 
 
 def select_hint(cfg, name: str, row: dict) -> str:
-    """What to do when privileges:select:<name> fails: load or name the missing table, else grant the privileges."""
+    """What to do when privileges:select:<name> fails: load missing table, grant privileges, or refresh MV."""
     table = cfg.entities[name].table
     schema, relname = ident.split(table)
     if not row["table_exists"]:
@@ -290,6 +305,11 @@ def select_hint(cfg, name: str, row: dict) -> str:
                     "demo tables), then rerun doctor")
         return (f"table {table} does not exist in the connected database: check entities.{name}.table in "
                 "crosscheck.toml (or load the data first), then rerun doctor")
+    if not row.get("can_use", True) or not row.get("can_select", True):
+        return f"grant the check role USAGE on the schema and SELECT on {table}, then rerun doctor"
+    if row.get("relkind") == "m" and not row.get("is_populated", True):
+        return (f"materialized view {table} is not populated (relispopulated=false): "
+                f"run `REFRESH MATERIALIZED VIEW {table}`, then rerun doctor")
     return f"grant the check role USAGE on the schema and SELECT on {table}, then rerun doctor"
 
 
@@ -311,6 +331,40 @@ def rls_visibility_warning(name: str, row: dict) -> str | None:
             "visible rows for the check role can differ from Cube or another role")
 
 
+def catalog_warnings(name: str, row: dict) -> list[str]:
+    """Disclose zero-extra-round-trip PostgreSQL catalog risks for one existing source relation."""
+    if not row.get("table_exists"):
+        return []
+    warnings: list[str] = []
+    rls_warn = rls_visibility_warning(name, row)
+    if rls_warn:
+        warnings.append(rls_warn)
+    elif row.get("child_partition_row_security"):
+        warnings.append(
+            f"entities.{name}: a child partition or inherited relation has PostgreSQL row-level security enabled "
+            "(child_partition_row_security=true) while the parent does not (relrowsecurity=false); querying the "
+            "parent vs. a child relation can enforce different row-visibility policies"
+        )
+    relkind = str(row.get("relkind", ""))
+    if relkind == "f":
+        warnings.append(
+            f"entities.{name}: source relation is a foreign table (relkind='f'); foreign tables do not participate "
+            "in PostgreSQL REPEATABLE READ snapshot isolation across statements or stages"
+        )
+    unvalidated = int(row.get("unvalidated_constraints", 0))
+    if unvalidated > 0:
+        warnings.append(
+            f"entities.{name}: source relation has {unvalidated} unvalidated CHECK/FOREIGN KEY constraint(s) in "
+            "pg_constraint (convalidated=false); existing rows are not checked against those constraints"
+        )
+    if relkind in ("r", "p") and row.get("has_rules"):
+        warnings.append(
+            f"entities.{name}: source table has PostgreSQL rewrite rules (relhasrules=true); "
+            "rewrite rules can alter or suppress visible rows"
+        )
+    return warnings
+
+
 def _privileges(conn, cfg, res: Result, hints: dict, server_version_num: int = MIN_PG):
     sql = _privileges_sql(server_version_num)
     rows = {}
@@ -318,18 +372,25 @@ def _privileges(conn, cfg, res: Result, hints: dict, server_version_num: int = M
         schema, table = ident.split(ent.table)
         rows[name] = db.rows(conn, sql, schema=schema, table=table)[0]
     for name, r in rows.items():
-        ok = r["table_exists"] and r["can_use"] and r["can_select"]
+        relkind = str(r.get("relkind", ""))
+        is_populated = bool(r.get("is_populated", True))
+        has_rules = bool(r.get("has_rules", False))
+        unvalidated = int(r.get("unvalidated_constraints", 0))
+        child_rls = bool(r.get("child_partition_row_security", False))
+        unpopulated_mv = r["table_exists"] and relkind == "m" and not is_populated
+        ok = r["table_exists"] and r["can_use"] and r["can_select"] and not unpopulated_mv
         res.add(f"privileges:select:{name}", _st(ok), f"entities.{name}", schema_exists=r["schema_exists"],
-                table_exists=r["table_exists"], schema_usage=r["can_use"], select=r["can_select"],
+                table_exists=r["table_exists"], relkind=relkind, is_populated=is_populated,
+                schema_usage=r["can_use"], select=r["can_select"],
                 row_security=bool(r.get("row_security", False)),
                 force_row_security=bool(r.get("force_row_security", False)),
                 bypass_rls=bool(r.get("bypass_rls", False)),
-                unique_nulls_not_distinct=bool(r.get("unique_nulls_not_distinct", False)))
+                child_partition_row_security=child_rls,
+                unique_nulls_not_distinct=bool(r.get("unique_nulls_not_distinct", False)),
+                unvalidated_constraints=unvalidated, has_rules=has_rules)
         if not ok:
             hints.setdefault(f"privileges:select:{name}", select_hint(cfg, name, r))
-        warning = rls_visibility_warning(name, r)
-        if warning:
-            res.not_proven.append(warning)
+        res.not_proven.extend(catalog_warnings(name, r))
     for name, r in rows.items():
         if not r["table_exists"]:
             res.add(f"privileges:no_write:{name}", "not_run", f"entities.{name}", reason="table_missing")

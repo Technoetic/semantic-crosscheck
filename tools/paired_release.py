@@ -11,7 +11,9 @@ from datetime import datetime, timezone
 import hashlib
 import json
 import math
+import os
 import re
+import stat
 from pathlib import Path
 from statistics import NormalDist
 
@@ -20,6 +22,10 @@ EXPOSURES = ("heldout", "development", "unknown")
 EXECUTED = ("clear", "flag")
 AMENDMENT_TIMINGS = ("pre_measurement", "post_hoc")
 EXIT_ACTIVATION_FAILURE = 70
+MAX_FIXTURE_BYTES = 1024 * 1024
+_MAX_REFINEMENT_ROUNDS = 8
+_MAX_INDIVIDUALIZE_STEPS = 16
+_MAX_LIST_CONTEXT_ITEMS = 64
 TRANSITIONS = {
     ("error", "clear", "flag"): "added_detections",
     ("clean", "clear", "flag"): "new_false_positives",
@@ -572,9 +578,275 @@ def verify_markdown(document, observed):
     return lines[first + 1:last] == expected
 
 
+def _is_reparse_or_symlink(path: Path) -> bool:
+    try:
+        st = os.lstat(path)
+    except OSError:
+        return False
+    if stat.S_ISLNK(st.st_mode):
+        return True
+    reparse_flag = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+    return bool(reparse_flag and (getattr(st, "st_file_attributes", 0) & reparse_flag))
+
+
+def _resolve_fixtures_dir(fixtures_dir: Path) -> Path:
+    if _is_reparse_or_symlink(fixtures_dir):
+        raise ValueError("fixtures-dir must not be a symlink or reparse point")
+    try:
+        st = os.lstat(fixtures_dir)
+    except OSError as exc:
+        raise ValueError("fixtures-dir does not exist or is unreadable") from exc
+    if not stat.S_ISDIR(st.st_mode):
+        raise ValueError("fixtures-dir must be a directory")
+    return fixtures_dir.resolve(strict=True)
+
+
+def _safe_case_filename(case_id: str) -> str:
+    if (not case_id or "/" in case_id or "\\" in case_id or ":" in case_id
+            or "\x00" in case_id or case_id in (".", "..")):
+        raise ValueError(f"{case_id!r}: unsafe case ID for fixture filename")
+    filename = f"{case_id}.json"
+    candidate = Path(filename)
+    if candidate.is_absolute() or candidate.name != filename or ".." in candidate.parts:
+        raise ValueError(f"{case_id!r}: unsafe case ID for fixture filename")
+    return filename
+
+
+def _load_verified_fixture(base: Path, case_id: str, expected_sha256: str) -> dict:
+    filename = _safe_case_filename(case_id)
+    path = base / filename
+    if _is_reparse_or_symlink(path):
+        raise ValueError(f"{case_id!r}: fixture file must not be a symlink or reparse point")
+    try:
+        st = os.lstat(path)
+    except OSError as exc:
+        raise ValueError(f"{case_id!r}: fixture file missing in fixtures-dir") from exc
+    if not stat.S_ISREG(st.st_mode):
+        raise ValueError(f"{case_id!r}: fixture path must be a regular file")
+    if path.resolve(strict=True).parent != base:
+        raise ValueError(f"{case_id!r}: fixture path escapes fixtures-dir")
+    if st.st_size > MAX_FIXTURE_BYTES:
+        raise ValueError(f"{case_id!r}: fixture exceeds {MAX_FIXTURE_BYTES} byte limit")
+    with path.open("rb") as stream:
+        raw = stream.read(MAX_FIXTURE_BYTES + 1)
+    if len(raw) > MAX_FIXTURE_BYTES:
+        raise ValueError(f"{case_id!r}: fixture exceeds {MAX_FIXTURE_BYTES} byte limit")
+    actual_sha256 = hashlib.sha256(raw).hexdigest()
+    if actual_sha256 != expected_sha256:
+        raise ValueError(f"{case_id!r}: fixture file SHA-256 differs from plan")
+    try:
+        data = json.loads(raw.decode("utf-8-sig"), object_pairs_hook=unique_object,
+                          parse_constant=invalid_constant)
+    except (UnicodeDecodeError, ValueError, RecursionError) as exc:
+        raise ValueError(f"{case_id!r}: invalid fixture JSON: {exc}") from exc
+    if not isinstance(data, dict):
+        raise ValueError(f"{case_id!r}: fixture must be a JSON object")
+    return data
+
+
+def _compact_json(value: object) -> str:
+    return json.dumps(value, sort_keys=True, ensure_ascii=False,
+                      separators=(",", ":"), allow_nan=False)
+
+
+def _typed_scalar(value: object) -> object:
+    if value is None:
+        return ["n"]
+    if isinstance(value, bool):
+        return ["b", value]
+    if isinstance(value, int):
+        return ["i", value]
+    if isinstance(value, float):
+        return ["f", repr(0.0 if value == 0.0 else value)]
+    return ["s", value]
+
+
+def _typed_canonical(node: object) -> object:
+    if isinstance(node, dict):
+        return {k: _typed_canonical(v) for k, v in sorted(node.items())}
+    if isinstance(node, list):
+        return [_typed_canonical(item) for item in node]
+    return _typed_scalar(node)
+
+
+def canonical_json_sha256(data: object) -> str:
+    """Whitespace- and key-order-invariant SHA-256 preserving exact JSON types and list order."""
+    return hashlib.sha256(_compact_json(_typed_canonical(data)).encode("utf-8")).hexdigest()
+
+
+def _mask_node(node: object, self_str: str, colors: dict[str, int] | None) -> object:
+    if isinstance(node, dict):
+        return {k: _mask_node(v, self_str, colors) for k, v in sorted(node.items())}
+    if isinstance(node, list):
+        items = [_mask_node(item, self_str, colors) for item in node]
+        return sorted(items, key=_compact_json)
+    if isinstance(node, str):
+        if node == self_str:
+            return ["$SELF"]
+        return ["$OTHER"] if colors is None else ["$c", colors[node]]
+    return _typed_scalar(node)
+
+
+def _collect_contexts(node: object, path: tuple[str, ...], colors: dict[str, int] | None,
+                      contexts: dict[str, list[str]], *, root: bool = False) -> None:
+    if isinstance(node, dict):
+        for key, value in node.items():
+            if isinstance(value, str):
+                if not root:
+                    ctx = _compact_json([list(path) + [key], _mask_node(node, value, colors)])
+                    contexts.setdefault(value, []).append(ctx)
+            elif isinstance(value, (dict, list)):
+                _collect_contexts(value, path + (key,), colors, contexts, root=False)
+    elif isinstance(node, list):
+        item_path = path + ("[]",)
+        str_counts: dict[str, int] = {}
+        for item in node:
+            if isinstance(item, str):
+                str_counts[item] = str_counts.get(item, 0) + 1
+            elif isinstance(item, (dict, list)):
+                _collect_contexts(item, item_path, colors, contexts, root=False)
+        for token, count in str_counts.items():
+            if len(node) <= _MAX_LIST_CONTEXT_ITEMS:
+                ctx = _compact_json([list(item_path), _mask_node(node, token, colors)])
+            else:
+                ctx = _compact_json([list(item_path), len(node), count])
+            contexts.setdefault(token, []).extend([ctx] * count)
+
+
+def _refine_colors(data: object, colors: dict[str, int] | None) -> dict[str, int]:
+    contexts: dict[str, list[str]] = {}
+    _collect_contexts(data, (), colors, contexts, root=True)
+    if not contexts:
+        return {}
+    signatures: dict[str, tuple[int, tuple[str, ...]]] = {
+        token: (0 if colors is None else colors[token], tuple(sorted(ctxs)))
+        for token, ctxs in contexts.items()
+    }
+    unique_sigs = sorted(set(signatures.values()))
+    rank = {sig: idx for idx, sig in enumerate(unique_sigs)}
+    return {token: rank[sig] for token, sig in signatures.items()}
+
+
+def _stabilize_colors(data: object, colors: dict[str, int] | None) -> dict[str, int]:
+    current = _refine_colors(data, colors)
+    if not current:
+        return {}
+    for _ in range(_MAX_REFINEMENT_ROUNDS):
+        refined = _refine_colors(data, current)
+        if len(set(refined.values())) == len(set(current.values())):
+            return refined
+        current = refined
+    return current
+
+
+def _canonical_string_map(data: object) -> dict[str, str]:
+    colors = _stabilize_colors(data, None)
+    if not colors:
+        return {}
+    for _ in range(_MAX_INDIVIDUALIZE_STEPS):
+        groups: dict[int, list[str]] = {}
+        for token, cid in colors.items():
+            groups.setdefault(cid, []).append(token)
+        tied = next((cid for cid in sorted(groups) if len(groups[cid]) > 1), None)
+        if tied is None:
+            break
+        bumped = dict(colors)
+        bumped[groups[tied][0]] = max(colors.values()) + 1
+        colors = _stabilize_colors(data, bumped)
+    ordered = sorted(colors, key=lambda tok: colors[tok])
+    return {tok: f"$s{idx}" for idx, tok in enumerate(ordered)}
+
+
+def _alpha_normalize(node: object, mapping: dict[str, str], *, root: bool = False) -> object:
+    if isinstance(node, dict):
+        return {
+            k: (["s_top", v] if root and isinstance(v, str) else _alpha_normalize(v, mapping, root=False))
+            for k, v in sorted(node.items())
+        }
+    if isinstance(node, list):
+        items = [_alpha_normalize(item, mapping, root=False) for item in node]
+        return sorted(items, key=_compact_json)
+    if isinstance(node, str):
+        return ["s", mapping[node]]
+    return _typed_scalar(node)
+
+
+def alpha_structural_sha256(data: object) -> str:
+    """Row-order-independent and domain-string alpha-renamed structural SHA-256."""
+    mapping = _canonical_string_map(data)
+    normalized = _alpha_normalize(data, mapping, root=True)
+    return hashlib.sha256(_compact_json(normalized).encode("utf-8")).hexdigest()
+
+
+def _duplicate_groups(buckets: dict[str, list[str]], cases: dict) -> list[dict[str, object]]:
+    groups: list[dict[str, object]] = []
+    for digest in sorted(buckets):
+        ids = sorted(buckets[digest])
+        if len(ids) < 2:
+            continue
+        exposures = sorted({cases[cid]["exposure"] for cid in ids})
+        groups.append({
+            "digest": digest,
+            "case_ids": ids,
+            "exposures": exposures,
+            "cross_split": len(exposures) > 1,
+        })
+    return groups
+
+
+def _collect_leakage_ids(all_groups: list[dict[str, object]], cases: dict) -> tuple[list[str], list[str]]:
+    cross_ids: set[str] = set()
+    within_ids: set[str] = set()
+    for group in all_groups:
+        ids = group["case_ids"]
+        assert isinstance(ids, list)
+        if group["cross_split"]:
+            cross_ids.update(ids)
+        by_exposure: dict[str, list[str]] = {}
+        for cid in ids:
+            by_exposure.setdefault(cases[cid]["exposure"], []).append(cid)
+        for members in by_exposure.values():
+            if len(members) >= 2:
+                within_ids.update(members)
+    return sorted(cross_ids), sorted(within_ids)
+
+
+def audit_fixture_leakage(cases: dict, fixtures_dir: Path) -> dict[str, object]:
+    """Detect cosmetic (canonical JSON) and alpha-renamed structural duplicate fixtures."""
+    base = _resolve_fixtures_dir(fixtures_dir)
+    canonical_buckets: dict[str, list[str]] = {}
+    alpha_buckets: dict[str, list[str]] = {}
+    for case_id, case in cases.items():
+        data = _load_verified_fixture(base, case_id, case["fixture_sha256"])
+        canonical_buckets.setdefault(canonical_json_sha256(data), []).append(case_id)
+        alpha_buckets.setdefault(alpha_structural_sha256(data), []).append(case_id)
+    canonical_dups = _duplicate_groups(canonical_buckets, cases)
+    alpha_dups = _duplicate_groups(alpha_buckets, cases)
+    cross_ids, within_ids = _collect_leakage_ids(canonical_dups + alpha_dups, cases)
+    if cross_ids and within_ids:
+        status = "both_failed"
+    elif cross_ids:
+        status = "cross_split_leakage"
+    elif within_ids:
+        status = "within_split_duplicate"
+    else:
+        status = "passed"
+    return {
+        "schema": "semantic-crosscheck/fixture-leakage-audit/v1",
+        "status": status,
+        "passed": status == "passed",
+        "cases_checked": len(cases),
+        "canonical_duplicate_groups": canonical_dups,
+        "alpha_duplicate_groups": alpha_dups,
+        "cross_split_case_ids": cross_ids,
+        "within_split_case_ids": within_ids,
+    }
+
+
 def seal_plan(args) -> tuple[int, dict[str, object]]:
     if any((args.baseline, args.candidate, args.claims, args.check_markdown,
-            args.check_activation, args.strict_original)):
+            args.check_activation, args.strict_original,
+            getattr(args, "fixtures_dir", None), getattr(args, "check_fixture_leakage", False))):
         raise ValueError("--seal-plan cannot be combined with comparison options")
     digests: dict[str, str] = {}
     plan = read_object(args.plan, "plan", digests)
@@ -631,6 +903,14 @@ def compare(args):
         report["activation_audit"] = activation_report
     if args.check_markdown and not args.claims:
         raise ValueError("--check-markdown requires --claims")
+    check_fixture_leakage = getattr(args, "check_fixture_leakage", False)
+    fixtures_dir = getattr(args, "fixtures_dir", None)
+    if check_fixture_leakage and fixtures_dir is None:
+        raise ValueError("--check-fixture-leakage requires --fixtures-dir")
+    fixture_audit = None
+    if fixtures_dir is not None:
+        fixture_audit = audit_fixture_leakage(cases, fixtures_dir)
+        report["fixture_leakage_audit"] = fixture_audit
     if args.claims:
         claims = read_object(args.claims, "claims", digests)
         observed, mismatches = verify_claims(claims, groups, pairs, plan.get("registered_claims"))
@@ -642,7 +922,9 @@ def compare(args):
         return EXIT_ACTIVATION_FAILURE, report
     strict_fail = (getattr(args, "strict_original", False) and amendment_audit is not None
                    and bool(amendment_audit["post_hoc_altered_summary"]))
-    failed = bool(report.get("claim_mismatches")) or report.get("markdown_matches") is False or strict_fail
+    leakage_fail = check_fixture_leakage and fixture_audit is not None and not fixture_audit["passed"]
+    failed = (bool(report.get("claim_mismatches")) or report.get("markdown_matches") is False
+              or strict_fail or leakage_fail)
     return int(failed), report
 
 
@@ -659,6 +941,10 @@ def main():
                         help="require treatment added_check activation and zero baseline leakage (exit 70 on failure)")
     parser.add_argument("--strict-original", action="store_true",
                         help="fail with exit 1 when any post_hoc amendment alters the pre-registered summary")
+    parser.add_argument("--fixtures-dir", type=Path,
+                        help="directory holding <case_id>.json fixtures verified against plan fixture_sha256")
+    parser.add_argument("--check-fixture-leakage", action="store_true",
+                        help="fail with exit 1 when canonical JSON or alpha-renamed structural duplicate fixtures exist")
     try:
         code, report = compare(parser.parse_args())
     except (ValueError, OSError) as exc:

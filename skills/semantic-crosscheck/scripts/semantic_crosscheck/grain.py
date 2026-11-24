@@ -25,6 +25,10 @@ _RLS_NOT_PROVEN = (
     'Row-level security is active on a checked relation; another database role '
     '(such as Cube) may see a different row subset.'
 )
+_CHILD_RLS_NOT_PROVEN = (
+    'A child partition or inherited relation has row-level security enabled while the parent does not; '
+    'querying the parent vs. a child relation can enforce different row-visibility policies.'
+)
 
 
 def summarizability_failures(evidence: dict, allow_excluded_rows: bool) -> list[str]:
@@ -290,8 +294,18 @@ def evaluate(conn, actual, max_rows):
         meta_rows = db.rows(conn, '''SELECT c.relkind,
           coalesce(c.relrowsecurity, false) AS relrowsecurity,
           coalesce((SELECT r.rolbypassrls FROM pg_catalog.pg_roles r WHERE r.rolname = current_user), false) AS rolbypassrls,
-          coalesce((SELECT bool_or(i.indisunique AND i.indnullsnotdistinct)
-                    FROM pg_catalog.pg_index i WHERE i.indrelid = c.oid), false) AS unique_nulls_not_distinct
+          coalesce((SELECT bool_or(i.indisunique AND i.indisvalid AND i.indisready
+                                   AND i.indpred IS NULL AND i.indexprs IS NULL
+                                   AND i.indnullsnotdistinct)
+                    FROM pg_catalog.pg_index i WHERE i.indrelid = c.oid), false) AS unique_nulls_not_distinct,
+          coalesce((WITH RECURSIVE parts(oid) AS (
+                      SELECT inh.inhrelid FROM pg_catalog.pg_inherits inh WHERE inh.inhparent = c.oid
+                      UNION
+                      SELECT inh.inhrelid FROM pg_catalog.pg_inherits inh JOIN parts p ON inh.inhparent = p.oid
+                    )
+                    SELECT bool_or(ch.relrowsecurity)
+                    FROM parts p
+                    JOIN pg_catalog.pg_class ch ON ch.oid = p.oid), false) AS child_partition_row_security
           FROM pg_catalog.pg_class c
           JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
           WHERE n.nspname = :schema AND c.relname = :table''', schema=schema, table=table)
@@ -301,6 +315,7 @@ def evaluate(conn, actual, max_rows):
         row_security = bool(meta['relrowsecurity'])
         bypass_rls = bool(meta['rolbypassrls'])
         catalog_flags[side + '_row_security'] = row_security
+        catalog_flags[side + '_child_partition_row_security'] = bool(meta.get('child_partition_row_security', False))
         catalog_flags[side + '_unique_nulls_not_distinct'] = bool(meta['unique_nulls_not_distinct'])
         if row_security and not bypass_rls:
             return {**catalog_flags, 'reason': 'row_level_security', 'complete': False}
@@ -384,10 +399,14 @@ def run(cfg, args, out: Path) -> Result:
         conn = db.connect(cfg.source.dsn_env)
         with db.read_only(conn, timeout, isolation='repeatable read'):
             rls_seen = False
+            child_rls_seen = False
             for index, (contract, actual) in enumerate(zip(spec['contracts'], operations), 1):
                 evidence = evaluate(conn, actual, max_rows)
                 if evidence.get('source_row_security') or evidence.get('node_row_security'):
                     rls_seen = True
+                if ((evidence.get('source_child_partition_row_security') and not evidence.get('source_row_security'))
+                        or (evidence.get('node_child_partition_row_security') and not evidence.get('node_row_security'))):
+                    child_rls_seen = True
                 if not evidence['complete']:
                     status = 'not_run'
                 else:
@@ -408,6 +427,8 @@ def run(cfg, args, out: Path) -> Result:
                            **evidence)
             if rls_seen:
                 result.not_proven.append(_RLS_NOT_PROVEN)
+            if child_rls_seen:
+                result.not_proven.append(_CHILD_RLS_NOT_PROVEN)
         # Bind completion to exactly the files checked at startup.
         if hashlib.sha256(_read(source)).hexdigest() != spec['spec_sha256'] or hashlib.sha256(Path(cfg.path).read_bytes()).hexdigest() != config_sha:
             raise ValueError('input changed')

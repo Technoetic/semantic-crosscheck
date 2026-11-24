@@ -306,3 +306,14 @@ All v0.33.0 additions are original Python standard-library implementations with 
 - strict JSON parsing and canonical `manifest_sha256` self-verification with `unsealed_legacy` backward compatibility and structured `near_misses` drift codes for Cube `installed.json` (`cube_run.py`, `cube_install.py`, `doctor.py`), plus the read-only host/platform/CI verification boundary matrix (`coverage_matrix.py`, `doctor --coverage`).
 
 `ai3inc/foldboost` is an existing Reference Atlas source previously recorded for `agentic-vault` `v0.56.0` and reused here for `semantic-crosscheck`'s paired detector release ledger, Cube adapter installation integrity, and platform verification disclosures. No biomolecular or GPU/CUDA adapters, `.pth` interpreter hooks, Unix-socket resident servers, NumPy dependencies, or external source files from `ai3inc/foldboost` are copied, installed, or bundled.
+
+## v0.34.0 PostgreSQL 17 catalog precision, zero-extra-round-trip relation disclosures and paired fixture leakage audit
+
+All v0.34.0 additions are original Python standard-library and `pg8000` implementations with zero new runtime dependencies. They follow:
+
+- [PostgreSQL 17 Documentation — 52.26. `pg_index`](https://www.postgresql.org/docs/17/catalog-pg-index.html) for narrowing `unique_nulls_not_distinct` inspection in `doctor.py` and `grain.py` to valid, ready, non-partial, non-expression unique indexes (`indisunique AND indisvalid AND indisready AND indpred IS NULL AND indexprs IS NULL AND indnullsnotdistinct`);
+- [PostgreSQL 17 Documentation — 52.11. `pg_class`](https://www.postgresql.org/docs/17/catalog-pg-class.html) for zero-extra-round-trip `relkind`, `relispopulated` (fail-closed unpopulated materialized view detection), `relhasrules` (ordinary/partitioned table rewrite-rule disclosure) and foreign-table (`relkind = 'f'`) snapshot-isolation disclosures in `doctor.py`;
+- [PostgreSQL 17 Documentation — 52.13. `pg_constraint`](https://www.postgresql.org/docs/17/catalog-pg-constraint.html) for zero-extra-round-trip unvalidated `CHECK` / `FOREIGN KEY` (`NOT VALID`, `convalidated = false`) constraint counting and disclosure in `doctor.py`;
+- [PostgreSQL 17 Documentation — 5.12. Table Partitioning](https://www.postgresql.org/docs/17/ddl-partitioning.html) for recursive `pg_inherits` child-partition RLS asymmetry detection (`child_partition_row_security`) in `doctor.py` and `grain.py`.
+
+The opt-in `--fixtures-dir` / `--check-fixture-leakage` structural deduplication audit in `tools/paired_release.py` is an original Python standard-library implementation with zero new dependencies. No external source code or third-party package from these references is copied, installed, or bundled.

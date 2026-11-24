@@ -588,6 +588,287 @@ class PairedReleaseTest(unittest.TestCase):
                 self.assertEqual(code_ts, 2, rep_ts)
                 self.assertIn("error", rep_ts)
 
+    def _build_fixture_suite(self, case_specs: list[tuple[str, str, str, bytes]]) -> Path:
+        """Create a cases/ directory and matching plan/baseline/candidate receipts."""
+        cases_dir = self.directory / "cases"
+        cases_dir.mkdir(exist_ok=True)
+        n = len(case_specs)
+        self.plan = dict(schema_version=1, experiment="leakage", added_check="new",
+                         baseline_checks=["old"], budget=max(n, 1), cases=[])
+        self.baseline = dict(schema_version=1, arm="baseline", checks=["old"],
+                             budget=max(n, 1), observations=[])
+        self.candidate = dict(schema_version=1, arm="candidate", checks=["new", "old"],
+                              budget=max(n, 1), observations=[])
+        for cid, expected, exposure, raw in case_specs:
+            (cases_dir / f"{cid}.json").write_bytes(raw)
+            digest = hashlib.sha256(raw).hexdigest()
+            identity = dict(id=cid, fixture_sha256=digest)
+            self.plan["cases"].append(dict(identity, expected=expected, exposure=exposure))
+            self.baseline["observations"].append(dict(identity, status="clear"))
+            self.candidate["observations"].append(dict(identity, status="flag"))
+        self.refresh_plan()
+        return cases_dir
+
+    def test_fixture_leakage_audit_passes_on_repository_example_corpus(self):
+        root = SCRIPT.parents[1]
+        example = root / "examples" / "paired-release"
+        result = subprocess.run(
+            [
+                sys.executable, str(SCRIPT),
+                "--plan", str(example / "plan.json"),
+                "--baseline", str(example / "baseline.json"),
+                "--candidate", str(example / "candidate.json"),
+                "--fixtures-dir", str(example / "cases"),
+                "--check-fixture-leakage",
+            ],
+            cwd=root, capture_output=True, text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        report = json.loads(result.stdout)
+        audit = report["fixture_leakage_audit"]
+        self.assertEqual(audit["schema"], "semantic-crosscheck/fixture-leakage-audit/v1")
+        self.assertEqual(audit["status"], "passed")
+        self.assertTrue(audit["passed"])
+        self.assertEqual(audit["cases_checked"], 10)
+        self.assertEqual(audit["canonical_duplicate_groups"], [])
+        self.assertEqual(audit["alpha_duplicate_groups"], [])
+        self.assertEqual(audit["cross_split_case_ids"], [])
+        self.assertEqual(audit["within_split_case_ids"], [])
+
+    def test_fixture_leakage_detects_cosmetic_and_alpha_renamed_row_shuffled_clones(self):
+        dev_raw = (
+            '{\n'
+            '  "facts": [{"sku": "P", "units": 3}, {"sku": "P", "units": 7}, {"sku": "Q", "units": 11}],\n'
+            '  "tags": [{"sku": "P", "tag": "cut"}, {"sku": "P", "tag": "drill"}, {"sku": "Q", "tag": "cut"}],\n'
+            '  "gold_mode": "tag_join",\n'
+            '  "model_mode": "tag_join",\n'
+            '  "expected_rows": [{"sku": "P", "units": 10}, {"sku": "Q", "units": 11}]\n'
+            '}\n'
+        ).encode("utf-8")
+        # Reordered JSON keys + compact spacing -> distinct raw SHA-256, identical canonical JSON.
+        cosmetic_clone = (
+            '{"expected_rows":[{"units":10,"sku":"P"},{"units":11,"sku":"Q"}],'
+            '"model_mode":"tag_join","gold_mode":"tag_join",'
+            '"tags":[{"tag":"cut","sku":"P"},{"tag":"drill","sku":"P"},{"tag":"cut","sku":"Q"}],'
+            '"facts":[{"units":3,"sku":"P"},{"units":7,"sku":"P"},{"units":11,"sku":"Q"}]}'
+        ).encode("utf-8")
+        # Renamed SKUs (P->Z, Q->A), renamed tags (cut->alpha, drill->beta) AND reversed row order.
+        alpha_clone = json.dumps({
+            "facts": [{"sku": "A", "units": 11}, {"sku": "Z", "units": 7}, {"sku": "Z", "units": 3}],
+            "tags": [{"sku": "A", "tag": "alpha"}, {"sku": "Z", "tag": "beta"}, {"sku": "Z", "tag": "alpha"}],
+            "gold_mode": "tag_join",
+            "model_mode": "tag_join",
+            "expected_rows": [{"sku": "A", "units": 11}, {"sku": "Z", "units": 10}],
+        }).encode("utf-8")
+        # Distinct numeric value (units 12 instead of 11) and distinct top-level mode must NOT collide.
+        distinct_num = json.dumps({
+            "facts": [{"sku": "P", "units": 3}, {"sku": "P", "units": 7}, {"sku": "Q", "units": 12}],
+            "tags": [{"sku": "P", "tag": "cut"}, {"sku": "P", "tag": "drill"}, {"sku": "Q", "tag": "cut"}],
+            "gold_mode": "tag_join",
+            "model_mode": "tag_join",
+            "expected_rows": [{"sku": "P", "units": 10}, {"sku": "Q", "units": 12}],
+        }).encode("utf-8")
+        distinct_mode = json.dumps({
+            "facts": [{"sku": "P", "units": 3}, {"sku": "P", "units": 7}, {"sku": "Q", "units": 11}],
+            "tags": [{"sku": "P", "tag": "cut"}, {"sku": "P", "tag": "drill"}, {"sku": "Q", "tag": "cut"}],
+            "gold_mode": "all",
+            "model_mode": "tag_join",
+            "expected_rows": [{"sku": "P", "units": 10}, {"sku": "Q", "units": 11}],
+        }).encode("utf-8")
+
+        cases_dir = self._build_fixture_suite([
+            ("dev-a", "error", "development", dev_raw),
+            ("held-cosmetic", "error", "heldout", cosmetic_clone),
+            ("held-alpha", "error", "heldout", alpha_clone),
+            ("held-num", "error", "heldout", distinct_num),
+            ("held-mode", "error", "heldout", distinct_mode),
+        ])
+        # Without --check-fixture-leakage, --fixtures-dir audits and reports while keeping exit 0.
+        code_info, rep_info = self.compare(extra_args=("--fixtures-dir", str(cases_dir)))
+        self.assertEqual(code_info, 0, rep_info)
+        audit = rep_info["fixture_leakage_audit"]
+        self.assertFalse(audit["passed"])
+        self.assertEqual(audit["status"], "both_failed")
+        self.assertEqual(len(audit["canonical_duplicate_groups"]), 1)
+        self.assertEqual(audit["canonical_duplicate_groups"][0]["case_ids"], ["dev-a", "held-cosmetic"])
+        self.assertTrue(audit["canonical_duplicate_groups"][0]["cross_split"])
+        self.assertEqual(len(audit["alpha_duplicate_groups"]), 1)
+        self.assertEqual(audit["alpha_duplicate_groups"][0]["case_ids"], ["dev-a", "held-alpha", "held-cosmetic"])
+        self.assertEqual(audit["cross_split_case_ids"], ["dev-a", "held-alpha", "held-cosmetic"])
+        self.assertEqual(audit["within_split_case_ids"], ["held-alpha", "held-cosmetic"])
+
+        # With --check-fixture-leakage, exit code becomes 1.
+        code_fail, _ = self.compare(extra_args=("--fixtures-dir", str(cases_dir), "--check-fixture-leakage"))
+        self.assertEqual(code_fail, 1)
+
+        # Pure cross-split alpha clone only -> status="cross_split_leakage", exit 1.
+        cases_cross = self._build_fixture_suite([
+            ("dev-a", "error", "development", dev_raw),
+            ("held-alpha", "error", "heldout", alpha_clone),
+        ])
+        code_cross, rep_cross = self.compare(
+            extra_args=("--fixtures-dir", str(cases_cross), "--check-fixture-leakage")
+        )
+        self.assertEqual(code_cross, 1)
+        self.assertEqual(rep_cross["fixture_leakage_audit"]["status"], "cross_split_leakage")
+        self.assertEqual(rep_cross["fixture_leakage_audit"]["canonical_duplicate_groups"], [])
+        self.assertEqual(rep_cross["fixture_leakage_audit"]["cross_split_case_ids"], ["dev-a", "held-alpha"])
+        self.assertEqual(rep_cross["fixture_leakage_audit"]["within_split_case_ids"], [])
+
+        # Pure within-split duplicate (coupled symmetric orbit A->tA, B->tB renamed Z->y, A->x).
+        sym_1 = json.dumps({
+            "facts": [{"sku": "A", "units": 5}, {"sku": "B", "units": 5}],
+            "tags": [{"sku": "A", "tag": "tA"}, {"sku": "B", "tag": "tB"}],
+            "gold_mode": "tag_join",
+            "model_mode": "tag_join",
+            "expected_rows": [{"sku": "A", "units": 5}, {"sku": "B", "units": 5}],
+        }).encode("utf-8")
+        sym_2 = json.dumps({
+            "facts": [{"sku": "Z", "units": 5}, {"sku": "A", "units": 5}],
+            "tags": [{"sku": "A", "tag": "x"}, {"sku": "Z", "tag": "y"}],
+            "gold_mode": "tag_join",
+            "model_mode": "tag_join",
+            "expected_rows": [{"sku": "Z", "units": 5}, {"sku": "A", "units": 5}],
+        }).encode("utf-8")
+        cases_within = self._build_fixture_suite([
+            ("held-s1", "clean", "heldout", sym_1),
+            ("held-s2", "clean", "heldout", sym_2),
+        ])
+        code_within, rep_within = self.compare(
+            extra_args=("--fixtures-dir", str(cases_within), "--check-fixture-leakage")
+        )
+        self.assertEqual(code_within, 1)
+        self.assertEqual(rep_within["fixture_leakage_audit"]["status"], "within_split_duplicate")
+        self.assertEqual(rep_within["fixture_leakage_audit"]["within_split_case_ids"], ["held-s1", "held-s2"])
+        self.assertEqual(rep_within["fixture_leakage_audit"]["cross_split_case_ids"], [])
+
+        # Numeric vs boolean distinction (1 vs true) must not collide.
+        bool_vs_int_1 = json.dumps({"rows": [{"k": "A", "v": 1}]}).encode("utf-8")
+        bool_vs_int_2 = json.dumps({"rows": [{"k": "B", "v": True}]}).encode("utf-8")
+        cases_types = self._build_fixture_suite([
+            ("dev-int", "clean", "development", bool_vs_int_1),
+            ("held-bool", "clean", "heldout", bool_vs_int_2),
+        ])
+        code_types, rep_types = self.compare(
+            extra_args=("--fixtures-dir", str(cases_types), "--check-fixture-leakage")
+        )
+        self.assertEqual(code_types, 0, rep_types)
+        self.assertTrue(rep_types["fixture_leakage_audit"]["passed"])
+
+        # 1-WL-regular non-automorphic disjoint cycles (2-cycle + 3-cycle) remain row-order and renaming invariant.
+        cyc_1 = json.dumps({
+            "edges": [
+                {"p": "A", "c": "B"}, {"p": "B", "c": "A"},
+                {"p": "C", "c": "D"}, {"p": "D", "c": "E"}, {"p": "E", "c": "C"},
+            ],
+        }).encode("utf-8")
+        cyc_2 = json.dumps({
+            "edges": [
+                {"p": "n3", "c": "n4"}, {"p": "n5", "c": "n3"}, {"p": "n4", "c": "n5"},
+                {"p": "n2", "c": "n1"}, {"p": "n1", "c": "n2"},
+            ],
+        }).encode("utf-8")
+        cases_cyc = self._build_fixture_suite([
+            ("dev-cyc", "error", "development", cyc_1),
+            ("held-cyc", "error", "heldout", cyc_2),
+        ])
+        code_cyc, rep_cyc = self.compare(
+            extra_args=("--fixtures-dir", str(cases_cyc), "--check-fixture-leakage")
+        )
+        self.assertEqual(code_cyc, 1)
+        self.assertEqual(rep_cyc["fixture_leakage_audit"]["status"], "cross_split_leakage")
+        self.assertEqual(rep_cyc["fixture_leakage_audit"]["cross_split_case_ids"], ["dev-cyc", "held-cyc"])
+
+        # Public helper handles root scalar strings cleanly without KeyError.
+        tools_dir = str(SCRIPT.parent)
+        if tools_dir not in sys.path:
+            sys.path.insert(0, tools_dir)
+        import paired_release
+        self.assertNotEqual(
+            paired_release.alpha_structural_sha256("hello"),
+            paired_release.alpha_structural_sha256("world"),
+        )
+
+    def test_fixture_leakage_validation_fails_closed_with_exit_two(self):
+        # --check-fixture-leakage without --fixtures-dir -> exit 2.
+        code, rep = self.compare(extra_args=("--check-fixture-leakage",))
+        self.assertEqual(code, 2)
+        self.assertIn("--fixtures-dir", rep["error"])
+
+        # Missing fixtures-dir -> exit 2.
+        code_missing_dir, _ = self.compare(extra_args=("--fixtures-dir", str(self.directory / "no-such-dir")))
+        self.assertEqual(code_missing_dir, 2)
+
+        # --seal-plan combined with --fixtures-dir -> exit 2.
+        cases_dir = self._build_fixture_suite([("c1", "clean", "development", b'{"v": 1}\n')])
+        seal = subprocess.run(
+            [sys.executable, str(SCRIPT), "--plan", "plan.json", "--seal-plan", "--fixtures-dir", str(cases_dir)],
+            cwd=self.directory, capture_output=True, text=True,
+        )
+        self.assertEqual(seal.returncode, 2)
+
+        # Missing fixture file -> exit 2.
+        (cases_dir / "c1.json").unlink()
+        self.assertEqual(self.compare(extra_args=("--fixtures-dir", str(cases_dir)))[0], 2)
+
+        # Fixture SHA-256 mismatch -> exit 2.
+        (cases_dir / "c1.json").write_bytes(b'{"v": 2}\n')
+        code_hash, rep_hash = self.compare(extra_args=("--fixtures-dir", str(cases_dir)))
+        self.assertEqual(code_hash, 2)
+        self.assertIn("SHA-256", rep_hash["error"])
+
+        # Duplicate JSON key, NaN, non-object, or deeply nested fixture -> exit 2 with sanitized error.
+        deep_nested = (b'{"a":' + b'[' * 1200 + b'1' + b']' * 1200 + b'}')
+        for bad_raw in (b'{"secret_col": 1, "secret_col": 2}\n', b'{"v": NaN}\n', b'[1, 2]\n', deep_nested):
+            with self.subTest(bad_len=len(bad_raw)):
+                bad_dir = self._build_fixture_suite([("c-bad", "clean", "development", bad_raw)])
+                code_b, rep_b = self.compare(extra_args=("--fixtures-dir", str(bad_dir)))
+                self.assertEqual(code_b, 2)
+                self.assertNotIn("secret_col", rep_b["error"])
+                self.assertNotIn(str(self.directory), rep_b["error"])
+
+        # Unsafe case_id path traversal, control characters, and Windows reserved device names -> exit 2.
+        for bad_id in ("../escape", "sub/case", "sub\\case", "a:b", "bad\nid", "bad\x1bid", "CON", "nul", "COM1.ext"):
+            with self.subTest(bad_id=bad_id):
+                self.plan = dict(schema_version=1, experiment="t", added_check="new",
+                                 baseline_checks=["old"], budget=1,
+                                 cases=[{"id": bad_id, "expected": "clean", "exposure": "development",
+                                         "fixture_sha256": hashlib.sha256(b"{}").hexdigest()}])
+                self.baseline = dict(schema_version=1, arm="baseline", checks=["old"], budget=1,
+                                     observations=[{"id": bad_id, "status": "clear",
+                                                    "fixture_sha256": hashlib.sha256(b"{}").hexdigest()}])
+                self.candidate = dict(schema_version=1, arm="candidate", checks=["new", "old"], budget=1,
+                                      observations=[{"id": bad_id, "status": "clear",
+                                                     "fixture_sha256": hashlib.sha256(b"{}").hexdigest()}])
+                self.refresh_plan()
+                code_bad, rep_bad = self.compare(extra_args=("--fixtures-dir", str(cases_dir)))
+                self.assertEqual(code_bad, 2)
+                self.assertIn("unsafe case ID", rep_bad["error"])
+
+        # Symlinked fixture file (when OS allows symlink creation) -> exit 2.
+        sym_dir = self.directory / "sym_cases"
+        sym_dir.mkdir()
+        target = self.directory / "outside.json"
+        target.write_bytes(b'{"v": 1}\n')
+        link = sym_dir / "c-link.json"
+        try:
+            link.symlink_to(target)
+        except OSError:
+            return
+        digest = hashlib.sha256(b'{"v": 1}\n').hexdigest()
+        self.plan = dict(schema_version=1, experiment="t", added_check="new",
+                         baseline_checks=["old"], budget=1,
+                         cases=[{"id": "c-link", "expected": "clean", "exposure": "development",
+                                 "fixture_sha256": digest}])
+        self.baseline = dict(schema_version=1, arm="baseline", checks=["old"], budget=1,
+                             observations=[{"id": "c-link", "status": "clear", "fixture_sha256": digest}])
+        self.candidate = dict(schema_version=1, arm="candidate", checks=["new", "old"], budget=1,
+                              observations=[{"id": "c-link", "status": "clear", "fixture_sha256": digest}])
+        self.refresh_plan()
+        code_sym, rep_sym = self.compare(extra_args=("--fixtures-dir", str(sym_dir)))
+        self.assertEqual(code_sym, 2)
+        self.assertIn("symlink", rep_sym["error"])
+
 
 if __name__ == "__main__":
     unittest.main()

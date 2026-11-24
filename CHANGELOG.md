@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.34.0] - 2026-11-24
+
+- Fix PostgreSQL 17 `pg_index` `unique_nulls_not_distinct` catalog precision in `doctor.py` and `grain.py` by filtering `indisunique AND indisvalid AND indisready AND indpred IS NULL AND indexprs IS NULL AND indnullsnotdistinct`, eliminating false positives from invalid, partial (`WHERE ...`), and expression (`lower(...)`) unique indexes.
+- Add zero-extra-round-trip PostgreSQL 17 catalog guards to `doctor.py` (within its single `_privileges_sql()` query per entity) and `grain.py` (preserving its 5-statement budget):
+  - Fail closed on unpopulated materialized views (`relkind = 'm'`, `relispopulated = false`) with an actionable `REFRESH MATERIALIZED VIEW` hint in `doctor`.
+  - Disclose unvalidated `CHECK`/`FOREIGN KEY` constraints (`pg_constraint.convalidated = false`), foreign-table `REPEATABLE READ` snapshot limits (`relkind = 'f'`), ordinary/partitioned table rewrite rules (`relhasrules = true`, never false-firing on views/MVs), and recursive `pg_inherits` child-partition RLS asymmetry (`child_partition_row_security = true` while parent `relrowsecurity = false`) in `doctor.py` and `grain.py`.
+- Add opt-in stdlib-only structural fixture leakage audit (`--fixtures-dir <DIR>`, `--check-fixture-leakage`) to `tools/paired_release.py` and `docs/paired-release.md`: verifies fixture paths (fail-closed against symlinks/reparse points, unsafe `case_id` traversal, size limits, strict JSON errors, and `fixture_sha256` mismatches) and detects both cosmetic (`canonical_json_sha256`) and row-order-independent domain-string α-renamed (`alpha_structural_sha256`) cross-split (`development`↔`heldout`) and within-split duplicate fixtures (0 collisions on `examples/paired-release/cases`, zero new runtime dependencies, 100% default backward compatibility).
+- Verified with expanded unit tests and live PostgreSQL 17 integration tests (`tests/test_rls_catalog_pg.py`, `tests/test_paired_release.py`). Engine fingerprints change; rerun operational stages after upgrading. See [release scope and verification](docs/releases/v0.34.0.md).
+
 ## [0.33.0] - 2026-11-23
 
 - Add pre-registered core sealing (`frozen_core_sha256`, `--seal-plan`), optional `claim_limit`, append-only `amendments[]` chronology validation (`pre_measurement` vs `post_hoc`), mandatory side-by-side `original_groups` / `amended_groups` disclosure (`amendment_audit`), and `--strict-original` enforcement to `tools/paired_release.py` (stdlib only, full v0.30–v0.32 compatibility).
@@ -1225,3 +1234,5 @@ First release. Release notes: [docs/releases/v0.1.0.md](docs/releases/v0.1.0.md)
 [0.32.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.32.0
 
 [0.33.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.33.0
+
+[0.34.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.34.0

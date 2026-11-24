@@ -755,6 +755,40 @@ class PairedReleaseTest(unittest.TestCase):
         self.assertEqual(code_types, 0, rep_types)
         self.assertTrue(rep_types["fixture_leakage_audit"]["passed"])
 
+        # 1-WL-regular non-automorphic disjoint cycles (2-cycle + 3-cycle) remain row-order and renaming invariant.
+        cyc_1 = json.dumps({
+            "edges": [
+                {"p": "A", "c": "B"}, {"p": "B", "c": "A"},
+                {"p": "C", "c": "D"}, {"p": "D", "c": "E"}, {"p": "E", "c": "C"},
+            ],
+        }).encode("utf-8")
+        cyc_2 = json.dumps({
+            "edges": [
+                {"p": "n3", "c": "n4"}, {"p": "n5", "c": "n3"}, {"p": "n4", "c": "n5"},
+                {"p": "n2", "c": "n1"}, {"p": "n1", "c": "n2"},
+            ],
+        }).encode("utf-8")
+        cases_cyc = self._build_fixture_suite([
+            ("dev-cyc", "error", "development", cyc_1),
+            ("held-cyc", "error", "heldout", cyc_2),
+        ])
+        code_cyc, rep_cyc = self.compare(
+            extra_args=("--fixtures-dir", str(cases_cyc), "--check-fixture-leakage")
+        )
+        self.assertEqual(code_cyc, 1)
+        self.assertEqual(rep_cyc["fixture_leakage_audit"]["status"], "cross_split_leakage")
+        self.assertEqual(rep_cyc["fixture_leakage_audit"]["cross_split_case_ids"], ["dev-cyc", "held-cyc"])
+
+        # Public helper handles root scalar strings cleanly without KeyError.
+        tools_dir = str(SCRIPT.parent)
+        if tools_dir not in sys.path:
+            sys.path.insert(0, tools_dir)
+        import paired_release
+        self.assertNotEqual(
+            paired_release.alpha_structural_sha256("hello"),
+            paired_release.alpha_structural_sha256("world"),
+        )
+
     def test_fixture_leakage_validation_fails_closed_with_exit_two(self):
         # --check-fixture-leakage without --fixtures-dir -> exit 2.
         code, rep = self.compare(extra_args=("--check-fixture-leakage",))
@@ -783,14 +817,18 @@ class PairedReleaseTest(unittest.TestCase):
         self.assertEqual(code_hash, 2)
         self.assertIn("SHA-256", rep_hash["error"])
 
-        # Duplicate JSON key or NaN in fixture -> exit 2.
-        for bad_raw in (b'{"v": 1, "v": 2}\n', b'{"v": NaN}\n', b'[1, 2]\n'):
-            with self.subTest(bad_raw=bad_raw):
+        # Duplicate JSON key, NaN, non-object, or deeply nested fixture -> exit 2 with sanitized error.
+        deep_nested = (b'{"a":' + b'[' * 1200 + b'1' + b']' * 1200 + b'}')
+        for bad_raw in (b'{"secret_col": 1, "secret_col": 2}\n', b'{"v": NaN}\n', b'[1, 2]\n', deep_nested):
+            with self.subTest(bad_len=len(bad_raw)):
                 bad_dir = self._build_fixture_suite([("c-bad", "clean", "development", bad_raw)])
-                self.assertEqual(self.compare(extra_args=("--fixtures-dir", str(bad_dir)))[0], 2)
+                code_b, rep_b = self.compare(extra_args=("--fixtures-dir", str(bad_dir)))
+                self.assertEqual(code_b, 2)
+                self.assertNotIn("secret_col", rep_b["error"])
+                self.assertNotIn(str(self.directory), rep_b["error"])
 
-        # Unsafe case_id path traversal -> exit 2.
-        for bad_id in ("../escape", "sub/case", "sub\\case", "a:b"):
+        # Unsafe case_id path traversal, control characters, and Windows reserved device names -> exit 2.
+        for bad_id in ("../escape", "sub/case", "sub\\case", "a:b", "bad\nid", "bad\x1bid", "CON", "nul", "COM1.ext"):
             with self.subTest(bad_id=bad_id):
                 self.plan = dict(schema_version=1, experiment="t", added_check="new",
                                  baseline_checks=["old"], budget=1,

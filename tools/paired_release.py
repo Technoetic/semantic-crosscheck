@@ -25,7 +25,13 @@ EXIT_ACTIVATION_FAILURE = 70
 MAX_FIXTURE_BYTES = 1024 * 1024
 _MAX_REFINEMENT_ROUNDS = 8
 _MAX_INDIVIDUALIZE_STEPS = 16
+_MAX_CANONICAL_TIE_GROUP = 32
 _MAX_LIST_CONTEXT_ITEMS = 64
+_WINDOWS_RESERVED_NAMES = frozenset({
+    "CON", "PRN", "AUX", "NUL",
+    *(f"COM{i}" for i in range(1, 10)),
+    *(f"LPT{i}" for i in range(1, 10)),
+})
 TRANSITIONS = {
     ("error", "clear", "flag"): "added_detections",
     ("clean", "clear", "flag"): "new_false_positives",
@@ -598,12 +604,17 @@ def _resolve_fixtures_dir(fixtures_dir: Path) -> Path:
         raise ValueError("fixtures-dir does not exist or is unreadable") from exc
     if not stat.S_ISDIR(st.st_mode):
         raise ValueError("fixtures-dir must be a directory")
-    return fixtures_dir.resolve(strict=True)
+    try:
+        return fixtures_dir.resolve(strict=True)
+    except (OSError, RuntimeError) as exc:
+        raise ValueError("fixtures-dir cannot be resolved safely") from exc
 
 
 def _safe_case_filename(case_id: str) -> str:
     if (not case_id or "/" in case_id or "\\" in case_id or ":" in case_id
-            or "\x00" in case_id or case_id in (".", "..")):
+            or any(ord(ch) < 32 or ord(ch) == 127 for ch in case_id)
+            or case_id in (".", "..")
+            or case_id.split(".", 1)[0].upper() in _WINDOWS_RESERVED_NAMES):
         raise ValueError(f"{case_id!r}: unsafe case ID for fixture filename")
     filename = f"{case_id}.json"
     candidate = Path(filename)
@@ -623,12 +634,19 @@ def _load_verified_fixture(base: Path, case_id: str, expected_sha256: str) -> di
         raise ValueError(f"{case_id!r}: fixture file missing in fixtures-dir") from exc
     if not stat.S_ISREG(st.st_mode):
         raise ValueError(f"{case_id!r}: fixture path must be a regular file")
-    if path.resolve(strict=True).parent != base:
+    try:
+        resolved = path.resolve(strict=True)
+    except (OSError, RuntimeError) as exc:
+        raise ValueError(f"{case_id!r}: fixture path cannot be resolved safely") from exc
+    if resolved.parent != base:
         raise ValueError(f"{case_id!r}: fixture path escapes fixtures-dir")
     if st.st_size > MAX_FIXTURE_BYTES:
         raise ValueError(f"{case_id!r}: fixture exceeds {MAX_FIXTURE_BYTES} byte limit")
-    with path.open("rb") as stream:
-        raw = stream.read(MAX_FIXTURE_BYTES + 1)
+    try:
+        with path.open("rb") as stream:
+            raw = stream.read(MAX_FIXTURE_BYTES + 1)
+    except OSError as exc:
+        raise ValueError(f"{case_id!r}: fixture file is unreadable") from exc
     if len(raw) > MAX_FIXTURE_BYTES:
         raise ValueError(f"{case_id!r}: fixture exceeds {MAX_FIXTURE_BYTES} byte limit")
     actual_sha256 = hashlib.sha256(raw).hexdigest()
@@ -638,7 +656,7 @@ def _load_verified_fixture(base: Path, case_id: str, expected_sha256: str) -> di
         data = json.loads(raw.decode("utf-8-sig"), object_pairs_hook=unique_object,
                           parse_constant=invalid_constant)
     except (UnicodeDecodeError, ValueError, RecursionError) as exc:
-        raise ValueError(f"{case_id!r}: invalid fixture JSON: {exc}") from exc
+        raise ValueError(f"{case_id!r}: invalid fixture JSON") from exc
     if not isinstance(data, dict):
         raise ValueError(f"{case_id!r}: fixture must be a JSON object")
     return data
@@ -713,34 +731,53 @@ def _collect_contexts(node: object, path: tuple[str, ...], colors: dict[str, int
             contexts.setdefault(token, []).extend([ctx] * count)
 
 
-def _refine_colors(data: object, colors: dict[str, int] | None) -> dict[str, int]:
+def _refine_step(data: object, colors: dict[str, int] | None) -> tuple[dict[str, int], tuple[tuple[int, tuple[str, ...]], ...]]:
     contexts: dict[str, list[str]] = {}
     _collect_contexts(data, (), colors, contexts, root=True)
     if not contexts:
-        return {}
+        return {}, ()
     signatures: dict[str, tuple[int, tuple[str, ...]]] = {
         token: (0 if colors is None else colors[token], tuple(sorted(ctxs)))
         for token, ctxs in contexts.items()
     }
     unique_sigs = sorted(set(signatures.values()))
     rank = {sig: idx for idx, sig in enumerate(unique_sigs)}
-    return {token: rank[sig] for token, sig in signatures.items()}
+    ranked = {token: rank[sig] for token, sig in signatures.items()}
+    return ranked, tuple(sorted(signatures.values()))
 
 
-def _stabilize_colors(data: object, colors: dict[str, int] | None) -> dict[str, int]:
-    current = _refine_colors(data, colors)
+def _stabilize_colors(data: object, colors: dict[str, int] | None) -> tuple[dict[str, int], tuple[tuple[int, tuple[str, ...]], ...]]:
+    current, sig_multiset = _refine_step(data, colors)
     if not current:
-        return {}
+        return {}, ()
     for _ in range(_MAX_REFINEMENT_ROUNDS):
-        refined = _refine_colors(data, current)
+        refined, refined_sigs = _refine_step(data, current)
         if len(set(refined.values())) == len(set(current.values())):
-            return refined
-        current = refined
-    return current
+            return refined, refined_sigs
+        current, sig_multiset = refined, refined_sigs
+    return current, sig_multiset
+
+
+def _individualize_tie(data: object, colors: dict[str, int], members: list[str]) -> dict[str, int]:
+    next_color = max(colors.values()) + 1
+    if len(members) > _MAX_CANONICAL_TIE_GROUP:
+        bumped = dict(colors)
+        bumped[members[0]] = next_color
+        return _stabilize_colors(data, bumped)[0]
+    best_sig: tuple[tuple[int, tuple[str, ...]], ...] | None = None
+    best_colors = colors
+    for token in members:
+        bumped = dict(colors)
+        bumped[token] = next_color
+        trial_colors, trial_sig = _stabilize_colors(data, bumped)
+        if best_sig is None or trial_sig < best_sig:
+            best_sig = trial_sig
+            best_colors = trial_colors
+    return best_colors
 
 
 def _canonical_string_map(data: object) -> dict[str, str]:
-    colors = _stabilize_colors(data, None)
+    colors, _ = _stabilize_colors(data, None)
     if not colors:
         return {}
     for _ in range(_MAX_INDIVIDUALIZE_STEPS):
@@ -750,9 +787,7 @@ def _canonical_string_map(data: object) -> dict[str, str]:
         tied = next((cid for cid in sorted(groups) if len(groups[cid]) > 1), None)
         if tied is None:
             break
-        bumped = dict(colors)
-        bumped[groups[tied][0]] = max(colors.values()) + 1
-        colors = _stabilize_colors(data, bumped)
+        colors = _individualize_tie(data, colors, groups[tied])
     ordered = sorted(colors, key=lambda tok: colors[tok])
     return {tok: f"$s{idx}" for idx, tok in enumerate(ordered)}
 
@@ -767,12 +802,16 @@ def _alpha_normalize(node: object, mapping: dict[str, str], *, root: bool = Fals
         items = [_alpha_normalize(item, mapping, root=False) for item in node]
         return sorted(items, key=_compact_json)
     if isinstance(node, str):
-        return ["s", mapping[node]]
+        return ["s_top", node] if root else ["s", mapping[node]]
     return _typed_scalar(node)
 
 
 def alpha_structural_sha256(data: object) -> str:
-    """Row-order-independent and domain-string alpha-renamed structural SHA-256."""
+    """Row-order-independent and domain-string alpha-renamed structural SHA-256.
+
+    Uses color refinement plus bounded individualization (up to 16 tied orbits,
+    canonical tie-selection up to 32 strings per orbit).
+    """
     mapping = _canonical_string_map(data)
     normalized = _alpha_normalize(data, mapping, root=True)
     return hashlib.sha256(_compact_json(normalized).encode("utf-8")).hexdigest()
@@ -818,8 +857,13 @@ def audit_fixture_leakage(cases: dict, fixtures_dir: Path) -> dict[str, object]:
     alpha_buckets: dict[str, list[str]] = {}
     for case_id, case in cases.items():
         data = _load_verified_fixture(base, case_id, case["fixture_sha256"])
-        canonical_buckets.setdefault(canonical_json_sha256(data), []).append(case_id)
-        alpha_buckets.setdefault(alpha_structural_sha256(data), []).append(case_id)
+        try:
+            canon_digest = canonical_json_sha256(data)
+            alpha_digest = alpha_structural_sha256(data)
+        except RecursionError as exc:
+            raise ValueError(f"{case_id!r}: fixture nesting depth exceeds limit") from exc
+        canonical_buckets.setdefault(canon_digest, []).append(case_id)
+        alpha_buckets.setdefault(alpha_digest, []).append(case_id)
     canonical_dups = _duplicate_groups(canonical_buckets, cases)
     alpha_dups = _duplicate_groups(alpha_buckets, cases)
     cross_ids, within_ids = _collect_leakage_ids(canonical_dups + alpha_dups, cases)
@@ -947,7 +991,7 @@ def main():
                         help="fail with exit 1 when canonical JSON or alpha-renamed structural duplicate fixtures exist")
     try:
         code, report = compare(parser.parse_args())
-    except (ValueError, OSError) as exc:
+    except (ValueError, OSError, RecursionError) as exc:
         code, report = 2, {"error": str(exc)}
     print(json.dumps(report, indent=2, allow_nan=False))
     return code

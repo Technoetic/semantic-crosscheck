@@ -28,12 +28,21 @@ class CatalogGuardUnitTests(unittest.TestCase):
             "indpred IS NULL",
             "indexprs IS NULL",
             "relispopulated",
+            "relpersistence",
             "relhasrules",
+            "view_security_invoker",
+            "view_security_barrier",
             "convalidated",
             "pg_inherits",
             "child_partition_row_security",
+            "child_foreign_partitions",
+            "child_unlogged_partitions",
+            "child_unvalidated_constraints",
+            "mismatched_column_collations",
+            "pg_collation_actual_version",
         ):
             self.assertIn(token, pg17_sql)
+        self.assertIn("pg_database_collation_actual_version", doctor._DB_COLLATION_VERSION_SQL)
 
         pg14_sql = doctor._privileges_sql(140009)
         self.assertIn("relrowsecurity", pg14_sql)
@@ -41,6 +50,79 @@ class CatalogGuardUnitTests(unittest.TestCase):
         self.assertIn("relispopulated", pg14_sql)
         self.assertIn("convalidated", pg14_sql)
         self.assertNotIn("indnullsnotdistinct", pg14_sql)
+
+    def test_v035_catalog_warnings_views_partitions_unlogged_and_collation(self):
+        self.assertEqual(doctor.collation_version_warnings({"db_collation_version_mismatch": False}), [])
+        coll_warns = doctor.collation_version_warnings({"db_collation_version_mismatch": True})
+        self.assertEqual(len(coll_warns), 1)
+        self.assertIn("datcollversion", coll_warns[0])
+
+        # Default view (security_invoker=false) warns; security_invoker=true clears it.
+        definer_warns = doctor.catalog_warnings(
+            "v_def", {"table_exists": True, "relkind": "v", "view_security_invoker": False, "has_rules": True}
+        )
+        self.assertEqual(len(definer_warns), 1)
+        self.assertIn("view_security_invoker=false", definer_warns[0])
+        self.assertEqual(
+            doctor.catalog_warnings(
+                "v_inv",
+                {"table_exists": True, "relkind": "v", "view_security_invoker": True,
+                 "view_security_barrier": True, "has_rules": True},
+            ),
+            [],
+        )
+
+        # UNLOGGED table, child UNLOGGED partition, child foreign partition, child NOT VALID constraints, column collation mismatch.
+        unlogged_warns = doctor.catalog_warnings(
+            "tmp_fact", {"table_exists": True, "relkind": "r", "relpersistence": "u"}
+        )
+        self.assertEqual(len(unlogged_warns), 1)
+        self.assertIn("relpersistence='u'", unlogged_warns[0])
+
+        child_warns = doctor.catalog_warnings(
+            "part_fact",
+            {
+                "table_exists": True,
+                "relkind": "p",
+                "relpersistence": "p",
+                "child_foreign_partitions": True,
+                "child_unlogged_partitions": True,
+                "child_unvalidated_constraints": 3,
+                "mismatched_column_collations": 2,
+            },
+        )
+        self.assertEqual(len(child_warns), 4)
+        self.assertTrue(any("child_foreign_partitions=true" in w for w in child_warns))
+        self.assertTrue(any("child_unlogged_partitions=true" in w for w in child_warns))
+        self.assertTrue(any("3 local unvalidated CHECK/FOREIGN KEY constraint(s)" in w for w in child_warns))
+        self.assertTrue(any("2 column collation(s) with a version mismatch" in w for w in child_warns))
+
+    def test_grain_evaluate_fails_closed_on_foreign_child_partition(self):
+        actual = {
+            "source": {"entity": "fact", "table": "sxc_demo.part_parent", "key": ["fact_id"]},
+            "node": {"entity": "node", "table": "sxc_demo.rls_node", "key": ["node_id"]},
+            "group_by": ["node_id"],
+            "aggregate": {"function": "sum", "column": "qty"},
+            "filters": {"exact": {}, "normalized": {}},
+        }
+        foreign_child_meta = [{
+            "relkind": "p",
+            "relpersistence": "p",
+            "relrowsecurity": False,
+            "rolbypassrls": False,
+            "unique_nulls_not_distinct": False,
+            "unvalidated_constraints": 0,
+            "child_partition_row_security": False,
+            "child_foreign_partitions": True,
+            "child_unlogged_partitions": False,
+            "child_unvalidated_constraints": 0,
+        }]
+        with mock.patch.object(grain.db, "rows", return_value=foreign_child_meta), \
+                mock.patch.object(grain.db, "scalar", side_effect=AssertionError("must not read rows with foreign child")):
+            outcome = grain.evaluate(object(), actual, 100)
+        self.assertEqual(outcome["complete"], False)
+        self.assertEqual(outcome["reason"], "unsupported_relation")
+        self.assertTrue(outcome["source_child_foreign_partitions"])
 
     def test_catalog_warnings_and_unpopulated_mv_hint(self):
         self.assertEqual(doctor.catalog_warnings("part", {"table_exists": False, "relkind": "f"}), [])
@@ -446,6 +528,173 @@ class RlsAndNullsNotDistinctPostgresTest(unittest.TestCase):
         payload = json.dumps(g_res.to_dict())
         for secret in ("part_parent", "part_child", "rls_node"):
             self.assertNotIn(secret, payload)
+
+    def test_view_security_options_unlogged_child_constraints_and_foreign_partition(self):
+        self._owner_exec(
+            "DROP VIEW IF EXISTS sxc_demo.v_definer, sxc_demo.v_invoker;"
+            "CREATE VIEW sxc_demo.v_definer AS SELECT node_id FROM sxc_demo.rls_node;"
+            "CREATE VIEW sxc_demo.v_invoker WITH (security_invoker = true, security_barrier = true) "
+            "AS SELECT node_id FROM sxc_demo.rls_node;"
+            f'GRANT SELECT ON sxc_demo.v_definer, sxc_demo.v_invoker TO "{self.fx.check}";'
+            "DROP TABLE IF EXISTS sxc_demo.unlogged_fact, sxc_demo.part_hyg, sxc_demo.part_fparent CASCADE;"
+            "CREATE UNLOGGED TABLE sxc_demo.unlogged_fact (fact_id integer PRIMARY KEY, node_id text, qty numeric);"
+            "INSERT INTO sxc_demo.unlogged_fact VALUES (1, 'a', 10);"
+            "CREATE TABLE sxc_demo.part_hyg (fact_id integer, node_id text, qty numeric) PARTITION BY RANGE (fact_id);"
+            "CREATE UNLOGGED TABLE sxc_demo.part_hyg_u PARTITION OF sxc_demo.part_hyg FOR VALUES FROM (1) TO (100);"
+            "INSERT INTO sxc_demo.part_hyg VALUES (1, 'a', 10);"
+            "ALTER TABLE sxc_demo.part_hyg_u ADD CONSTRAINT part_hyg_u_qty_pos CHECK (qty > 0) NOT VALID;"
+            "CREATE TABLE sxc_demo.part_fparent (fact_id integer, node_id text, qty numeric) PARTITION BY RANGE (fact_id);"
+        )
+        admin = pgfixture._admin(self.fx.name)
+        try:
+            admin.run("DROP FOREIGN DATA WRAPPER IF EXISTS sxc_dummy_fdw CASCADE")
+            admin.run("CREATE FOREIGN DATA WRAPPER sxc_dummy_fdw")
+            admin.run("CREATE SERVER sxc_dummy_srv FOREIGN DATA WRAPPER sxc_dummy_fdw")
+            admin.run(f'GRANT USAGE ON FOREIGN SERVER sxc_dummy_srv TO "{self.fx.owner}"')
+        finally:
+            admin.close()
+        self._owner_exec(
+            "CREATE FOREIGN TABLE sxc_demo.part_fchild PARTITION OF sxc_demo.part_fparent "
+            "FOR VALUES FROM (1) TO (100) SERVER sxc_dummy_srv;"
+        )
+
+        def cleanup():
+            self._owner_exec(
+                "DROP VIEW IF EXISTS sxc_demo.v_definer, sxc_demo.v_invoker;"
+                "DROP TABLE IF EXISTS sxc_demo.unlogged_fact, sxc_demo.part_hyg, sxc_demo.part_fparent CASCADE;"
+            )
+            adm = pgfixture._admin(self.fx.name)
+            try:
+                adm.run("DROP FOREIGN DATA WRAPPER IF EXISTS sxc_dummy_fdw CASCADE")
+            finally:
+                adm.close()
+
+        self.addCleanup(cleanup)
+
+        cfg_path = self.tmp / "v035_hygiene.toml"
+        cfg_path.write_text(
+            'version = 1\n'
+            '[source]\nschemas = ["sxc_demo"]\noutput_schema = "sxc_out"\nstatement_timeout_ms = 5000\n'
+            '[entities.v_def]\ntable = "sxc_demo.v_definer"\nkey = ["node_id"]\n'
+            '[entities.v_inv]\ntable = "sxc_demo.v_invoker"\nkey = ["node_id"]\n'
+            '[entities.ufact]\ntable = "sxc_demo.unlogged_fact"\nkey = ["fact_id"]\n'
+            '[entities.phyg]\ntable = "sxc_demo.part_hyg"\nkey = ["fact_id"]\n'
+            '[entities.pfpar]\ntable = "sxc_demo.part_fparent"\nkey = ["fact_id"]\n'
+            '[entities.node]\ntable = "sxc_demo.rls_node"\nkey = ["node_id"]\n'
+            '[measures.utotal]\nentity = "ufact"\ncolumn = "qty"\nagg = "sum"\nby = "node_id"\nnode = "node"\n'
+            '[measures.htotal]\nentity = "phyg"\ncolumn = "qty"\nagg = "sum"\nby = "node_id"\nnode = "node"\n'
+            '[measures.ftotal]\nentity = "pfpar"\ncolumn = "qty"\nagg = "sum"\nby = "node_id"\nnode = "node"\n',
+            encoding="utf-8",
+        )
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            code = sxc.main(["doctor", "--config", str(cfg_path), "--out", str(self.tmp)])
+        self.assertEqual(code, 0)
+        doc_res = json.loads((self.tmp / "doctor" / "result.json").read_text(encoding="utf-8"))
+        checks = {c["id"]: c for c in doc_res["checks"]}
+        self.assertFalse(checks["pg_version"]["detail"]["db_collation_version_mismatch"])
+
+        self.assertFalse(checks["privileges:select:v_def"]["detail"]["view_security_invoker"])
+        self.assertFalse(checks["privileges:select:v_def"]["detail"]["view_security_barrier"])
+        self.assertTrue(checks["privileges:select:v_inv"]["detail"]["view_security_invoker"])
+        self.assertTrue(checks["privileges:select:v_inv"]["detail"]["view_security_barrier"])
+        self.assertTrue(any("entities.v_def: source view executes with view-owner privileges" in n
+                            for n in doc_res["not_proven"]))
+        self.assertFalse(any("entities.v_inv: source view" in n for n in doc_res["not_proven"]))
+
+        self.assertEqual(checks["privileges:select:ufact"]["detail"]["relpersistence"], "u")
+        self.assertTrue(any("entities.ufact: source relation is UNLOGGED" in n for n in doc_res["not_proven"]))
+
+        phyg_detail = checks["privileges:select:phyg"]["detail"]
+        self.assertEqual(phyg_detail["relpersistence"], "p")
+        self.assertTrue(phyg_detail["child_unlogged_partitions"])
+        self.assertEqual(phyg_detail["unvalidated_constraints"], 0)
+        self.assertEqual(phyg_detail["child_unvalidated_constraints"], 1)
+        self.assertEqual(phyg_detail["mismatched_column_collations"], 0)
+        self.assertTrue(any("entities.phyg: a child partition or inherited relation is UNLOGGED" in n
+                            for n in doc_res["not_proven"]))
+        self.assertTrue(any("entities.phyg: child partition(s) or inherited relation(s) have 1 local unvalidated" in n
+                            for n in doc_res["not_proven"]))
+
+        pfpar_detail = checks["privileges:select:pfpar"]["detail"]
+        self.assertTrue(pfpar_detail["child_foreign_partitions"])
+        self.assertTrue(any("entities.pfpar: a child partition or inherited relation is a foreign table" in n
+                            for n in doc_res["not_proven"]))
+
+        # Grain discloses unlogged + child NOT VALID constraints (opaque) and fails closed on foreign child partition.
+        spec_hyg = self.tmp / "hyg_grain.json"
+        spec_hyg.write_text(
+            json.dumps({
+                "schema_version": 1,
+                "contracts": [
+                    {
+                        "measure": "utotal",
+                        "source": {"entity": "ufact", "table": "sxc_demo.unlogged_fact", "key": ["fact_id"]},
+                        "group_by": ["node_id"],
+                        "aggregate": {"function": "sum", "column": "qty"},
+                        "filters": {"exact": {}, "normalized": {}},
+                        "output": {"cube": "m_utotal", "key": ["key"], "value": "value", "reaggregate": "sum"},
+                        "node": {"entity": "node", "table": "sxc_demo.rls_node", "key": ["node_id"]},
+                        "join": {"relationship": "one_to_one", "node_key": ["node_id"], "output_key": ["key"]},
+                        "null_policy": {"operation": "exclude", "allow_excluded_rows": False},
+                    },
+                    {
+                        "measure": "htotal",
+                        "source": {"entity": "phyg", "table": "sxc_demo.part_hyg", "key": ["fact_id"]},
+                        "group_by": ["node_id"],
+                        "aggregate": {"function": "sum", "column": "qty"},
+                        "filters": {"exact": {}, "normalized": {}},
+                        "output": {"cube": "m_htotal", "key": ["key"], "value": "value", "reaggregate": "sum"},
+                        "node": {"entity": "node", "table": "sxc_demo.rls_node", "key": ["node_id"]},
+                        "join": {"relationship": "one_to_one", "node_key": ["node_id"], "output_key": ["key"]},
+                        "null_policy": {"operation": "exclude", "allow_excluded_rows": False},
+                    },
+                    {
+                        "measure": "ftotal",
+                        "source": {"entity": "pfpar", "table": "sxc_demo.part_fparent", "key": ["fact_id"]},
+                        "group_by": ["node_id"],
+                        "aggregate": {"function": "sum", "column": "qty"},
+                        "filters": {"exact": {}, "normalized": {}},
+                        "output": {"cube": "m_ftotal", "key": ["key"], "value": "value", "reaggregate": "sum"},
+                        "node": {"entity": "node", "table": "sxc_demo.rls_node", "key": ["node_id"]},
+                        "join": {"relationship": "one_to_one", "node_key": ["node_id"], "output_key": ["key"]},
+                        "null_policy": {"operation": "exclude", "allow_excluded_rows": False},
+                    },
+                ],
+            }),
+            encoding="utf-8",
+        )
+        g_res = grain.run(
+            config.load(cfg_path),
+            SimpleNamespace(spec=str(spec_hyg), max_rows=10000, config=str(cfg_path),
+                            _diagnostic_configuration_sha=None),
+            self.tmp,
+        )
+        self.assertEqual(g_res.status, "not_run")
+        ev_by_id = {c.id: c for c in g_res.checks}
+        self.assertEqual(ev_by_id["grain:c0001:evidence"].status, "pass")
+        self.assertTrue(ev_by_id["grain:c0001:evidence"].detail["source_unlogged"])
+        self.assertEqual(ev_by_id["grain:c0002:evidence"].status, "pass")
+        self.assertTrue(ev_by_id["grain:c0002:evidence"].detail["source_child_unlogged_partitions"])
+        self.assertEqual(ev_by_id["grain:c0002:evidence"].detail["source_child_unvalidated_constraints"], 1)
+        self.assertEqual(ev_by_id["grain:c0003:evidence"].status, "not_run")
+        self.assertEqual(ev_by_id["grain:c0003:evidence"].detail["reason"], "unsupported_relation")
+        self.assertTrue(ev_by_id["grain:c0003:evidence"].detail["source_child_foreign_partitions"])
+        self.assertIn(grain._UNLOGGED_NOT_PROVEN, g_res.not_proven)
+        self.assertIn(grain._UNVALIDATED_CONSTRAINTS_NOT_PROVEN, g_res.not_proven)
+        self.assertIn(grain._CHILD_FOREIGN_NOT_PROVEN, g_res.not_proven)
+        payload = json.dumps(g_res.to_dict())
+        for secret in ("unlogged_fact", "part_hyg", "part_fparent", "part_fchild", "sxc_dummy"):
+            self.assertNotIn(secret, payload)
+
+        # Validating the child constraint clears child_unvalidated_constraints cleanly.
+        self._owner_exec("ALTER TABLE sxc_demo.part_hyg_u VALIDATE CONSTRAINT part_hyg_u_qty_pos;")
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            code_after = sxc.main(["doctor", "--config", str(cfg_path), "--out", str(self.tmp)])
+        self.assertEqual(code_after, 0)
+        doc_after = json.loads((self.tmp / "doctor" / "result.json").read_text(encoding="utf-8"))
+        checks_after = {c["id"]: c for c in doc_after["checks"]}
+        self.assertEqual(checks_after["privileges:select:phyg"]["detail"]["child_unvalidated_constraints"], 0)
+        self.assertFalse(any("local unvalidated CHECK/FOREIGN KEY" in n for n in doc_after["not_proven"]))
 
 
 if __name__ == "__main__":

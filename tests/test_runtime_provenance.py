@@ -490,6 +490,40 @@ class RuntimeTests(unittest.TestCase):
         self.assertNotIn('private-locale', json.dumps(locale))
         self.assertNotIn('private-icu-rule', json.dumps(rules))
 
+    def test_collation_version_mismatch_flagged_and_disclosed_in_not_proven(self):
+        self.need_runtime()
+        self.enabled()
+        row = ['170006'] + ['setting'] * len(runtime.PG_SETTINGS) + [None, None, '2.36', '2.36']
+        conn = mock.Mock()
+        conn.run.side_effect = lambda sql: [row] if sql == runtime.PG_SQL else []
+        with mock.patch.object(runtime, '_connect', return_value=conn):
+            matched = runtime._postgres('PRIVATE_DSN', 1000)
+            self.assertFalse(matched['collation_version_mismatch'])
+            row[-1] = '2.41'
+            drifted = runtime._postgres('PRIVATE_DSN', 1000)
+            self.assertTrue(drifted['collation_version_mismatch'])
+            self.assertNotEqual(matched['settings_sha256'], drifted['settings_sha256'])
+            self.assertNotIn('2.36', json.dumps(drifted))
+            self.assertNotIn('2.41', json.dumps(drifted))
+
+        drifted_ev = {
+            'schema_version': 1,
+            'binding': 'bound',
+            'scope': 'full_pipeline',
+            'sha256': hashlib.sha256(b'drifted').hexdigest(),
+            'components': {
+                'postgres': {
+                    'source': {'server_version_num': 170006, 'collation_version_mismatch': True},
+                    'cube': {'server_version_num': 170006, 'collation_version_mismatch': True},
+                }
+            },
+        }
+        with mock.patch.object(runtime, 'current_probe', return_value=drifted_ev):
+            res = provenance.finish(self.cfg, self.passed(), provenance.begin(self.cfg, 'verify'))
+        self.assertEqual(res.status, 'pass')
+        self.assertTrue(res.runtime_evidence['stable'])
+        self.assertIn(runtime.COLLATION_MISMATCH_NOTE, res.not_proven)
+
 
 if __name__ == '__main__':
     unittest.main()

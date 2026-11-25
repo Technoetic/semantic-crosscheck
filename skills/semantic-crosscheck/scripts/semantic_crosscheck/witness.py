@@ -189,12 +189,15 @@ class _Stopped(Exception):
         self.reason = reason
 
 
-def generate(spec, profile=None, max_examples=64, timeout_ms=1000):
+def generate(spec, profile=None, max_examples=64, timeout_ms=1000, *, row_symmetry_breaking=True):
     """Enumerate lexicographic finite-domain models within one wall-clock budget.
 
     Row counts and active cell indices define order. Inactive cells are fixed
     to index zero, and cast-equivalent domain entries are collapsed at load,
-    so a fixture cannot reappear through an unused or duplicate index.
+    so a fixture cannot reappear through an unused or duplicate index. When
+    row_symmetry_breaking is True (default), active rows in each table are
+    constrained to non-decreasing lexicographic cell-index order, eliminating
+    k! SQL bag-isomorphic row permutations without dropping any valid multiset.
     """
     try:
         _integer(max_examples, 1, 1000)
@@ -202,6 +205,8 @@ def generate(spec, profile=None, max_examples=64, timeout_ms=1000):
     except ValueError:
         raise StageError('counterexample: witness max examples must be 1..1000 and timeout milliseconds 1..60000',
                          EXIT_CONFIG) from None
+    if type(row_symmetry_breaking) is not bool:
+        raise StageError('counterexample: witness row_symmetry_breaking must be a boolean', EXIT_CONFIG)
     # perf_counter is monotonic and uses the high-resolution QPC on Windows;
     # Python 3.12's monotonic clock there has a 15.625 ms resolution.
     started = time.perf_counter()
@@ -258,6 +263,17 @@ def generate(spec, profile=None, max_examples=64, timeout_ms=1000):
                     end = len(spec.domains[table][column]) - 1
                     solver.add(cell >= 0, cell <= end, z3.Implies(count <= row, cell == 0))
                     variables.append((cell, 0, end))
+            if row_symmetry_breaking and high >= 2 and columns:
+                ncols = len(columns)
+                for row in range(high - 1):
+                    remaining()
+                    lex_le = cells[table, row, ncols - 1] <= cells[table, row + 1, ncols - 1]
+                    for col in range(ncols - 2, -1, -1):
+                        lex_le = z3.Or(
+                            cells[table, row, col] < cells[table, row + 1, col],
+                            z3.And(cells[table, row, col] == cells[table, row + 1, col], lex_le),
+                        )
+                    solver.add(z3.Implies(count > row + 1, lex_le))
 
         def null(table, row, column):
             domain = spec.domains[table][column]

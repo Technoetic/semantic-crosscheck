@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.35.0] - 2026-11-25
+
+- Extend PostgreSQL 17 catalog guards in `doctor.py`, `grain.py`, and `runtime_provenance.py` (zero extra per-entity round trips in `doctor`, preserving `statement_budget = 5` in `grain`, zero extra round trips in `runtime_provenance`):
+  - Inspect view security options (`view_security_invoker`, `view_security_barrier` parsed in SQL from `pg_class.reloptions` without echoing raw option strings) and disclose default view-owner execution (`relkind = 'v'`, `view_security_invoker = false`) in `doctor`.
+  - Extend recursive `pg_inherits` child-partition inspection (`LEFT JOIN LATERAL`, zero extra round trips in `doctor` and preserving `statement_budget = 5` in `grain`) to detect foreign child partitions (`child_foreign_partitions`, failing closed in `grain` as `unsupported_relation`), `UNLOGGED` tables/child partitions (`relpersistence = 'u'`, `child_unlogged_partitions`), and child-local `NOT VALID` `CHECK`/`FOREIGN KEY` constraints (`child_unvalidated_constraints`, `coninhcount = 0 AND NOT convalidated`).
+  - Detect PostgreSQL database and column collation version drift (`pg_database.datcollversion` vs `pg_database_collation_actual_version`, `pg_collation.collversion` vs `pg_collation_actual_version`) in `doctor` and `runtime_provenance` (`collation_version_mismatch` + `not_proven` disclosure even when start/end digests stay identical).
+- Add lexicographic row-order symmetry breaking (`row_symmetry_breaking=True` default, optional `False` compatibility switch) to Z3 finite-domain witness enumeration in `witness.py` (following Dančo, Janota, Codish & Araújo, AAAI 2025), eliminating `k!` bag-isomorphic SQL row permutations (for example `24 -> 1` canonical fixtures on 4-row primary-key tables) while preserving complete SQL multiset coverage.
+- Add pure-stdlib Dynamic Mutant Subsumption Graph (DMSG) analysis (`compute_subsumption`, following Kurtz et al., ESEC/FSE 2016) under `subsumption` in `verify/mutation-matrix.json` when `verify.mutant_observation = "all"`, reporting dynamic equivalence classes, transitive-reduced Hasse edges, minimal dominator classes (`authored` vs `generated_only`), and redundant killed mutant counts without extra Cube executions or changes to authoritative V4 verdicts.
+- Verified with expanded unit tests and live PostgreSQL 17 integration tests (`tests/test_rls_catalog_pg.py`, `tests/test_runtime_provenance.py`, `tests/test_constraint_witness.py`, `tests/test_mutation_matrix.py`). Engine fingerprints change; rerun operational stages after upgrading. See [release scope and verification](docs/releases/v0.35.0.md).
+
 ## [0.34.0] - 2026-11-24
 
 - Fix PostgreSQL 17 `pg_index` `unique_nulls_not_distinct` catalog precision in `doctor.py` and `grain.py` by filtering `indisunique AND indisvalid AND indisready AND indpred IS NULL AND indexprs IS NULL AND indnullsnotdistinct`, eliminating false positives from invalid, partial (`WHERE ...`), and expression (`lower(...)`) unique indexes.
@@ -1236,3 +1246,5 @@ First release. Release notes: [docs/releases/v0.1.0.md](docs/releases/v0.1.0.md)
 [0.33.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.33.0
 
 [0.34.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.34.0
+
+[0.35.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.35.0

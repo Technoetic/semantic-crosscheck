@@ -64,8 +64,23 @@ def _privileges_sql(server_version_num: int = MIN_PG) -> str:
     return f"""
     SELECT n.oid IS NOT NULL AS schema_exists, c.oid IS NOT NULL AS table_exists,
            coalesce(c.relkind::text, '') AS relkind,
+           coalesce(c.relpersistence::text, 'p') AS relpersistence,
            coalesce(c.relispopulated, true) AS is_populated,
            coalesce(c.relhasrules, false) AS has_rules,
+           coalesce(c.relkind = 'v' AND EXISTS (
+             SELECT 1 FROM unnest(coalesce(c.reloptions, '{{}}'::text[])) opt
+             WHERE lower(opt) IN (
+               'security_invoker=true', 'security_invoker=on', 'security_invoker=1',
+               'security_invoker=yes', 'security_invoker=y', 'security_invoker=t'
+             )
+           ), false) AS view_security_invoker,
+           coalesce(c.relkind = 'v' AND EXISTS (
+             SELECT 1 FROM unnest(coalesce(c.reloptions, '{{}}'::text[])) opt
+             WHERE lower(opt) IN (
+               'security_barrier=true', 'security_barrier=on', 'security_barrier=1',
+               'security_barrier=yes', 'security_barrier=y', 'security_barrier=t'
+             )
+           ), false) AS view_security_barrier,
            coalesce(has_schema_privilege(n.oid, 'USAGE'), false) AS can_use,
            coalesce(has_schema_privilege(n.oid, 'CREATE'), false) AS schema_create,
            coalesce(pg_has_role(n.nspowner, 'MEMBER'), false) AS schema_owner,
@@ -83,17 +98,46 @@ def _privileges_sql(server_version_num: int = MIN_PG) -> str:
            coalesce((SELECT count(*) FROM pg_catalog.pg_constraint con
                      WHERE con.conrelid = c.oid AND con.contype IN ('c', 'f') AND NOT con.convalidated), 0)::integer
              AS unvalidated_constraints,
-           coalesce((WITH RECURSIVE parts(oid) AS (
-                       SELECT inh.inhrelid FROM pg_catalog.pg_inherits inh WHERE inh.inhparent = c.oid
-                       UNION
-                       SELECT inh.inhrelid FROM pg_catalog.pg_inherits inh JOIN parts p ON inh.inhparent = p.oid
-                     )
-                     SELECT bool_or(ch.relrowsecurity)
-                     FROM parts p
-                     JOIN pg_catalog.pg_class ch ON ch.oid = p.oid), false) AS child_partition_row_security
+           coalesce((SELECT count(DISTINCT col.oid)
+                     FROM pg_catalog.pg_attribute a
+                     JOIN pg_catalog.pg_collation col ON col.oid = a.attcollation
+                     WHERE a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
+                       AND col.collversion IS NOT NULL
+                       AND col.collversion IS DISTINCT FROM pg_collation_actual_version(col.oid)), 0)::integer
+             AS mismatched_column_collations,
+           coalesce(children.child_partition_row_security, false) AS child_partition_row_security,
+           coalesce(children.child_foreign_partitions, false) AS child_foreign_partitions,
+           coalesce(children.child_unlogged_partitions, false) AS child_unlogged_partitions,
+           coalesce(children.child_unvalidated_constraints, 0)::integer AS child_unvalidated_constraints
     FROM (SELECT 1) AS one
     LEFT JOIN pg_namespace n ON n.nspname = :schema
     LEFT JOIN pg_class c ON c.relnamespace = n.oid AND c.relname = :table AND c.relkind IN ('r', 'p', 'v', 'm', 'f')
+    LEFT JOIN LATERAL (
+      WITH RECURSIVE parts(oid) AS (
+        SELECT inh.inhrelid FROM pg_catalog.pg_inherits inh WHERE inh.inhparent = c.oid
+        UNION
+        SELECT inh.inhrelid FROM pg_catalog.pg_inherits inh JOIN parts p ON inh.inhparent = p.oid
+      )
+      SELECT bool_or(ch.relrowsecurity) AS child_partition_row_security,
+             bool_or(ch.relkind = 'f') AS child_foreign_partitions,
+             bool_or(ch.relpersistence = 'u') AS child_unlogged_partitions,
+             (SELECT count(*)
+              FROM pg_catalog.pg_constraint con
+              WHERE con.conrelid IN (SELECT oid FROM parts)
+                AND con.contype IN ('c', 'f')
+                AND con.coninhcount = 0
+                AND NOT con.convalidated) AS child_unvalidated_constraints
+      FROM parts p
+      JOIN pg_catalog.pg_class ch ON ch.oid = p.oid
+    ) AS children ON c.oid IS NOT NULL
+"""
+
+
+_DB_COLLATION_VERSION_SQL = """
+    SELECT coalesce(d.datcollversion IS DISTINCT FROM pg_database_collation_actual_version(d.oid), false)
+             AS db_collation_version_mismatch
+    FROM pg_catalog.pg_database d
+    WHERE d.datname = current_database()
 """
 
 
@@ -331,6 +375,18 @@ def rls_visibility_warning(name: str, row: dict) -> str | None:
             "visible rows for the check role can differ from Cube or another role")
 
 
+def collation_version_warnings(row: dict) -> list[str]:
+    """Disclose database-level PostgreSQL collation version drift (PG 15+)."""
+    if not row.get("db_collation_version_mismatch"):
+        return []
+    return [
+        "database collation version mismatch: pg_database.datcollversion differs from "
+        "pg_database_collation_actual_version; text ordering, unique indexes and grouping "
+        "can disagree with stored index order until affected indexes are rebuilt and "
+        "ALTER DATABASE ... REFRESH COLLATION VERSION is run"
+    ]
+
+
 def catalog_warnings(name: str, row: dict) -> list[str]:
     """Disclose zero-extra-round-trip PostgreSQL catalog risks for one existing source relation."""
     if not row.get("table_exists"):
@@ -351,11 +407,49 @@ def catalog_warnings(name: str, row: dict) -> list[str]:
             f"entities.{name}: source relation is a foreign table (relkind='f'); foreign tables do not participate "
             "in PostgreSQL REPEATABLE READ snapshot isolation across statements or stages"
         )
+    elif row.get("child_foreign_partitions"):
+        warnings.append(
+            f"entities.{name}: a child partition or inherited relation is a foreign table "
+            "(child_foreign_partitions=true); foreign partitions do not participate in PostgreSQL "
+            "REPEATABLE READ snapshot isolation across statements or stages"
+        )
+    if relkind == "v" and row.get("view_security_invoker") is False:
+        warnings.append(
+            f"entities.{name}: source view executes with view-owner privileges (relkind='v', "
+            "view_security_invoker=false); underlying table permissions and row-level security "
+            "policies are evaluated as the view owner rather than the check role"
+        )
+    relpersistence = str(row.get("relpersistence", "p"))
+    if relpersistence == "u":
+        warnings.append(
+            f"entities.{name}: source relation is UNLOGGED (relpersistence='u'); unlogged tables are not "
+            "WAL-logged and are truncated automatically after an unclean shutdown or crash"
+        )
+    elif row.get("child_unlogged_partitions"):
+        warnings.append(
+            f"entities.{name}: a child partition or inherited relation is UNLOGGED "
+            "(child_unlogged_partitions=true); unlogged partitions are truncated automatically after "
+            "an unclean shutdown or crash"
+        )
     unvalidated = int(row.get("unvalidated_constraints", 0))
     if unvalidated > 0:
         warnings.append(
             f"entities.{name}: source relation has {unvalidated} unvalidated CHECK/FOREIGN KEY constraint(s) in "
             "pg_constraint (convalidated=false); existing rows are not checked against those constraints"
+        )
+    child_unvalidated = int(row.get("child_unvalidated_constraints", 0))
+    if child_unvalidated > 0:
+        warnings.append(
+            f"entities.{name}: child partition(s) or inherited relation(s) have {child_unvalidated} local "
+            "unvalidated CHECK/FOREIGN KEY constraint(s) in pg_constraint (convalidated=false); existing rows "
+            "in those partitions are not checked against those constraints"
+        )
+    mismatched_colls = int(row.get("mismatched_column_collations", 0))
+    if mismatched_colls > 0:
+        warnings.append(
+            f"entities.{name}: source relation uses {mismatched_colls} column collation(s) with a version "
+            "mismatch in pg_collation (collversion differs from pg_collation_actual_version); text ordering, "
+            "unique indexes and grouping can disagree with stored index order"
         )
     if relkind in ("r", "p") and row.get("has_rules"):
         warnings.append(
@@ -373,21 +467,34 @@ def _privileges(conn, cfg, res: Result, hints: dict, server_version_num: int = M
         rows[name] = db.rows(conn, sql, schema=schema, table=table)[0]
     for name, r in rows.items():
         relkind = str(r.get("relkind", ""))
+        relpersistence = str(r.get("relpersistence", "p"))
         is_populated = bool(r.get("is_populated", True))
         has_rules = bool(r.get("has_rules", False))
+        view_security_invoker = bool(r.get("view_security_invoker", False))
+        view_security_barrier = bool(r.get("view_security_barrier", False))
         unvalidated = int(r.get("unvalidated_constraints", 0))
         child_rls = bool(r.get("child_partition_row_security", False))
+        child_foreign = bool(r.get("child_foreign_partitions", False))
+        child_unlogged = bool(r.get("child_unlogged_partitions", False))
+        child_unvalidated = int(r.get("child_unvalidated_constraints", 0))
+        mismatched_colls = int(r.get("mismatched_column_collations", 0))
         unpopulated_mv = r["table_exists"] and relkind == "m" and not is_populated
         ok = r["table_exists"] and r["can_use"] and r["can_select"] and not unpopulated_mv
         res.add(f"privileges:select:{name}", _st(ok), f"entities.{name}", schema_exists=r["schema_exists"],
-                table_exists=r["table_exists"], relkind=relkind, is_populated=is_populated,
-                schema_usage=r["can_use"], select=r["can_select"],
+                table_exists=r["table_exists"], relkind=relkind, relpersistence=relpersistence,
+                is_populated=is_populated, schema_usage=r["can_use"], select=r["can_select"],
+                view_security_invoker=view_security_invoker, view_security_barrier=view_security_barrier,
                 row_security=bool(r.get("row_security", False)),
                 force_row_security=bool(r.get("force_row_security", False)),
                 bypass_rls=bool(r.get("bypass_rls", False)),
                 child_partition_row_security=child_rls,
+                child_foreign_partitions=child_foreign,
+                child_unlogged_partitions=child_unlogged,
                 unique_nulls_not_distinct=bool(r.get("unique_nulls_not_distinct", False)),
-                unvalidated_constraints=unvalidated, has_rules=has_rules)
+                unvalidated_constraints=unvalidated,
+                child_unvalidated_constraints=child_unvalidated,
+                mismatched_column_collations=mismatched_colls,
+                has_rules=has_rules)
         if not ok:
             hints.setdefault(f"privileges:select:{name}", select_hint(cfg, name, r))
         res.not_proven.extend(catalog_warnings(name, r))
@@ -457,7 +564,14 @@ def _database(cfg, res: Result, hints: dict, have_pg8000: bool):
     try:
         with db.read_only(conn, cfg.source.statement_timeout_ms if cfg else 60000):
             num = db.server_version_num(conn)
-            res.add("pg_version", _st(pg_version_ok(num)), ref, server_version_num=num)
+            coll_mismatch = False
+            if int(num) >= MIN_PG_NULLS_NOT_DISTINCT:
+                coll_rows = db.rows(conn, _DB_COLLATION_VERSION_SQL)
+                coll_mismatch = bool(coll_rows and coll_rows[0].get("db_collation_version_mismatch", False))
+            res.add("pg_version", _st(pg_version_ok(num)), ref, server_version_num=num,
+                    db_collation_version_mismatch=coll_mismatch)
+            if coll_mismatch:
+                res.not_proven.extend(collation_version_warnings({"db_collation_version_mismatch": True}))
             if not pg_version_ok(num):
                 hints["pg_version"] = "use PostgreSQL 17 or newer (the closure uses MERGE ... RETURNING merge_action())"
             _temporary(conn, ref, res, hints)

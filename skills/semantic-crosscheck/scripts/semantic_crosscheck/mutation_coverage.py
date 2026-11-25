@@ -106,6 +106,109 @@ def write(out, mutants, *, max_items, reason="completed", excluded_items=()):
                    "excluded_items": list(excluded_items), "mutants": mutants})
 
 
+def compute_subsumption(mutant_rows):
+    """Compute the diagnostic Dynamic Mutant Subsumption Graph (DMSG) from observed detectors.
+
+    Follows Kurtz et al. (ESEC/FSE 2016): killed mutants with identical observed detector sets
+    form one dynamic equivalence class, and class A strictly subsumes class B iff
+    detectors(A) is a strict subset of detectors(B). Dominator classes have no strict subsumer.
+    Diagnostic only: never alters V4 verdicts or report authority.
+    """
+    by_killers = {}
+    killed_mutants = 0
+    for row in mutant_rows:
+        detectors = row.get("observed_detectors", [])
+        killer_ids = frozenset(d["id"] for d in detectors)
+        if not killer_ids:
+            continue
+        killed_mutants += 1
+        bucket = by_killers.setdefault(killer_ids, {"mutants": [], "authored": False})
+        bucket["mutants"].append(row["id"])
+        if any(d.get("kind") == "authored" for d in detectors):
+            bucket["authored"] = True
+
+    raw_classes = []
+    for killer_ids, bucket in by_killers.items():
+        members = sorted(bucket["mutants"])
+        raw_classes.append({
+            "mutants": members,
+            "killer_set": killer_ids,
+            "detectors": sorted(killer_ids),
+            "killed_by_authored": bucket["authored"],
+        })
+    raw_classes.sort(key=lambda item: (item["mutants"][0], item["detectors"]))
+
+    class_ids = [f"c{index:04d}" for index in range(1, len(raw_classes) + 1)]
+    strict_subsumers = [set() for _ in raw_classes]
+    strict_subsumed = [set() for _ in raw_classes]
+    for i, left in enumerate(raw_classes):
+        left_set = left["killer_set"]
+        for j, right in enumerate(raw_classes):
+            if i != j and left_set < right["killer_set"]:
+                strict_subsumed[i].add(j)
+                strict_subsumers[j].add(i)
+
+    edges = []
+    direct_subsumers = [[] for _ in raw_classes]
+    for i in range(len(raw_classes)):
+        for j in sorted(strict_subsumed[i]):
+            if not any(mid in strict_subsumers[j] for mid in strict_subsumed[i]):
+                edges.append({"subsumer": class_ids[i], "subsumed": class_ids[j]})
+                direct_subsumers[j].append(class_ids[i])
+
+    classes = []
+    dominator_classes = []
+    dominator_representatives = []
+    subsumed_mutants = []
+    dominator_authored = 0
+    dominator_generated_only = 0
+    for idx, item in enumerate(raw_classes):
+        cid = class_ids[idx]
+        is_dominator = not strict_subsumers[idx]
+        if is_dominator:
+            dominator_classes.append(cid)
+            dominator_representatives.append(item["mutants"][0])
+            if item["killed_by_authored"]:
+                dominator_authored += 1
+            else:
+                dominator_generated_only += 1
+        else:
+            subsumed_mutants.extend(item["mutants"])
+        classes.append({
+            "id": cid,
+            "mutants": item["mutants"],
+            "detectors": item["detectors"],
+            "detector_count": len(item["detectors"]),
+            "killed_by_authored": item["killed_by_authored"],
+            "dominator": is_dominator,
+            "subsumed_by": sorted(direct_subsumers[idx]),
+        })
+
+    subsumed_mutants.sort()
+    dominator_representatives.sort()
+    selected_count = len(mutant_rows)
+    eq_count = len(classes)
+    dom_count = len(dominator_classes)
+    return {
+        "selected_mutants": selected_count,
+        "killed_mutants": killed_mutants,
+        "unkilled_mutants": selected_count - killed_mutants,
+        "equivalence_class_count": eq_count,
+        "dominator_class_count": dom_count,
+        "dominator_classes_killed_by_authored": dominator_authored,
+        "dominator_classes_generated_only": dominator_generated_only,
+        "subsumed_class_count": eq_count - dom_count,
+        "subsumed_mutant_count": len(subsumed_mutants),
+        "indistinguishable_mutant_count": killed_mutants - eq_count,
+        "redundant_killed_mutant_count": killed_mutants - dom_count,
+        "dominator_classes": dominator_classes,
+        "dominator_representatives": dominator_representatives,
+        "subsumed_mutants": subsumed_mutants,
+        "classes": classes,
+        "edges": edges,
+    }
+
+
 def write_matrix(out, mutants, items, *, max_items, identity, reason="completed", excluded_items=()):
     """Observed mismatches only: later diagnostic cells cannot grant report authority.
 
@@ -144,7 +247,8 @@ def write_matrix(out, mutants, items, *, max_items, identity, reason="completed"
                    "not_run_cells": not_run, "mismatch_cells": mismatches},
         "complete": bool(rows and selected) and all(row.get("coverage", {}).get("complete", False) for row in rows),
         "cell_status_counts": statuses,
-        "mutants": rows, "detector_sets": [row for row in by_item.values() if row["mutants"]]})
+        "mutants": rows, "detector_sets": [row for row in by_item.values() if row["mutants"]],
+        "subsumption": compute_subsumption(rows)})
 
 
 def _atomic_write(out, filename, payload):

@@ -24,6 +24,11 @@ UNBOUND_NOTE = ('runtime evidence is unbound: actual PostgreSQL, Node, Java, Her
                 'were not bound; local engine/package metadata alone does not establish the executing runtime')
 BOUND_NOTE = ('runtime evidence binds observed full-pipeline versions and artifact hashes at boundaries; '
               'it is not runtime attestation, a shared MVCC snapshot or proof against changes between probes')
+COLLATION_MISMATCH_NOTE = (
+    'PostgreSQL database collation version mismatch detected '
+    '(pg_database.datcollversion differs from pg_database_collation_actual_version); '
+    'identical start/end digests do not establish that text indexes or orderings match the active OS/ICU collation'
+)
 PG_SETTINGS = ('TimeZone', 'DateStyle', 'IntervalStyle', 'server_encoding', 'client_encoding', 'lc_collate',
                'lc_ctype', 'standard_conforming_strings', 'extra_float_digits', 'bytea_output',
                'default_text_search_config', 'search_path', 'transform_null_equals', 'collation_provider')
@@ -95,7 +100,9 @@ def _postgres(env_name, timeout_ms):
             if any(v is not None and (type(v) is not str or len(v.encode('utf-8')) > 4096)
                    for v in values[-len(PG_NULLABLE_METADATA):]):
                 raise RuntimeEvidenceError('postgres_invalid_metadata')
-            return {'server_version_num': int(row[0]), 'settings_sha256': _digest(values, b'sxc-pg-settings-v1\0')}
+            collation_mismatch = values[-2] != values[-1]
+            return {'server_version_num': int(row[0]), 'settings_sha256': _digest(values, b'sxc-pg-settings-v1\0'),
+                    'collation_version_mismatch': collation_mismatch}
     except RuntimeEvidenceError:
         raise
     except Exception:
@@ -444,6 +451,12 @@ def finish(cfg, result, start):
         result.runtime_evidence.update(binding='error', stable=False, reason=problem.reason)
         result.add('runtime_evidence:stable', 'error', 'source.runtime_evidence', reason=problem.reason)
     result.not_proven.append(BOUND_NOTE)
+    pg_components = (result.runtime_evidence.get('components') or {}).get('postgres')
+    if isinstance(pg_components, dict) and any(
+        isinstance(side, dict) and side.get('collation_version_mismatch') is True
+        for side in pg_components.values()
+    ):
+        result.not_proven.append(COLLATION_MISMATCH_NOTE)
     if not result.runtime_evidence.get('stable'):
         result.next_safe_action = ('the actual runtime could not be held stable: repair the configured runtime and '
                                    'rerun build, reason, cube and verify before reusing cached comparisons')

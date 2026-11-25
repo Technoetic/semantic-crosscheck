@@ -42,6 +42,7 @@ SQL, query results, binding values, credentials or exception messages. Its field
 | `cell_status_counts` | Counts of final `pass`, `fail`, `error`, and `not_run` statuses. An attempted `not_run` is executed but remains unjudged, so this status count can exceed `counts.not_run_cells`. |
 | `mutants` | Selected instances, existing first-result outcomes, skip reasons and coverage receipts, plus every `observed_detectors` mismatch with item ID and evidence kind. |
 | `detector_sets` | Per detecting item, the observed mutant IDs; `unique_mutants` have exactly one observed detector, while `redundant_mutants` also have another observed detector. |
+| `subsumption` | Diagnostic Dynamic Mutant Subsumption Graph (DMSG, since v0.35.0): groups killed mutants with identical detector sets into dynamic equivalence `classes`, computes transitive-reduced direct subsumption `edges` (`detectors(A)` strict subset of `detectors(B)`), and reports minimal `dominator_classes` (split into `dominator_classes_killed_by_authored` and `dominator_classes_generated_only`), `dominator_representatives`, `subsumed_mutants`, `indistinguishable_mutant_count`, and `redundant_killed_mutant_count`. Adds zero Cube executions and never alters V4 verdicts. |
 | `complete` | A nonempty selected matrix whose every cell was attempted. Errors and attempted not-run cells can still be present. This never means all passed or all relevant semantics were checked. |
 
 Pair replay IDs preserve chunk and NULL-group suffixes. Selected bindings and key partitions are the same
@@ -76,5 +77,8 @@ a skipped local integration test is not runtime verification.
 The observation option is conceptually informed by
 [StrykerJS v10.1.1 `disableBail`](https://github.com/stryker-mutator/stryker-js/blob/959127763e5bbe2eb65f5341a8161780d6d8a476/packages/api/schema/stryker-core.json#L499-L503)
 and [Mutation Testing Elements' separate execution and detection fields](https://github.com/stryker-mutator/mutation-testing-elements/blob/4b5b62cc6bf81f23dd9521447131abeb51f895db/packages/report-schema/src/mutation-testing-report-schema.json#L43-L100).
+The diagnostic `subsumption` graph (v0.35.0) implements the Dynamic Mutant Subsumption Graph (DMSG) and
+dominator-mutant formulation of
+[Kurtz, Ammann, Offutt, Delamaro, Kurtz & Gökçe (ESEC/FSE 2016), "Analyzing the Validity of Selective Mutation with Dominator Mutants"](https://doi.org/10.1145/2950290.2950322).
 These are pinned design references; no upstream code, schema, engine or runtime dependency is incorporated.
-Both projects are Apache-2.0 licensed. Observed execution and observed detection remain different facts.
+Observed execution, observed detection, and dynamic subsumption on a bounded test suite remain distinct facts.

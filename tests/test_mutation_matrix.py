@@ -120,6 +120,12 @@ class MatrixStageTest(unittest.TestCase):
                 'v4:measure_normalization_drop:on_hand', 'v4:measure_normalization_drop:consigned'])
             self.assertEqual(matrix['detector_sets'][0]['unique_mutants'], [])
             self.assertEqual(len(matrix['detector_sets'][0]['redundant_mutants']), 2)
+            self.assertEqual(matrix['subsumption']['killed_mutants'], 2)
+            self.assertEqual(matrix['subsumption']['equivalence_class_count'], 1)
+            self.assertEqual(matrix['subsumption']['dominator_class_count'], 1)
+            self.assertEqual(matrix['subsumption']['dominator_classes_killed_by_authored'], 1)
+            self.assertEqual(matrix['subsumption']['indistinguishable_mutant_count'], 1)
+            self.assertEqual(matrix['subsumption']['redundant_killed_mutant_count'], 1)
             self.assertTrue(matrix['complete'])
             self.assertRegex(matrix['identity']['model_sha256'], r'^[a-f0-9]{64}$')
             self.assertRegex(matrix['identity']['config_sha256'], r'^[a-f0-9]{64}$')
@@ -385,6 +391,77 @@ class MatrixDefaultOutputCleanupTest(unittest.TestCase):
                                            cwd=folder, capture_output=True, text=True, timeout=30)
                 self.assertEqual(completed.returncode, 2)
                 self.assertFalse(artifact.exists(), completed.stderr)
+
+
+class SubsumptionGraphTest(unittest.TestCase):
+    def test_empty_and_unkilled_mutants_produce_zero_subsumption_counts(self):
+        summary = mutation_coverage.compute_subsumption([
+            {'id': 'm1', 'observed_detectors': []},
+            {'id': 'm2', 'observed_detectors': []},
+        ])
+        self.assertEqual(summary['selected_mutants'], 2)
+        self.assertEqual(summary['killed_mutants'], 0)
+        self.assertEqual(summary['unkilled_mutants'], 2)
+        self.assertEqual(summary['equivalence_class_count'], 0)
+        self.assertEqual(summary['dominator_class_count'], 0)
+        self.assertEqual(summary['redundant_killed_mutant_count'], 0)
+        self.assertEqual(summary['classes'], [])
+        self.assertEqual(summary['edges'], [])
+
+    def test_transitive_reduction_chain_and_equivalence_classes(self):
+        rows = [
+            {'id': 'm_dom_a', 'observed_detectors': [{'id': 't1', 'kind': 'authored'}]},
+            {'id': 'm_dom_b', 'observed_detectors': [{'id': 't1', 'kind': 'authored'}]},
+            {'id': 'm_mid', 'observed_detectors': [
+                {'id': 't1', 'kind': 'authored'}, {'id': 't2', 'kind': 'generated'}]},
+            {'id': 'm_easy', 'observed_detectors': [
+                {'id': 't1', 'kind': 'authored'}, {'id': 't2', 'kind': 'generated'}, {'id': 't3', 'kind': 'authored'}]},
+            {'id': 'm_alive', 'observed_detectors': []},
+        ]
+        sub = mutation_coverage.compute_subsumption(rows)
+        self.assertEqual(sub['selected_mutants'], 5)
+        self.assertEqual(sub['killed_mutants'], 4)
+        self.assertEqual(sub['unkilled_mutants'], 1)
+        self.assertEqual(sub['equivalence_class_count'], 3)
+        self.assertEqual(sub['dominator_class_count'], 1)
+        self.assertEqual(sub['dominator_classes_killed_by_authored'], 1)
+        self.assertEqual(sub['dominator_classes_generated_only'], 0)
+        self.assertEqual(sub['subsumed_class_count'], 2)
+        self.assertEqual(sub['subsumed_mutant_count'], 2)
+        self.assertEqual(sub['indistinguishable_mutant_count'], 1)
+        self.assertEqual(sub['redundant_killed_mutant_count'], 3)
+        self.assertEqual(sub['dominator_representatives'], ['m_dom_a'])
+        self.assertEqual(sub['subsumed_mutants'], ['m_easy', 'm_mid'])
+        # Transitive reduction keeps direct Hasse edges only (dom -> mid -> easy, never dom -> easy).
+        by_first = {c['mutants'][0]: c for c in sub['classes']}
+        dom_id = by_first['m_dom_a']['id']
+        mid_id = by_first['m_mid']['id']
+        easy_id = by_first['m_easy']['id']
+        self.assertEqual(sub['edges'], [
+            {'subsumer': dom_id, 'subsumed': mid_id},
+            {'subsumer': mid_id, 'subsumed': easy_id},
+        ])
+        self.assertEqual(by_first['m_dom_a']['mutants'], ['m_dom_a', 'm_dom_b'])
+        self.assertTrue(by_first['m_dom_a']['dominator'])
+        self.assertEqual(by_first['m_easy']['subsumed_by'], [mid_id])
+
+    def test_multiple_dominators_separate_authored_and_generated_only_coverage(self):
+        rows = [
+            {'id': 'm_auth', 'observed_detectors': [{'id': 'v1:gold', 'kind': 'authored'}]},
+            {'id': 'm_gen', 'observed_detectors': [{'id': 'v3:total', 'kind': 'generated'}]},
+            {'id': 'm_both_1', 'observed_detectors': [
+                {'id': 'v1:gold', 'kind': 'authored'}, {'id': 'v3:total', 'kind': 'generated'}]},
+            {'id': 'm_both_2', 'observed_detectors': [
+                {'id': 'v1:gold', 'kind': 'authored'}, {'id': 'v3:total', 'kind': 'generated'}]},
+        ]
+        sub = mutation_coverage.compute_subsumption(rows)
+        self.assertEqual(sub['dominator_class_count'], 2)
+        self.assertEqual(sub['dominator_classes_killed_by_authored'], 1)
+        self.assertEqual(sub['dominator_classes_generated_only'], 1)
+        self.assertEqual(sub['dominator_representatives'], ['m_auth', 'm_gen'])
+        self.assertEqual(sub['subsumed_mutants'], ['m_both_1', 'm_both_2'])
+        self.assertEqual(sub['redundant_killed_mutant_count'], 2)
+        self.assertEqual(len(sub['edges']), 2)
 
 
 if __name__ == '__main__':

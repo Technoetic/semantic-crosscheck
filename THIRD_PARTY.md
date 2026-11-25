@@ -317,3 +317,14 @@ All v0.34.0 additions are original Python standard-library and `pg8000` implemen
 - [PostgreSQL 17 Documentation — 5.12. Table Partitioning](https://www.postgresql.org/docs/17/ddl-partitioning.html) for recursive `pg_inherits` child-partition RLS asymmetry detection (`child_partition_row_security`) in `doctor.py` and `grain.py`.
 
 The opt-in `--fixtures-dir` / `--check-fixture-leakage` structural deduplication audit in `tools/paired_release.py` is an original Python standard-library implementation with zero new dependencies. No external source code or third-party package from these references is copied, installed, or bundled.
+
+## v0.35.0 PostgreSQL 17 view/partition/collation guards, Z3 row symmetry breaking and DMSG dominator subsumption
+
+All v0.35.0 additions are original Python standard-library, `pg8000` and existing optional `z3-solver` implementations with zero new runtime dependencies. They follow:
+
+- [PostgreSQL 17 Documentation — `CREATE VIEW`](https://www.postgresql.org/docs/17/sql-createview.html) and [39.5. Rules and Privileges](https://www.postgresql.org/docs/17/rules-privileges.html) for inspecting `security_invoker` and `security_barrier` view options from `pg_class.reloptions` and disclosing view-owner execution (`view_security_invoker = false`) in `doctor.py`;
+- [PostgreSQL 17 Documentation — 51.15. `pg_database`](https://www.postgresql.org/docs/17/catalog-pg-database.html) and [51.12. `pg_collation`](https://www.postgresql.org/docs/17/catalog-pg-collation.html) for detecting database (`datcollversion` vs `pg_database_collation_actual_version`) and column (`collversion` vs `pg_collation_actual_version`) collation version drift in `doctor.py` and `runtime_provenance.py`, alongside recursive `pg_inherits` foreign/unlogged/unvalidated child-partition checks in `doctor.py` and `grain.py`;
+- [Dančo, Janota, Codish & Araújo (AAAI 2025), "Complete Symmetry Breaking for Finite Models"](https://arxiv.org/abs/2502.10155) (`doi:10.1609/aaai.v39i11.33217`) for lexicographic row-order symmetry breaking in Z3 finite-domain witness enumeration (`witness.py`);
+- [Kurtz, Ammann, Offutt, Delamaro, Kurtz & Gökçe (ESEC/FSE 2016), "Analyzing the Validity of Selective Mutation with Dominator Mutants"](https://doi.org/10.1145/2950290.2950322) for the pure-stdlib Dynamic Mutant Subsumption Graph (DMSG) and dominator-mutant diagnostics (`compute_subsumption`) in `mutation_coverage.py`.
+
+No external source code, solver plugin, paper artifact or runtime library from these references is copied, installed, or bundled.

@@ -29,6 +29,18 @@ _CHILD_RLS_NOT_PROVEN = (
     'A child partition or inherited relation has row-level security enabled while the parent does not; '
     'querying the parent vs. a child relation can enforce different row-visibility policies.'
 )
+_CHILD_FOREIGN_NOT_PROVEN = (
+    'A checked partitioned or inherited relation includes a foreign child partition, which does not '
+    'participate in PostgreSQL REPEATABLE READ snapshot isolation.'
+)
+_UNLOGGED_NOT_PROVEN = (
+    'A checked relation or child partition is UNLOGGED; unlogged relations are not WAL-logged and are '
+    'truncated automatically after an unclean shutdown or crash.'
+)
+_UNVALIDATED_CONSTRAINTS_NOT_PROVEN = (
+    'A checked relation or child partition has unvalidated CHECK or FOREIGN KEY constraints '
+    '(convalidated=false); existing rows are not checked against those constraints.'
+)
 
 
 def summarizability_failures(evidence: dict, allow_excluded_rows: bool) -> list[str]:
@@ -288,35 +300,61 @@ def evaluate(conn, actual, max_rows):
     query. Relation counts inspect max_rows+1; an overflow never executes
     partial evidence. Active row-level security without BYPASSRLS fails closed.
     """
-    catalog_flags: dict[str, bool] = {}
+    catalog_flags: dict[str, bool | int] = {}
     for side in ('source', 'node'):
         schema, table = ident.split(actual[side]['table'])
         meta_rows = db.rows(conn, '''SELECT c.relkind,
+          coalesce(c.relpersistence::text, 'p') AS relpersistence,
           coalesce(c.relrowsecurity, false) AS relrowsecurity,
           coalesce((SELECT r.rolbypassrls FROM pg_catalog.pg_roles r WHERE r.rolname = current_user), false) AS rolbypassrls,
           coalesce((SELECT bool_or(i.indisunique AND i.indisvalid AND i.indisready
                                    AND i.indpred IS NULL AND i.indexprs IS NULL
                                    AND i.indnullsnotdistinct)
                     FROM pg_catalog.pg_index i WHERE i.indrelid = c.oid), false) AS unique_nulls_not_distinct,
-          coalesce((WITH RECURSIVE parts(oid) AS (
-                      SELECT inh.inhrelid FROM pg_catalog.pg_inherits inh WHERE inh.inhparent = c.oid
-                      UNION
-                      SELECT inh.inhrelid FROM pg_catalog.pg_inherits inh JOIN parts p ON inh.inhparent = p.oid
-                    )
-                    SELECT bool_or(ch.relrowsecurity)
-                    FROM parts p
-                    JOIN pg_catalog.pg_class ch ON ch.oid = p.oid), false) AS child_partition_row_security
+          coalesce((SELECT count(*) FROM pg_catalog.pg_constraint con
+                    WHERE con.conrelid = c.oid AND con.contype IN ('c', 'f') AND NOT con.convalidated), 0)::integer
+            AS unvalidated_constraints,
+          coalesce(children.child_partition_row_security, false) AS child_partition_row_security,
+          coalesce(children.child_foreign_partitions, false) AS child_foreign_partitions,
+          coalesce(children.child_unlogged_partitions, false) AS child_unlogged_partitions,
+          coalesce(children.child_unvalidated_constraints, 0)::integer AS child_unvalidated_constraints
           FROM pg_catalog.pg_class c
           JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+          LEFT JOIN LATERAL (
+            WITH RECURSIVE parts(oid) AS (
+              SELECT inh.inhrelid FROM pg_catalog.pg_inherits inh WHERE inh.inhparent = c.oid
+              UNION
+              SELECT inh.inhrelid FROM pg_catalog.pg_inherits inh JOIN parts p ON inh.inhparent = p.oid
+            )
+            SELECT bool_or(ch.relrowsecurity) AS child_partition_row_security,
+                   bool_or(ch.relkind = 'f') AS child_foreign_partitions,
+                   bool_or(ch.relpersistence = 'u') AS child_unlogged_partitions,
+                   (SELECT count(*)
+                    FROM pg_catalog.pg_constraint con
+                    WHERE con.conrelid IN (SELECT oid FROM parts)
+                      AND con.contype IN ('c', 'f')
+                      AND con.coninhcount = 0
+                      AND NOT con.convalidated) AS child_unvalidated_constraints
+            FROM parts p
+            JOIN pg_catalog.pg_class ch ON ch.oid = p.oid
+          ) AS children ON true
           WHERE n.nspname = :schema AND c.relname = :table''', schema=schema, table=table)
         if not meta_rows or meta_rows[0]['relkind'] not in ('r', 'p'):
             return {'reason': 'unsupported_relation', 'complete': False}
         meta = meta_rows[0]
         row_security = bool(meta['relrowsecurity'])
         bypass_rls = bool(meta['rolbypassrls'])
+        child_foreign = bool(meta.get('child_foreign_partitions', False))
         catalog_flags[side + '_row_security'] = row_security
         catalog_flags[side + '_child_partition_row_security'] = bool(meta.get('child_partition_row_security', False))
+        catalog_flags[side + '_child_foreign_partitions'] = child_foreign
+        catalog_flags[side + '_unlogged'] = str(meta.get('relpersistence', 'p')) == 'u'
+        catalog_flags[side + '_child_unlogged_partitions'] = bool(meta.get('child_unlogged_partitions', False))
         catalog_flags[side + '_unique_nulls_not_distinct'] = bool(meta['unique_nulls_not_distinct'])
+        catalog_flags[side + '_unvalidated_constraints'] = int(meta.get('unvalidated_constraints', 0))
+        catalog_flags[side + '_child_unvalidated_constraints'] = int(meta.get('child_unvalidated_constraints', 0))
+        if child_foreign:
+            return {**catalog_flags, 'reason': 'unsupported_relation', 'complete': False}
         if row_security and not bypass_rls:
             return {**catalog_flags, 'reason': 'row_level_security', 'complete': False}
     sizes = {}
@@ -400,6 +438,9 @@ def run(cfg, args, out: Path) -> Result:
         with db.read_only(conn, timeout, isolation='repeatable read'):
             rls_seen = False
             child_rls_seen = False
+            child_foreign_seen = False
+            unlogged_seen = False
+            unvalidated_seen = False
             for index, (contract, actual) in enumerate(zip(spec['contracts'], operations), 1):
                 evidence = evaluate(conn, actual, max_rows)
                 if evidence.get('source_row_security') or evidence.get('node_row_security'):
@@ -407,6 +448,16 @@ def run(cfg, args, out: Path) -> Result:
                 if ((evidence.get('source_child_partition_row_security') and not evidence.get('source_row_security'))
                         or (evidence.get('node_child_partition_row_security') and not evidence.get('node_row_security'))):
                     child_rls_seen = True
+                if evidence.get('source_child_foreign_partitions') or evidence.get('node_child_foreign_partitions'):
+                    child_foreign_seen = True
+                if (evidence.get('source_unlogged') or evidence.get('node_unlogged')
+                        or evidence.get('source_child_unlogged_partitions')
+                        or evidence.get('node_child_unlogged_partitions')):
+                    unlogged_seen = True
+                if (evidence.get('source_unvalidated_constraints') or evidence.get('node_unvalidated_constraints')
+                        or evidence.get('source_child_unvalidated_constraints')
+                        or evidence.get('node_child_unvalidated_constraints')):
+                    unvalidated_seen = True
                 if not evidence['complete']:
                     status = 'not_run'
                 else:
@@ -429,6 +480,12 @@ def run(cfg, args, out: Path) -> Result:
                 result.not_proven.append(_RLS_NOT_PROVEN)
             if child_rls_seen:
                 result.not_proven.append(_CHILD_RLS_NOT_PROVEN)
+            if child_foreign_seen:
+                result.not_proven.append(_CHILD_FOREIGN_NOT_PROVEN)
+            if unlogged_seen:
+                result.not_proven.append(_UNLOGGED_NOT_PROVEN)
+            if unvalidated_seen:
+                result.not_proven.append(_UNVALIDATED_CONSTRAINTS_NOT_PROVEN)
         # Bind completion to exactly the files checked at startup.
         if hashlib.sha256(_read(source)).hexdigest() != spec['spec_sha256'] or hashlib.sha256(Path(cfg.path).read_bytes()).hexdigest() != config_sha:
             raise ValueError('input changed')

@@ -143,6 +143,8 @@ class WitnessContractTest(_WitnessCase):
         for maximum, timeout in ((0, 1000), (1001, 1000), (True, 1000), (2, 0), (2, True)):
             with self.subTest(maximum=maximum, timeout=timeout), self.assertRaises(StageError):
                 witness.generate(spec, None, maximum, timeout)
+        with self.assertRaises(StageError):
+            witness.generate(spec, None, 2, 1000, row_symmetry_breaking=1)
 
 
 @unittest.skipUnless(HAS_Z3, 'optional z3-solver is not installed')
@@ -172,9 +174,45 @@ class WitnessSolverTest(_WitnessCase):
         generated = witness.generate(spec, profile, 10, 5000)
         self.assertEqual((generated.fixtures, generated.reason), ((), 'unsatisfiable'))
         profile = self.profile(spec, {'version': 1, 'tables': {'part': {'unique': [['part_id']]}}})
-        generated = witness.generate(spec, profile, 10, 5000)
-        self.assertEqual(generated.fixtures, ({'part': [[None], [None]]}, {'part': [[None], ['A']]},
-                                             {'part': [['A'], [None]]}))
+        canonical = witness.generate(spec, profile, 10, 5000)
+        self.assertEqual(canonical.fixtures, ({'part': [[None], [None]]}, {'part': [[None], ['A']]}))
+        ordered = witness.generate(spec, profile, 10, 5000, row_symmetry_breaking=False)
+        self.assertEqual(ordered.fixtures, ({'part': [[None], [None]]}, {'part': [[None], ['A']]},
+                                            {'part': [['A'], [None]]}))
+
+    def test_row_symmetry_breaking_eliminates_bag_permutations_and_preserves_multiset_completeness(self):
+        # 4-row primary key over 4 distinct values: 4! = 24 bag-isomorphic row orders collapse to 1 canonical fixture.
+        spec_pk = self.spec({'part': {'columns': [
+            {'name': 'part_id', 'type': 'integer', 'values': [1, 2, 3, 4]}], 'rows': [4, 4]}})
+        profile_pk = self.profile(spec_pk, {'version': 1, 'tables': {'part': {'primary_key': ['part_id']}}})
+        broken = witness.generate(spec_pk, profile_pk, 64, 5000, row_symmetry_breaking=True)
+        unbroken = witness.generate(spec_pk, profile_pk, 64, 5000, row_symmetry_breaking=False)
+        self.assertEqual(broken.reason, 'space_exhausted')
+        self.assertEqual(unbroken.reason, 'space_exhausted')
+        self.assertEqual(broken.fixtures, ({'part': [[1], [2], [3], [4]]},))
+        self.assertEqual(len(unbroken.fixtures), 24)
+        self.assertLess(broken.solver_checks, unbroken.solver_checks)
+
+        # Multi-column table allowing duplicate rows: canonical bags equal exact set of sorted multisets.
+        spec_bag = self.spec({'stock': {'columns': [
+            {'name': 'a', 'type': 'integer', 'values': [0, 1]},
+            {'name': 'b', 'type': 'text', 'values': [None, 'X']}], 'rows': [0, 2]}})
+        sym_bag = witness.generate(spec_bag, None, 64, 5000, row_symmetry_breaking=True)
+        raw_bag = witness.generate(spec_bag, None, 64, 5000, row_symmetry_breaking=False)
+        self.assertEqual(sym_bag.reason, 'space_exhausted')
+        self.assertEqual(raw_bag.reason, 'space_exhausted')
+        self.assertLess(len(sym_bag.fixtures), len(raw_bag.fixtures))
+
+        def canonical_bag(fixture):
+            rows = fixture['stock']
+            return tuple(sorted(
+                (r[0], -1 if r[1] is None else 0) for r in rows
+            ))
+
+        self.assertEqual({canonical_bag(f) for f in sym_bag.fixtures}, {canonical_bag(f) for f in raw_bag.fixtures})
+        self.assertEqual(len(sym_bag.fixtures), len({canonical_bag(f) for f in sym_bag.fixtures}))
+        with self.assertRaises(StageError):
+            witness.generate(spec_bag, None, 4, 1000, row_symmetry_breaking=1)
 
     def test_numeric_cast_dedup_and_sql_check_unknown(self):
         spec = self.spec({'stock': {'columns': [

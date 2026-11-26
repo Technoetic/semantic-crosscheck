@@ -58,4 +58,11 @@ python tools/paired_release.py --plan examples/paired-release/plan.json --baseli
 - **2단계 구조 지문 (`fixture_leakage_audit`):**
   1. `canonical_json_sha256`: JSON 타입(`bool`/`int`/`float`/`null`/`str`)과 배열 순서를 유지한 채 공백과 딕셔너리 키 순서에 불변인 정규화 다이제스트.
   2. `alpha_structural_sha256`: 딕셔너리 키, 최상위 모드 문자열(`gold_mode`, `model_mode` 등), 숫자·불리언·`null` 값과 행 간 문자열 동치 그래프를 보존하면서 중첩 도메인 문자열을 알파-리네이밍하고 배열 행 순서를 정규화한 구조 다이제스트.
-- **결과 공시와 강제 (`--check-fixture-leakage`):** 보고서의 `fixture_leakage_audit`에는 원본 행 값이나 로컬 경로 없이 다이제스트·사례 ID·노출 구간(`development`/`heldout`/`unknown`)과 상태(`passed`, `cross_split_leakage`, `within_split_duplicate`, `both_failed`)만 기록한다. `--check-fixture-leakage`를 지정하면 `development`↔`heldout` 간 누출이나 동일 분할 내 구조 복제가 하나라도 있을 때 종료 코드 `1`로 실패한다. 저장소의 `examples/paired-release/cases` 10건은 두 수준 모두 중복 `0`건으로 통과한다.
+- **결과 공시와 강제 (`--check-fixture-leakage`):** 보고서의 `fixture_leakage_audit`에는 원본 행 값이나 로컬 경로 없이 다이제스트·사례 ID·노출 구간(`development`/`heldout`/`unknown`)과 상태(`passed`, `cross_split_leakage`, `within_split_duplicate`, `extra_fixture_entries`, `both_failed`, `multiple_failures`)만 기록한다. `--check-fixture-leakage`를 지정하면 `development`↔`heldout` 간 누출, 동일 분할 내 구조 복제, 또는 계획 외 미등록 픽스처 항목이 하나라도 있을 때 종료 코드 `1`로 실패한다. 저장소의 `examples/paired-release/cases` 10건은 두 수준과 구성원 일치 모두 중복·초과 `0`건으로 통과한다.
+
+## 픽스처 디렉터리 정확 구성원 감사 및 `-O` 이식성 자가 감사 (v0.36.0)
+
+v0.36.0부터 [`openai/math`](https://github.com/openai/math)(커밋 `3344da59`, Apache-2.0)의 `check_records.py`(`check_tree_membership`)와 `portability_check.py` 패턴을 Python 표준 라이브러리만으로 선택 반영했다(새 런타임 의존성 0개).
+
+- **픽스처 디렉터리 정확 구성원 감사 (`tools/paired_release.py`, `tools/run_paired_example.py`):** `--fixtures-dir`에 계획된 `{<case_id>.json}` 외의 미등록 파일(`extra_files`), 하위 디렉터리(`extra_directories`), 심볼릭 링크·비정규 항목(`unexpected_entries`)이 남아 있으면 `tree_membership_passed = false`로 공시하고 `--check-fixture-leakage`에서 종료 코드 `1`로 실패한다(`tools/run_paired_example.py`도 `cases/`의 정확 구성원 일치를 검증한다).
+- **이전 CWD · 읽기 전용 · `python -O -B` 변조 거부 자가 감사 (`tools/portability_check.py`):** `python -O -B tools/portability_check.py --json`은 무관한 작업 디렉터리에서 오프라인 검증기(`knowledge-evolution`, `run_paired_example.py`, `paired_release.py`, `result_contract`, `report --permitted-assumptions`)를 `-O`(assert 제거) 모드로 실행해 정상 통과, 원본 파일 SHA-256 읽기 전용 불변성, 그리고 1바이트 영수증 변조·미등록 픽스처 삽입·수치 주장 조작·중복 JSON 키·미허용 가정의 실패 폐쇄를 검증한다.

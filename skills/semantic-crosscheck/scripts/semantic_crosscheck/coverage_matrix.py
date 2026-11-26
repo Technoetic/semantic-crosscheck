@@ -185,7 +185,8 @@ def format_coverage_summary(report: dict[str, object]) -> str:
     host = report["host"]
     caps = report["host_capabilities"]
     diag = report["cube_install_diagnostics"]
-    assert isinstance(host, dict) and isinstance(caps, dict) and isinstance(diag, dict)
+    if not isinstance(host, dict) or not isinstance(caps, dict) or not isinstance(diag, dict):
+        raise TypeError("coverage report sections must be dictionaries")
     near = diag.get("near_misses") or []
     near_text = ", ".join(str(item) for item in near) if isinstance(near, list) and near else "none"
     lines = [

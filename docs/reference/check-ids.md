@@ -29,7 +29,7 @@
 | verify | `gold_evidence:<element>` | 0.23.0부터, `verify.gold_observation = "require"`이고 전체 범위 실행일 때만: 지표·계층·`ontology.class_column`마다 모든 facet이 사람이 쓴 gold 질의와 값이 있는 행으로 비교되었거나, 사람이 쓴 항목의 변이 검출이 있거나, `verify.accepted_gaps`에 있음 |
 | measure-oracle | `measure_oracle` | 명시한 한 테이블의 원시 행으로 독립 계산한 SUM/COUNT와 Cube 지표 일치. 빈 범위와 서로 다른 스냅샷의 한계는 별도 공개하며, 기본 report 판정에는 포함하지 않음 |
 | plan-compare | `plan_compare.consistency`, `plan_compare.cleanup` | 서로 다른 실제 스캔 계획에서 같은 합성 질의의 전체 타입 행 다중집합 비교; 정리 실패는 오류. 전역 동등성·정답 보장이 아닌 선택 진단 |
-| report | `stage:<name>` | 단계가 실행되었고 최신이며 통과 |
+| report | `stage:<name>`, `assumptions:permitted` | 단계가 실행되었고 최신이며 통과; `--permitted-assumptions` 선택 시 활성 가정 코드가 모두 허용목록 안에 있음 |
 | build·reason·cube·verify / report | `data_revision:stable`, `data_revision:current` | 구성된 데이터 버전이 안정적이며 현재 근거와 일치; 조회 오류는 실패로 닫음 |
 | build·reason·cube·verify / report | `runtime_evidence:stable`, `runtime_evidence:current` | 선택한 실제 실행 환경 근거가 안정적이며 현재와 일치; 누락·변경·조회 실패 시 기존 PASS 재사용 차단 |
 | counterexample | `counterexample:search`, `counterexample:query`, `counterexample:recheck`, `counterexample:inputs`, `counterexample:artifact` | 합성 SQL 차이와 축소·재현 범위; 오류·미발견은 동등성 증명 불가, 재생 파일 크기 상한 초과 시 저장 거부 |

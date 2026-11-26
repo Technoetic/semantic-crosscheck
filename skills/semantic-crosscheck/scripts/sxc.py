@@ -141,6 +141,8 @@ def parser(*, audit_errors=False) -> argparse.ArgumentParser:
     s = sub.add_parser("report", parents=[common], help="summarise every stage result into report.md and report.json")
     s.add_argument("--require-doctor", action="store_true",
                    help="require a current passing doctor result recorded for this configuration")
+    s.add_argument("--permitted-assumptions", default=None, metavar="LIST",
+                   help="opt-in closed allowlist of permitted report assumption codes (comma-separated, or 'none')")
 
     s = sub.add_parser("cube-install", parents=[common], help="install the pinned Cube adapter (npm ci --ignore-scripts + SHA-256-pinned native module)")
     s.add_argument("--home", default="", help="install directory (default: per-user cache, or SXC_CUBE_HOME); the other "

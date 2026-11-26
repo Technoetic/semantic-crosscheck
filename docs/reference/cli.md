@@ -2,7 +2,7 @@
 
 ## 릴리스 검증 도구
 
-소스 저장소에서 `python tools/run_paired_example.py`를 실행하면 두 검사의 결과가 기록과 일치하는지 확인할 수 있다. `python tools/paired_release.py`는 같은 사례의 판정 변화를 집계하며, `--check-markdown`으로 릴리스 노트 수치를 확인한다. [입력 형식과 실행 예](../paired-release.md).
+소스 저장소에서 `python tools/run_paired_example.py`를 실행하면 두 검사의 결과가 기록과 일치하고 `cases/` 디렉터리 구성원이 계획과 정확히 일치하는지 확인할 수 있다. `python tools/paired_release.py`는 같은 사례의 판정 변화를 집계하며, `--check-markdown`으로 릴리스 노트 수치를, `--fixtures-dir`·`--check-fixture-leakage`로 구조 중복과 미등록 픽스처 항목을 확인한다. `python -O -B tools/portability_check.py --json`은 외부 CWD·읽기 전용 소스 불변성·`-O` 최적화 모드 변조 거부 동작을 오프라인으로 자가 점검한다. [입력 형식과 실행 예](../paired-release.md).
 
 ## v0.29.0 선택형 독립 검산·계획 비교
 
@@ -28,7 +28,7 @@ python skills/semantic-crosscheck/scripts/sxc.py <stage> [--config PATH] [--out 
 | `reason` | SHACL ↔ SQL, OWL 일관성·폐포·분류 대조 | `--only shacl,owl`, `--synthetic-witnesses` | `reason/result.json` |
 | `cube` | Cube 모델 생성·시작·검사 | 별도 옵션 없음 | `cube/result.json`, `cube/model/*.yml`, `cube/model.json`, `cube/server.log` |
 | `verify` | V1·V2·V3·V4 검증 | `--only v1,v2,v3,v4`, `--gold ID` | `verify/result.json`, `verify/server.log`, `verify/mutants/*/` |
-| `report` | 필수 단계의 실행·최신성·통과 여부 종합 | `--require-doctor` | `report/result.json`, `report.md`, `report.json` |
+| `report` | 필수 단계의 실행·최신성·통과 여부 종합 | `--require-doctor`, `--permitted-assumptions LIST` | `report/result.json`, `report.md`, `report.json` |
 | `cube-install` | 사용자별 고정 Cube 어댑터 설치 | `--home DIR`, `--native-file PATH`, `--force` | `cube_install/result.json`, `cube_install/npm-ci.log`, `cube_install/smoke.log` |
 | `counterexample` | 합성 데이터에서 SQL의 차이·BOM 변환 관계를 검사하고 축소·재현 | `--reference-sql FILE`, `--candidate-sql FILE`, `--metamorphic-sql FILE`, `--mutation-operator NAME`, `--gold-sql FILE`, `--scenario nulls`, `--seed N`, `--max-examples N`, `--max-shrink-steps N`, `--shrink-strategy structured`, `--witness-schema FILE`, `--solver-timeout-ms N`, `--dsn-env NAME`, `--statement-timeout-ms N`, `--constraints FILE`, `--constraint-audit FILE`, `--replay FILE` | `counterexample/result.json`, `counterexample/fixture.json` |
 | `cube-replay` | 고정 합성 데이터를 실제 Cube 원형·변형 모델과 독립 gold SQL로 비교 | `--mutation-operator NAME`, `--allow-scratch-schema`, `--seed N`, `--dsn-env NAME`, `--statement-timeout-ms N`, `--replay FILE` | `cube_replay/result.json`, `cube_replay/fixture.json` |

@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.36.0] - 2026-11-27
+
+- Add exact fixture-directory tree membership auditing (`tree_membership_passed`, `extra_files`, `extra_directories`, `unexpected_entries`) to `tools/paired_release.py` (`--fixtures-dir` / `--check-fixture-leakage`) and `tools/run_paired_example.py`, closing the unlisted-fixture cherry-picking blind spot without following symlinks or exposing local paths (relative names only, pure stdlib).
+- Add pure-stdlib closed-enum trust assumption derivation (`ASSUMPTION_CODES`, `active_assumptions`) and opt-in `sxc.py report --permitted-assumptions <csv|none>` allowlist checking (`assumptions:permitted`, `assumption_policy`, `## Assumption policy`) in `report.py` and `sxc.py` (zero extra DB queries, 100% byte-identical `compat_v0_21_1` default report output when omitted).
+- Eliminate remaining raw `assert` statements from production modules (`coverage_matrix.py`, `tools/paired_release.py`, `tools/render_readme_animation.py`) and `.github/workflows/tests.yml`, enforce zero production `assert` nodes via AST unit test (`tests/test_portability_and_asserts.py`), and add `tools/portability_check.py` (wired into all 8 unit CI cells under `python -O -B`) verifying relocated-CWD execution, read-only source SHA-256 immutability, and negative tamper-rejection checks under `-O`.
+- Selectively adapts three stdlib-only verification patterns informed by `openai/math` (commit `3344da59`, Apache-2.0; zero Lean/Mathlib/C++/LLM dependencies or copied source). Engine fingerprints change; rerun operational stages after upgrading. See [release scope and verification](docs/releases/v0.36.0.md).
+
 ## [0.35.0] - 2026-11-25
 
 - Extend PostgreSQL 17 catalog guards in `doctor.py`, `grain.py`, and `runtime_provenance.py` (zero extra per-entity round trips in `doctor`, preserving `statement_budget = 5` in `grain`, zero extra round trips in `runtime_provenance`):
@@ -1248,3 +1255,5 @@ First release. Release notes: [docs/releases/v0.1.0.md](docs/releases/v0.1.0.md)
 [0.34.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.34.0
 
 [0.35.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.35.0
+
+[0.36.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.36.0

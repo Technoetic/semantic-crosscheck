@@ -54,7 +54,8 @@ def render(font_path, bold_path, mono_path):
                                        outline=ACCENT if is_active else "#475569",
                                        width=3 if is_active else 1)
                 text_width = draw.textlength(label, font=fonts["label"])
-                assert text_width < 118, label
+                if text_width >= 118:
+                    raise ValueError(f"stage label exceeds box width: {label}")
                 draw.text((centers[index]-text_width/2, 165), label,
                           font=fonts["label"], fill=INK if is_active else MUTED)
             draw.line((centers[0], 239, centers[-1], 239), fill="#475569", width=3)
@@ -71,7 +72,8 @@ def render(font_path, bold_path, mono_path):
             draw.text((62, 287), f"{active+1:02d} / 07   {command}", font=fonts["label"], fill=ACCENT)
             draw.text((62, 320), description, font=fonts["description"], fill=INK)
             command_line = f"$ python sxc.py {command} --config demo/crosscheck.toml"
-            assert draw.textlength(command_line, font=fonts["command"]) < 950
+            if draw.textlength(command_line, font=fonts["command"]) >= 950:
+                raise ValueError(f"command line exceeds frame width: {command_line}")
             draw.text((62, 364), command_line, font=fonts["command"], fill=MUTED)
             draw.text((41, 432), NOTICE, font=fonts["notice"], fill=MUTED)
             frames.append(img)

@@ -37,6 +37,8 @@ jobs:
         run: python -m unittest discover -s tests -v
       - name: Compile Python sources
         run: python -m compileall -q skills/semantic-crosscheck/scripts tests tools
+      - name: Relocated -O portability and tamper checks
+        run: python -O -B tools/portability_check.py --json
 
   integration:
     name: integration / PostgreSQL 17, HermiT, Cube, Jena, demo end to end
@@ -112,7 +114,8 @@ jobs:
           with zipfile.ZipFile(io.BytesIO(archive)) as package:
               package.extractall(destination)
           home = destination / "apache-jena-6.2.0"
-          assert (home / "lib" / "jena-shacl-6.2.0.jar").is_file(), "Jena SHACL is missing"
+          if not (home / "lib" / "jena-shacl-6.2.0.jar").is_file():
+              raise SystemExit("Jena SHACL is missing")
           with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as environment:
               environment.write(f"SXC_JENA_HOME={home}\n")
           print("Apache Jena 6.2.0: archive checksum verified")
@@ -174,16 +177,20 @@ jobs:
           os.environ["SXC_CI_PROBE_DSN"] = os.environ["SXC_TEST_ADMIN_DSN"]
           conn = db.connect("SXC_CI_PROBE_DSN")
           try:
-              assert db.server_version_num(conn) >= 170000, "PostgreSQL 17 or later is required"
+              if db.server_version_num(conn) < 170000:
+                  raise SystemExit("PostgreSQL 17 or later is required")
           finally:
               conn.close()
-          assert Path(os.environ["SXC_JAVA"]).is_file(), "SXC_JAVA does not name a file"
-          assert cube_run.installed(cube_run.cube_home()), "the Cube adapter is not installed"
+          if not Path(os.environ["SXC_JAVA"]).is_file():
+              raise SystemExit("SXC_JAVA does not name a file")
+          if not cube_run.installed(cube_run.cube_home()):
+              raise SystemExit("the Cube adapter is not installed")
           jena = Path(os.environ["SXC_JENA_HOME"])
           version = subprocess.run([os.environ["SXC_JAVA"], "-cp", str(jena / "lib" / "*"),
                                     "shacl.shacl", "version"], check=True, capture_output=True,
                                    text=True, timeout=30)
-          assert "Apache Jena SHACL version 6.2.0" in version.stdout + version.stderr, "Jena cannot execute"
+          if "Apache Jena SHACL version 6.2.0" not in version.stdout + version.stderr:
+              raise SystemExit("Jena cannot execute")
           suite = shacl_corpus.load_w3c_suite(os.environ["SXC_W3C_SHACL_SUITE"])
           if suite.sha256 != shacl_corpus.W3C_SUITE_SHA256:
               raise SystemExit("the W3C suite is not the pinned content")
@@ -322,6 +329,7 @@ jobs:
         run: |
           ty check --python-version 3.11 --extra-search-path skills/semantic-crosscheck/scripts \
             tools/paired_release.py \
+            tools/portability_check.py \
             tools/run_paired_example.py \
             tools/check_bom.py \
             tools/check_unicode.py \
@@ -391,9 +399,11 @@ jobs:
                   encoding="utf-8",
               )
               doc = json.loads(out)
-              assert doc.get("bomFormat") == "CycloneDX", f"{req}: unexpected bomFormat"
+              if doc.get("bomFormat") != "CycloneDX":
+                  raise SystemExit(f"{req}: unexpected bomFormat")
               components = doc.get("components", [])
-              assert len(components) >= 1, f"{req}: empty components"
+              if len(components) < 1:
+                  raise SystemExit(f"{req}: empty components")
               print(f"cyclonedx-py {req}: spec={doc.get('specVersion')} components={len(components)}")
 
           npm_out = subprocess.check_output(
@@ -403,9 +413,11 @@ jobs:
               encoding="utf-8",
           )
           npm_doc = json.loads(npm_out)
-          assert npm_doc.get("bomFormat") == "CycloneDX", "npm sbom: unexpected bomFormat"
+          if npm_doc.get("bomFormat") != "CycloneDX":
+              raise SystemExit("npm sbom: unexpected bomFormat")
           npm_components = npm_doc.get("components", [])
-          assert len(npm_components) >= 1, "npm sbom: empty components"
+          if len(npm_components) < 1:
+              raise SystemExit("npm sbom: empty components")
           print(f"npm sbom (cube adapter): spec={npm_doc.get('specVersion')} components={len(npm_components)}")
           EOF
       - name: Cognitive complexity check (complexipy)

@@ -3,6 +3,7 @@
 import hashlib
 import json
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -589,9 +590,11 @@ class PairedReleaseTest(unittest.TestCase):
                 self.assertIn("error", rep_ts)
 
     def _build_fixture_suite(self, case_specs: list[tuple[str, str, str, bytes]]) -> Path:
-        """Create a cases/ directory and matching plan/baseline/candidate receipts."""
+        """Create a clean cases/ directory and matching plan/baseline/candidate receipts."""
         cases_dir = self.directory / "cases"
-        cases_dir.mkdir(exist_ok=True)
+        if cases_dir.exists():
+            shutil.rmtree(cases_dir)
+        cases_dir.mkdir()
         n = len(case_specs)
         self.plan = dict(schema_version=1, experiment="leakage", added_check="new",
                          baseline_checks=["old"], budget=max(n, 1), cases=[])
@@ -630,6 +633,10 @@ class PairedReleaseTest(unittest.TestCase):
         self.assertEqual(audit["status"], "passed")
         self.assertTrue(audit["passed"])
         self.assertEqual(audit["cases_checked"], 10)
+        self.assertTrue(audit["tree_membership_passed"])
+        self.assertEqual(audit["extra_files"], [])
+        self.assertEqual(audit["extra_directories"], [])
+        self.assertEqual(audit["unexpected_entries"], [])
         self.assertEqual(audit["canonical_duplicate_groups"], [])
         self.assertEqual(audit["alpha_duplicate_groups"], [])
         self.assertEqual(audit["cross_split_case_ids"], [])
@@ -868,6 +875,127 @@ class PairedReleaseTest(unittest.TestCase):
         code_sym, rep_sym = self.compare(extra_args=("--fixtures-dir", str(sym_dir)))
         self.assertEqual(code_sym, 2)
         self.assertIn("symlink", rep_sym["error"])
+
+    def test_fixture_tree_membership_rejects_unlisted_files_subdirs_and_symlinks(self):
+        cases_dir = self._build_fixture_suite([
+            ("dev-one", "error", "development", b'{"facts":[{"sku":"A","units":1}]}\n'),
+            ("held-one", "clean", "heldout", b'{"facts":[{"sku":"B","units":2}]}\n'),
+        ])
+        code_ok, rep_ok = self.compare(extra_args=("--fixtures-dir", str(cases_dir), "--check-fixture-leakage"))
+        self.assertEqual(code_ok, 0, rep_ok)
+        self.assertTrue(rep_ok["fixture_leakage_audit"]["tree_membership_passed"])
+
+        # Plant an unlisted fixture file and a stray subdirectory inside fixtures-dir.
+        (cases_dir / "unlisted-cherry-pick.json").write_bytes(b'{"facts":[]}\n')
+        (cases_dir / "stray_dir").mkdir()
+        (cases_dir / "stray_dir" / "hidden.json").write_bytes(b'{}\n')
+        code_info, rep_info = self.compare(extra_args=("--fixtures-dir", str(cases_dir)))
+        self.assertEqual(code_info, 0, rep_info)
+        audit = rep_info["fixture_leakage_audit"]
+        self.assertFalse(audit["passed"])
+        self.assertFalse(audit["tree_membership_passed"])
+        self.assertEqual(audit["status"], "extra_fixture_entries")
+        self.assertEqual(audit["extra_files"], ["unlisted-cherry-pick.json"])
+        self.assertEqual(audit["extra_directories"], ["stray_dir"])
+        self.assertEqual(audit["unexpected_entries"], [])
+        self.assertNotIn(str(self.directory), json.dumps(audit))
+
+        code_fail, _ = self.compare(extra_args=("--fixtures-dir", str(cases_dir), "--check-fixture-leakage"))
+        self.assertEqual(code_fail, 1)
+
+        # Combine cross-split leakage + extra file -> multiple_failures, exit 1.
+        cases_multi = self._build_fixture_suite([
+            ("dev-dup", "error", "development", b'{"facts":[{"sku":"A","units":3}]}\n'),
+            ("held-dup", "error", "heldout", b'{"facts":[{"sku":"Z","units":3}]}\n'),
+        ])
+        (cases_multi / "extra.json").write_bytes(b'{}\n')
+        code_m, rep_m = self.compare(extra_args=("--fixtures-dir", str(cases_multi), "--check-fixture-leakage"))
+        self.assertEqual(code_m, 1)
+        self.assertEqual(rep_m["fixture_leakage_audit"]["status"], "multiple_failures")
+        self.assertEqual(rep_m["fixture_leakage_audit"]["extra_files"], ["extra.json"])
+
+        # Verify run_paired_example.py also rejects unlisted files in cases/.
+        example_copy = self.directory / "example-copy"
+        shutil.copytree(SCRIPT.parents[1] / "examples" / "paired-release", example_copy)
+        (example_copy / "cases" / "unlisted.json").write_bytes(b'{}\n')
+        replay = subprocess.run(
+            [
+                sys.executable, str(SCRIPT.parent / "run_paired_example.py"),
+                "--plan", str(example_copy / "plan.json"),
+                "--baseline", str(example_copy / "baseline.json"),
+                "--candidate", str(example_copy / "candidate.json"),
+            ],
+            capture_output=True, text=True,
+        )
+        self.assertNotEqual(replay.returncode, 0)
+        self.assertIn("membership mismatch", replay.stderr)
+
+        # Verify run_paired_example.py rejects missing cases/ and non-directory cases/ without leaking raw paths.
+        missing_copy = self.directory / "example-missing-cases"
+        shutil.copytree(SCRIPT.parents[1] / "examples" / "paired-release", missing_copy)
+        shutil.rmtree(missing_copy / "cases")
+        replay_missing = subprocess.run(
+            [
+                sys.executable, str(SCRIPT.parent / "run_paired_example.py"),
+                "--plan", str(missing_copy / "plan.json"),
+                "--baseline", str(missing_copy / "baseline.json"),
+                "--candidate", str(missing_copy / "candidate.json"),
+            ],
+            capture_output=True, text=True,
+        )
+        self.assertNotEqual(replay_missing.returncode, 0)
+        self.assertIn("does not exist or is unreadable", replay_missing.stderr)
+        self.assertNotIn(str(self.directory), replay_missing.stderr)
+
+        # Verify run_paired_example.py rejects a symlink/junction cases/ directory.
+        link_copy = self.directory / "example-link-cases"
+        shutil.copytree(SCRIPT.parents[1] / "examples" / "paired-release", link_copy)
+        real_cases = self.directory / "detached-cases"
+        shutil.move(str(link_copy / "cases"), str(real_cases))
+        linked = False
+        if sys.platform == "win32":
+            mk = subprocess.run(
+                ["cmd", "/c", "mklink", "/J", str(link_copy / "cases"), str(real_cases)],
+                capture_output=True, text=True,
+            )
+            linked = mk.returncode == 0
+        else:
+            try:
+                (link_copy / "cases").symlink_to(real_cases, target_is_directory=True)
+                linked = True
+            except OSError:
+                linked = False
+        if linked:
+            replay_link = subprocess.run(
+                [
+                    sys.executable, str(SCRIPT.parent / "run_paired_example.py"),
+                    "--plan", str(link_copy / "plan.json"),
+                    "--baseline", str(link_copy / "baseline.json"),
+                    "--candidate", str(link_copy / "candidate.json"),
+                ],
+                capture_output=True, text=True,
+            )
+            self.assertNotEqual(replay_link.returncode, 0)
+            self.assertIn("symlink or reparse point", replay_link.stderr)
+            self.assertNotIn(str(self.directory), replay_link.stderr)
+            # Remove junction/symlink cleanly before TemporaryDirectory teardown.
+            if sys.platform == "win32":
+                (link_copy / "cases").rmdir()
+            else:
+                (link_copy / "cases").unlink()
+
+        # Stray symlink inside fixtures-dir (when OS permits symlinks) -> unexpected_entries, exit 1.
+        clean_dir = self._build_fixture_suite([("c-only", "clean", "development", b'{"v":1}\n')])
+        target = self.directory / "target-outside.json"
+        target.write_bytes(b'{"v":9}\n')
+        try:
+            (clean_dir / "stray-link.json").symlink_to(target)
+        except OSError:
+            return
+        code_sl, rep_sl = self.compare(extra_args=("--fixtures-dir", str(clean_dir), "--check-fixture-leakage"))
+        self.assertEqual(code_sl, 1)
+        self.assertFalse(rep_sl["fixture_leakage_audit"]["tree_membership_passed"])
+        self.assertEqual(rep_sl["fixture_leakage_audit"]["unexpected_entries"], ["stray-link.json"])
 
 
 if __name__ == "__main__":

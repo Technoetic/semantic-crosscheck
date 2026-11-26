@@ -3,8 +3,10 @@
 import argparse
 import hashlib
 import json
+import os
 import re
 import sqlite3
+import stat
 import sys
 from contextlib import closing
 from pathlib import Path
@@ -88,6 +90,37 @@ def judge_fixture(raw, checks, *, return_activation: bool = False):
     return verdict
 
 
+def _is_reparse_or_symlink(st: os.stat_result) -> bool:
+    reparse_flag = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+    return stat.S_ISLNK(st.st_mode) or bool(reparse_flag and (getattr(st, "st_file_attributes", 0) & reparse_flag))
+
+
+def _verify_cases_membership(cases_dir: Path, expected_names: set[str]) -> None:
+    """Require cases/ to be a real directory holding exactly the planned regular JSON files."""
+    try:
+        dir_st = os.lstat(cases_dir)
+    except OSError as exc:
+        raise ValueError("cases directory does not exist or is unreadable") from exc
+    if _is_reparse_or_symlink(dir_st):
+        raise ValueError("cases directory must not be a symlink or reparse point")
+    if not stat.S_ISDIR(dir_st.st_mode):
+        raise ValueError("cases path must be a directory")
+    actual: set[str] = set()
+    try:
+        with os.scandir(cases_dir) as entries:
+            for entry in entries:
+                st = os.lstat(cases_dir / entry.name)
+                if _is_reparse_or_symlink(st) or not stat.S_ISREG(st.st_mode):
+                    raise ValueError(f"unexpected non-regular entry in cases directory: {entry.name}")
+                actual.add(entry.name)
+    except OSError as exc:
+        raise ValueError("cases directory cannot be scanned safely") from exc
+    if actual != expected_names:
+        extra = sorted(actual - expected_names)
+        missing = sorted(expected_names - actual)
+        raise ValueError(f"cases directory membership mismatch: missing={missing!r}, extra={extra!r}")
+
+
 def generate(plan_path, *, include_activation: bool = False):
     raw_plan = plan_path.read_bytes()
     plan = json.loads(raw_plan, object_pairs_hook=unique_object)
@@ -100,6 +133,7 @@ def generate(plan_path, *, include_activation: bool = False):
     ids = [case["id"] for case in cases]
     if any(not isinstance(i, str) or not re.fullmatch(r"[a-z0-9][a-z0-9-]*", i) for i in ids) or len(set(ids)) != len(ids):
         raise ValueError("invalid or repeated fixture ID")
+    _verify_cases_membership(plan_path.parent / "cases", {f"{cid}.json" for cid in ids})
     receipts = []
     for arm, checks in (("baseline", [AGREEMENT]), ("candidate", [AGREEMENT, AUTHORED])):
         observations = []

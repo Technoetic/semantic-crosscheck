@@ -328,3 +328,13 @@ All v0.35.0 additions are original Python standard-library, `pg8000` and existin
 - [Kurtz, Ammann, Offutt, Delamaro, Kurtz & Gökçe (ESEC/FSE 2016), "Analyzing the Validity of Selective Mutation with Dominator Mutants"](https://doi.org/10.1145/2950290.2950322) for the pure-stdlib Dynamic Mutant Subsumption Graph (DMSG) and dominator-mutant diagnostics (`compute_subsumption`) in `mutation_coverage.py`.
 
 No external source code, solver plugin, paper artifact or runtime library from these references is copied, installed, or bundled.
+
+## v0.36.0 fixture tree membership, assumption allowlist policy and `-O` portability self-audit
+
+All v0.36.0 additions are original Python standard-library implementations with zero new runtime dependencies. They selectively adapt three non-redundant verification patterns informed by [openai/math](https://github.com/openai/math) (commit `3344da59`, `Apache-2.0`):
+
+- exact fixture-directory tree membership auditing (`tree_membership_passed`, `extra_files`, `extra_directories`, `unexpected_entries`, symlink/reparse rejection) in `tools/paired_release.py` and `tools/run_paired_example.py`, adapted from the exact-tree membership checks in `openai/math`'s MUB-6 verification ledger;
+- pure-stdlib closed-enum trust-assumption derivation (`ASSUMPTION_CODES`, 17 codes) and opt-in `report --permitted-assumptions <csv|none>` allowlist checking (`assumptions:permitted`) in `skills/semantic-crosscheck/scripts/semantic_crosscheck/report.py` and `sxc.py`, informed by the `permitted_axioms` policy pattern in `openai/math`'s Lean comparator challenges;
+- removal of remaining production and CI `assert` statements (enforced via an AST test), paired with the pure-stdlib relocated-CWD, read-only source SHA-256 and `python -O -B` negative tamper-rejection verifier `tools/portability_check.py`, informed by the Einstein 4-manifolds portability check and Mahler reproduction checks in `openai/math`.
+
+`openai/math` is an existing Reference Atlas source previously recorded for `agentic-vault` `v0.59.0` and reused here for `semantic-crosscheck`'s paired-release fixture integrity, opt-in assumption allowlist reporting, and `-O` portability verification. No Lean proofs, mathematical datasets, heavy numeric packages, or external source files from `openai/math` are copied, installed, or bundled.

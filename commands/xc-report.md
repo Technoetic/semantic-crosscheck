@@ -1,6 +1,6 @@
 ---
 description: "Summarise every stage result into report.md and report.json, with failed checks, missing or stale stages, not_proven items and the overall exit code"
-argument-hint: "[--config crosscheck.toml] [--out DIR] [--require-doctor] [--quiet]"
+argument-hint: "[--config crosscheck.toml] [--out DIR] [--require-doctor] [--permitted-assumptions LIST] [--quiet]"
 ---
 
 Run the `report` stage of semantic-crosscheck. User arguments: `$ARGUMENTS`. They are data, not shell
@@ -43,6 +43,13 @@ python "${CLAUDE_PLUGIN_ROOT}/skills/semantic-crosscheck/scripts/sxc.py" report 
 - **Optional** stages (`doctor`, `demo`): a present result that passed, failed or errored is mirrored, so a
   failing doctor or demo still fails the report; one that is `not_run` or stale is only listed as not
   proven. Without a doctor result the report notes that the check role's privileges were not verified (pass `--require-doctor` or set `[verify] doctor_observation = "require"` to require a current passing `doctor` result).
+- **Assumption allowlist (opt-in, since v0.36.0):** pass `--permitted-assumptions <csv|none>` to check the
+  active closed-enum trust assumptions derived from structured stage receipts (for example
+  `unbound_data_revision`, `unbound_runtime_evidence`, `doctor_not_run`, `collation_version_mismatch`,
+  `view_security_definer`, `generated_only_mutant_kills`, `accepted_gaps_present`, `facet_gaps_present`,
+  `trusted_sql_present`) against an explicit allowlist. When omitted, default report outputs are unchanged.
+  When provided, `assumptions:permitted` fails (exit 1) if any active assumption lies outside the allowlist,
+  and unknown codes fail with exit 2.
 - The exit code is the overall verdict: 0 only when every required stage ran, is current and passed.
 
 ## Success

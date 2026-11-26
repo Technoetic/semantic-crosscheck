@@ -2,8 +2,10 @@
 
 Selectively adapts pre-registered plan sealing, dual-verdict post-hoc amendment
 disclosure, and treatment-activation / control zero-leakage silent no-op audits
-informed by ai3inc/foldboost (commit ff7ad2208c, Apache-2.0), implemented from
-scratch in the Python standard library.
+informed by ai3inc/foldboost (commit ff7ad2208c, Apache-2.0), plus exact
+fixture-directory tree membership auditing informed by openai/math (commit
+3344da59, Apache-2.0, MUB-6 check_records.py), implemented from scratch in the
+Python standard library.
 """
 
 import argparse
@@ -838,7 +840,8 @@ def _collect_leakage_ids(all_groups: list[dict[str, object]], cases: dict) -> tu
     within_ids: set[str] = set()
     for group in all_groups:
         ids = group["case_ids"]
-        assert isinstance(ids, list)
+        if not isinstance(ids, list):
+            raise ValueError("duplicate group case_ids must be a list")
         if group["cross_split"]:
             cross_ids.update(ids)
         by_exposure: dict[str, list[str]] = {}
@@ -850,12 +853,59 @@ def _collect_leakage_ids(all_groups: list[dict[str, object]], cases: dict) -> tu
     return sorted(cross_ids), sorted(within_ids)
 
 
+def _scan_fixtures_tree(base: Path, expected_files: set[str]) -> tuple[list[str], list[str], list[str]]:
+    """Verify exact direct-entry membership of fixtures-dir without following symlinks."""
+    extra_files: list[str] = []
+    extra_dirs: list[str] = []
+    unexpected: list[str] = []
+    try:
+        with os.scandir(base) as entries:
+            for entry in entries:
+                entry_path = base / entry.name
+                if _is_reparse_or_symlink(entry_path):
+                    unexpected.append(entry.name)
+                    continue
+                try:
+                    st = os.lstat(entry_path)
+                except OSError as exc:
+                    raise ValueError("fixtures-dir entry is unreadable") from exc
+                if stat.S_ISDIR(st.st_mode):
+                    extra_dirs.append(entry.name)
+                elif stat.S_ISREG(st.st_mode):
+                    if entry.name not in expected_files:
+                        extra_files.append(entry.name)
+                else:
+                    unexpected.append(entry.name)
+    except OSError as exc:
+        raise ValueError("fixtures-dir cannot be scanned safely") from exc
+    return sorted(extra_files), sorted(extra_dirs), sorted(unexpected)
+
+
+def _fixture_audit_status(cross_ids: list[str], within_ids: list[str], tree_ok: bool) -> str:
+    has_cross = bool(cross_ids)
+    has_within = bool(within_ids)
+    has_extra = not tree_ok
+    if not (has_cross or has_within or has_extra):
+        return "passed"
+    if has_cross and has_within and not has_extra:
+        return "both_failed"
+    if has_extra and not has_cross and not has_within:
+        return "extra_fixture_entries"
+    if has_cross and not has_within and not has_extra:
+        return "cross_split_leakage"
+    if has_within and not has_cross and not has_extra:
+        return "within_split_duplicate"
+    return "multiple_failures"
+
+
 def audit_fixture_leakage(cases: dict, fixtures_dir: Path) -> dict[str, object]:
-    """Detect cosmetic (canonical JSON) and alpha-renamed structural duplicate fixtures."""
+    """Detect cosmetic/alpha-renamed duplicate fixtures and unreferenced fixtures-dir entries."""
     base = _resolve_fixtures_dir(fixtures_dir)
+    expected_files: set[str] = set()
     canonical_buckets: dict[str, list[str]] = {}
     alpha_buckets: dict[str, list[str]] = {}
     for case_id, case in cases.items():
+        expected_files.add(_safe_case_filename(case_id))
         data = _load_verified_fixture(base, case_id, case["fixture_sha256"])
         try:
             canon_digest = canonical_json_sha256(data)
@@ -864,22 +914,21 @@ def audit_fixture_leakage(cases: dict, fixtures_dir: Path) -> dict[str, object]:
             raise ValueError(f"{case_id!r}: fixture nesting depth exceeds limit") from exc
         canonical_buckets.setdefault(canon_digest, []).append(case_id)
         alpha_buckets.setdefault(alpha_digest, []).append(case_id)
+    extra_files, extra_dirs, unexpected = _scan_fixtures_tree(base, expected_files)
+    tree_ok = not (extra_files or extra_dirs or unexpected)
     canonical_dups = _duplicate_groups(canonical_buckets, cases)
     alpha_dups = _duplicate_groups(alpha_buckets, cases)
     cross_ids, within_ids = _collect_leakage_ids(canonical_dups + alpha_dups, cases)
-    if cross_ids and within_ids:
-        status = "both_failed"
-    elif cross_ids:
-        status = "cross_split_leakage"
-    elif within_ids:
-        status = "within_split_duplicate"
-    else:
-        status = "passed"
+    status = _fixture_audit_status(cross_ids, within_ids, tree_ok)
     return {
         "schema": "semantic-crosscheck/fixture-leakage-audit/v1",
         "status": status,
         "passed": status == "passed",
         "cases_checked": len(cases),
+        "tree_membership_passed": tree_ok,
+        "extra_files": extra_files,
+        "extra_directories": extra_dirs,
+        "unexpected_entries": unexpected,
         "canonical_duplicate_groups": canonical_dups,
         "alpha_duplicate_groups": alpha_dups,
         "cross_split_case_ids": cross_ids,
@@ -988,7 +1037,7 @@ def main():
     parser.add_argument("--fixtures-dir", type=Path,
                         help="directory holding <case_id>.json fixtures verified against plan fixture_sha256")
     parser.add_argument("--check-fixture-leakage", action="store_true",
-                        help="fail with exit 1 when canonical JSON or alpha-renamed structural duplicate fixtures exist")
+                        help="fail with exit 1 when duplicate fixtures or unlisted/unexpected fixtures-dir entries exist")
     try:
         code, report = compare(parser.parse_args())
     except (ValueError, OSError, RecursionError) as exc:

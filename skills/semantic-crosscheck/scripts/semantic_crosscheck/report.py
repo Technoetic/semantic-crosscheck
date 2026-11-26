@@ -41,13 +41,33 @@ from datetime import datetime
 from pathlib import Path
 
 from . import config, contract_evidence, cube_run, evidence as kinds, metric_evidence, provenance, runtime_provenance
-from .result import STATUSES, Result, inputs_fingerprint, load_result
+from .result import EXIT_CONFIG, STATUSES, Result, StageError, inputs_fingerprint, load_result
 from .result_contract import ResultContractError, invalid_result, validate_result
 
 PIPELINE = ("doctor", "demo", "build", "reason", "cube", "verify")
 DEPENDS = {"build": ("demo",), "reason": ("build",), "cube": ("build",), "verify": ("build", "cube")}
 ALWAYS_REQUIRED = ("build", "cube", "verify")
 SEVERITY = {"pass": 0, "not_run": 1, "fail": 2, "error": 3}
+ASSUMPTION_CODES = (
+    "accepted_gaps_present",
+    "catalog_hygiene_warnings",
+    "collation_version_mismatch",
+    "data_rules_not_counted",
+    "doctor_not_run",
+    "facet_gaps_present",
+    "generated_only_mutant_kills",
+    "gold_generated_text",
+    "gold_no_rows",
+    "narrowed_mutation_operators",
+    "trusted_sql_present",
+    "unattributed_mutant_kills",
+    "unbound_data_revision",
+    "unbound_runtime_evidence",
+    "verification_evidence_missing",
+    "view_security_definer",
+    "zero_row_authored_checks",
+)
+_ASSUMPTION_SET = frozenset(ASSUMPTION_CODES)
 STALE_WHY = {
     "newer": "{stage} ran before the latest {dep} run finished",
     "stale_dependency": "{stage} depends on {dep}, which is stale",
@@ -358,6 +378,135 @@ def _md(text) -> str:
     return str(text).replace("|", "\\|").replace("\r", " ").replace("\n", " ")
 
 
+def parse_permitted_assumptions(raw) -> frozenset[str] | None:
+    """Parse opt-in --permitted-assumptions CSV (or 'none') against ASSUMPTION_CODES."""
+    if raw is None:
+        return None
+    if isinstance(raw, str):
+        tokens = [part.strip() for part in raw.split(",")]
+    elif isinstance(raw, (list, tuple, set, frozenset)):
+        tokens = [str(part).strip() for part in raw]
+    else:
+        raise StageError("--permitted-assumptions must be a comma-separated list of assumption codes or 'none'",
+                         EXIT_CONFIG)
+    if not tokens or any(not tok for tok in tokens):
+        raise StageError("--permitted-assumptions must not be empty; pass 'none' for an empty allowlist", EXIT_CONFIG)
+    if "none" in tokens:
+        if len(tokens) != 1:
+            raise StageError("--permitted-assumptions: 'none' cannot be combined with other assumption codes",
+                             EXIT_CONFIG)
+        return frozenset()
+    unknown = sorted(set(tokens) - _ASSUMPTION_SET)
+    if unknown:
+        raise StageError(f"--permitted-assumptions: unknown assumption code(s): {', '.join(unknown)}", EXIT_CONFIG)
+    return frozenset(tokens)
+
+
+def _pos_int(value) -> bool:
+    return type(value) is int and value > 0
+
+
+def _has_runtime_collation_drift(runtime_obj) -> bool:
+    if not isinstance(runtime_obj, dict):
+        return False
+    components = runtime_obj.get("components")
+    if not isinstance(components, dict):
+        return False
+    pg = components.get("postgres")
+    if not isinstance(pg, dict):
+        return False
+    return any(isinstance(side, dict) and side.get("collation_version_mismatch") is True for side in pg.values())
+
+
+def _doctor_assumptions(results: dict, summary: dict) -> set[str]:
+    found: set[str] = set()
+    stages = summary.get("stages")
+    doctor_summary = stages.get("doctor") if isinstance(stages, dict) else None
+    if "doctor" not in results or not isinstance(doctor_summary, dict) or doctor_summary.get("counted_as") is None:
+        found.add("doctor_not_run")
+        return found
+    for check in _checks(results["doctor"]):
+        cid = check.get("id")
+        detail = check.get("detail")
+        if not isinstance(detail, dict):
+            continue
+        if cid == "pg_version" and detail.get("db_collation_version_mismatch") is True:
+            found.add("collation_version_mismatch")
+        if isinstance(cid, str) and cid.startswith("privileges:select:"):
+            if _pos_int(detail.get("mismatched_column_collations")):
+                found.add("collation_version_mismatch")
+            relkind = str(detail.get("relkind", ""))
+            if relkind == "v" and detail.get("view_security_invoker") is False:
+                found.add("view_security_definer")
+            hygiene_flags = (
+                detail.get("row_security") is True,
+                detail.get("child_partition_row_security") is True,
+                relkind == "f",
+                detail.get("child_foreign_partitions") is True,
+                str(detail.get("relpersistence", "p")) == "u",
+                detail.get("child_unlogged_partitions") is True,
+                _pos_int(detail.get("unvalidated_constraints")),
+                _pos_int(detail.get("child_unvalidated_constraints")),
+                relkind in ("r", "p") and detail.get("has_rules") is True,
+            )
+            if any(hygiene_flags):
+                found.add("catalog_hygiene_warnings")
+    return found
+
+
+def _evidence_assumptions(results: dict, summary: dict) -> set[str]:
+    found: set[str] = set()
+    ev = summary.get("evidence")
+    if "verify" not in results or not isinstance(ev, dict):
+        return found
+    if not ev.get("observation_recorded", False):
+        found.add("verification_evidence_missing")
+        return found
+    if ev.get("gold_generated_text"):
+        found.add("gold_generated_text")
+    if ev.get("gold_no_rows"):
+        found.add("gold_no_rows")
+    if ev.get("zero_row_checks"):
+        found.add("zero_row_authored_checks")
+    mut = ev.get("mutation") if isinstance(ev.get("mutation"), dict) else {}
+    if _pos_int(mut.get("killed_generated_only")):
+        found.add("generated_only_mutant_kills")
+    if _pos_int(mut.get("unattributed")):
+        found.add("unattributed_mutant_kills")
+    if mut.get("operators_not_selected"):
+        found.add("narrowed_mutation_operators")
+    facets = ev.get("facets") if isinstance(ev.get("facets"), dict) else {}
+    if _pos_int(mut.get("accepted")) or facets.get("accepted"):
+        found.add("accepted_gaps_present")
+    if facets.get("gaps"):
+        found.add("facet_gaps_present")
+    return found
+
+
+def active_assumptions(summary: dict, results: dict, cfg) -> list[str]:
+    """Derive sorted closed-enum active trust assumptions from structured report receipts only."""
+    found: set[str] = set()
+    prov = summary.get("provenance")
+    if isinstance(prov, dict) and prov.get("binding") == "unbound":
+        found.add("unbound_data_revision")
+    rt = summary.get("runtime_evidence")
+    if isinstance(rt, dict) and rt.get("binding") == "unbound":
+        found.add("unbound_runtime_evidence")
+    if _has_runtime_collation_drift(rt):
+        found.add("collation_version_mismatch")
+    for stage_result in results.values():
+        if isinstance(stage_result, dict) and _has_runtime_collation_drift(stage_result.get("runtime_evidence")):
+            found.add("collation_version_mismatch")
+    found.update(_doctor_assumptions(results, summary))
+    found.update(_evidence_assumptions(results, summary))
+    trusted = summary.get("trusted_sql") if isinstance(summary.get("trusted_sql"), dict) else {}
+    if trusted.get("shapes") or trusted.get("gold"):
+        found.add("trusted_sql_present")
+    if getattr(cfg, "data_rules", None) is not None:
+        found.add("data_rules_not_counted")
+    return sorted(found)
+
+
 def _status_cell(stage: str, summary: dict) -> str:
     s = summary["stages"].get(stage)
     if s is None:
@@ -412,6 +561,16 @@ def render_md(summary: dict) -> str:
     if "evidence" in summary:
         lines += [""] + kinds.render_md(summary["evidence"])[:-1]
 
+    if "assumption_policy" in summary:
+        policy = summary["assumption_policy"]
+        lines += [
+            "", "## Assumption policy", "",
+            f"- Policy verdict: **{'PASS' if policy['passed'] else 'FAIL'}**",
+            f"- Permitted assumptions: {', '.join(policy['permitted']) or 'none'}",
+            f"- Active assumptions: {', '.join(policy['active']) or 'none'}",
+            f"- Disallowed assumptions: {', '.join(policy['disallowed']) or 'none'}",
+        ]
+
     lines += ["", "## Not proven", ""]
     gaps = [f"{stage}: {n}" for stage, s in summary["stages"].items() for n in s["not_proven"]]
     gaps += [f"report: {n}" for n in summary["not_proven"]]
@@ -440,6 +599,7 @@ def render_md(summary: dict) -> str:
 
 def run(cfg, args, out: Path) -> Result:
     out = Path(out)
+    permitted_assumptions = parse_permitted_assumptions(getattr(args, "permitted_assumptions", None))
     if cfg is not None and cfg.semantic_preflight is not None:
         contract_evidence.preflight(cfg, out)
     res = Result("report")
@@ -512,6 +672,27 @@ def run(cfg, args, out: Path) -> Result:
         if cfg is not None and cfg.measures:
             summary["metric_evidence"] = metric_evidence.summarize(
                 cfg, results.get("verify"), summary.get("evidence"), "verify" in stale)
+        if permitted_assumptions is not None:
+            active = active_assumptions(summary, results, cfg)
+            disallowed = [code for code in active if code not in permitted_assumptions]
+            policy_passed = not disallowed
+            res.add("assumptions:permitted", "pass" if policy_passed else "fail", "",
+                    permitted=sorted(permitted_assumptions), active=active, disallowed=disallowed)
+            summary["assumption_policy"] = {
+                "schema_version": 1,
+                "permitted": sorted(permitted_assumptions),
+                "active": active,
+                "disallowed": disallowed,
+                "passed": policy_passed,
+            }
+            summary["status"] = res.status
+            if not policy_passed and not any(
+                c.status != "pass" for c in res.checks if c.id != "assumptions:permitted"
+            ):
+                action = (f"resolve disallowed assumptions ({', '.join(disallowed)}) or explicitly allow them with "
+                          "--permitted-assumptions, then rerun report")
+                res.next_safe_action = action
+                summary["next_safe_action"] = action
         return summary
 
     def changed():

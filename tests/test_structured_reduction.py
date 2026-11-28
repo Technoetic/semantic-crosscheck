@@ -317,6 +317,72 @@ class StructuredReductionTest(unittest.TestCase):
                 self.assertTrue(result['deletion_1_minimal'])
                 self.assertEqual(reduction.replay_trace(fixture, result['trace'], schema=schema), result['tables'])
 
+    def test_ddmin_chunk_prelude_cuts_trials_and_replays_cleanly(self):
+        schema = {'items': (('id', 'integer'), ('amt', 'integer'))}
+        fixture = {'items': [[i + 1, (i + 1) * 10] for i in range(64)]}
+        calls = []
+
+        def predicate(trial):
+            calls.append(len(trial['items']))
+            ids = {row[0] for row in trial['items']}
+            return {1, 2}.issubset(ids)
+
+        reduced = reduction.shrink(fixture, predicate, 500, schema=schema)
+        self.assertEqual(len(reduced['tables']['items']), 2)
+        self.assertEqual({row[0] for row in reduced['tables']['items']}, {1, 2})
+        self.assertTrue(reduced['deletion_1_minimal'])
+        self.assertFalse(reduced['budget_exhausted'])
+        self.assertGreaterEqual(reduced['operation_counts']['chunk_deletion']['accepted'], 1)
+        # Single-row restart would need >200 predicate trials on 64 rows with minimal rows at [0, 1].
+        self.assertLess(len(calls), 60)
+        self.assertEqual(reduced['steps'], len(calls))
+        self.assertEqual(reduced['accepted'], len(reduced['trace']))
+        self.assertEqual(sum(c['attempted'] for c in reduced['operation_counts'].values()), reduced['steps'])
+        self.assertEqual(sum(c['accepted'] for c in reduced['operation_counts'].values()), reduced['accepted'])
+        self.assertEqual(reduction.replay_trace(fixture, reduced['trace'], schema=schema), reduced['tables'])
+
+    def test_ddmin_skips_fk_profiles_respects_budget_and_replay_rejects_forged_chunks(self):
+        schema = {'items': (('id', 'integer'), ('amt', 'integer'))}
+        fixture = {'items': [[i + 1, i + 1] for i in range(16)]}
+
+        # Budget exhaustion inside DDMIN stops at exact budget with consistent counts.
+        tight = reduction.shrink(fixture, lambda trial: {1, 2}.issubset({r[0] for r in trial['items']}),
+                                 2, schema=schema)
+        self.assertEqual(tight['steps'], 2)
+        self.assertTrue(tight['budget_exhausted'])
+        self.assertFalse(tight['deletion_1_minimal'])
+        self.assertEqual(sum(c['attempted'] for c in tight['operation_counts'].values()), 2)
+        self.assertEqual(reduction.replay_trace(fixture, tight['trace'], schema=schema), tight['tables'])
+
+        # FK profiles skip DDMIN chunk_deletion completely and reject forged chunk_deletion on replay.
+        fk_profile = self.cyclic_profile()
+        fk_fixture = self.fixture()
+        fk_fixture['part'] = [['A', None, 'B', None, None], ['B', None, 'A', None, None],
+                              ['C', None, 'C', None, None], ['D', None, 'C', None, None]]
+        fk_reduced = self.reduce(fk_fixture, lambda t: any(r[0] == 'C' for r in t['part']), profile=fk_profile)
+        self.assertEqual(fk_reduced['operation_counts']['chunk_deletion'], {'attempted': 0, 'accepted': 0})
+
+        forged_chunks = [
+            [{'operation': 'chunk_deletion', 'table': 'items', 'indices': [0]}],
+            [{'operation': 'chunk_deletion', 'table': 'items', 'indices': [0, 2]}],
+            [{'operation': 'chunk_deletion', 'table': 'items', 'indices': [1, 0]}],
+            [{'operation': 'chunk_deletion', 'table': 'items', 'indices': [0, True]}],
+            [{'operation': 'chunk_deletion', 'table': 'items', 'indices': [15, 16]}],
+            [{'operation': 'chunk_deletion', 'table': 'items', 'indices': [0, 1], 'extra': 'ROW-VALUE'}],
+        ]
+        for trace in forged_chunks:
+            with self.subTest(trace=trace), self.assertRaises(ValueError) as failure:
+                reduction.replay_trace(fixture, trace, schema=schema)
+            self.assertNotIn('ROW-VALUE', str(failure.exception))
+
+        with self.assertRaises(ValueError):
+            reduction.replay_trace(
+                fk_fixture,
+                [{'operation': 'chunk_deletion', 'table': 'part', 'indices': [0, 1]}],
+                schema=ce.SCHEMA,
+                profile=fk_profile,
+            )
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.37.0] - 2026-11-28
+
+- Extend zero-extra-round-trip PostgreSQL 17 catalog guards in `doctor.py` and `grain.py` (preserving `statement_budget = 5` in `grain`):
+  - Detect invalid/unready indexes (`pg_index`: `NOT indisvalid OR NOT indisready`) on parent relations and recursive `pg_inherits` child partitions (`invalid_indexes`, `child_invalid_indexes`), plus generated columns (`pg_attribute.attgenerated <> ''`, `generated_columns`), disclosing them in `not_proven` without leaking identifiers in `grain`.
+  - Traverse source view dependencies (`relkind = 'v'`) via recursive `pg_rewrite` → `pg_depend` CTE inside `doctor._privileges_sql()` to surface `VOLATILE` functions (`pg_proc.provolatile = 'v'`, `view_volatile_functions`) and underlying RLS, `UNLOGGED`, and foreign tables (`view_dep_rls_tables`, `view_dep_unlogged_tables`, `view_dep_foreign_tables`) even when `security_invoker = true`.
+- Add crash-consistent `os.fsync(stream.fileno())` before closing `.result-*.part` and best-effort POSIX parent-directory `fsync` (`_fsync_dir`) after atomic `os.replace()` in `result.py` (informed by Pillai et al. OSDI 2014 / ALICE, aligning all three plugins).
+- Add a bounded DDMIN binary-chunk deletion prelude (`chunk_deletion` in `reduction.OPERATIONS`, following Zeller & Hildebrandt IEEE TSE 2002 / DDMIN-LOC `arXiv:2601.04689`) to `reduction.shrink()` for FK-free tables (`len(rows) >= 4`), cutting predicate calls on larger witnesses while preserving shared budgets, `deletion_1_minimal` guarantees, and strict `replay_trace` / `tlp_reduction` verification.
+- Add pure-stdlib diagnostic-only Holm-Bonferroni FWER multiplicity adjustment (`holm_bonferroni_adjust`, `multiplicity_diagnostics`, Holm 1979) across simultaneously evaluated paired endpoints in `tools/paired_release.py` and `docs/paired-release.md` (zero impact on existing `groups`, `pairs`, claims, or exit codes).
+- Verified with expanded unit tests and live PostgreSQL 17 integration tests (`tests/test_rls_catalog_pg.py`, `tests/test_result_contract.py`, `tests/test_structured_reduction.py`, `tests/test_paired_release.py`). Engine fingerprints change; rerun operational stages after upgrading. See [release scope and verification](docs/releases/v0.37.0.md).
+
 ## [0.36.0] - 2026-11-27
 
 - Add exact fixture-directory tree membership auditing (`tree_membership_passed`, `extra_files`, `extra_directories`, `unexpected_entries`) to `tools/paired_release.py` (`--fixtures-dir` / `--check-fixture-leakage`) and `tools/run_paired_example.py`, closing the unlisted-fixture cherry-picking blind spot without following symlinks or exposing local paths (relative names only, pure stdlib).
@@ -1257,3 +1267,5 @@ First release. Release notes: [docs/releases/v0.1.0.md](docs/releases/v0.1.0.md)
 [0.35.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.35.0
 
 [0.36.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.36.0
+
+[0.37.0]: https://github.com/Technoetic/semantic-crosscheck/releases/tag/v0.37.0

@@ -19,6 +19,26 @@ from .result_contract import SCHEMA_VERSION, STATUSES, ResultContractError, deco
 EXIT_PASS, EXIT_FAIL, EXIT_CONFIG, EXIT_ENV = 0, 1, 2, 3
 
 
+def _fsync_dir(directory: Path) -> None:
+    """Best-effort POSIX parent-directory fsync after atomic rename (Pillai et al., OSDI 2014)."""
+    if os.name == "nt":
+        return
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    try:
+        dir_fd = os.open(str(directory), flags)
+    except OSError:
+        return
+    try:
+        os.fsync(dir_fd)
+    except OSError:
+        pass
+    finally:
+        try:
+            os.close(dir_fd)
+        except OSError:
+            pass
+
+
 @dataclass
 class Check:
     id: str
@@ -81,6 +101,7 @@ class Result:
 
     def write(self, out_dir: str | Path) -> Path:
         self.finished_at = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+        payload = json.dumps(self.to_dict(), ensure_ascii=False, indent=1)
         p = Path(out_dir) / self.stage
         p.mkdir(parents=True, exist_ok=True)
         f = p / "result.json"
@@ -89,9 +110,20 @@ class Result:
         fd, name = tempfile.mkstemp(prefix='.result-', suffix='.part', dir=p)
         part = Path(name)
         try:
-            with os.fdopen(fd, 'w', encoding='utf-8', newline='\n') as stream:
-                stream.write(json.dumps(self.to_dict(), ensure_ascii=False, indent=1))
+            try:
+                stream = os.fdopen(fd, 'w', encoding='utf-8', newline='\n')
+            except Exception:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+                raise
+            with stream:
+                stream.write(payload)
+                stream.flush()
+                os.fsync(stream.fileno())
             os.replace(part, f)
+            _fsync_dir(p)
         finally:
             part.unlink(missing_ok=True)
         return f

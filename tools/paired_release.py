@@ -9,6 +9,7 @@ Python standard library.
 """
 
 import argparse
+from collections.abc import Mapping
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -426,6 +427,90 @@ def _paired_stats(a: int, b: int, c: int, d: int, lost_key: str) -> dict[str, ob
         base["safe_e_log"] = log_e
         base["safe_anytime_p"] = anytime_p
     return base
+
+
+def _holm_raw_adjusted(p_values: Mapping[str, float]) -> dict[str, float]:
+    """Compute unrounded step-down Holm-Bonferroni adjusted p-values (Holm 1979)."""
+    validated: list[tuple[str, float]] = []
+    for key, raw in p_values.items():
+        if not isinstance(key, str) or not key:
+            raise ValueError("Holm endpoint key must be a nonempty string")
+        if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+            raise ValueError(f"{key!r}: p-value must be a real number")
+        val = float(raw)
+        if not math.isfinite(val) or val < 0.0 or val > 1.0:
+            raise ValueError(f"{key!r}: p-value must be finite and within [0, 1]")
+        validated.append((key, val))
+    m = len(validated)
+    if m == 0:
+        return {}
+    ordered = sorted(validated, key=lambda item: (item[1], item[0]))
+    adjusted: dict[str, float] = {}
+    running_max = 0.0
+    for rank, (key, raw_p) in enumerate(ordered):
+        step_p = min(1.0, raw_p * (m - rank))
+        running_max = max(running_max, step_p)
+        adjusted[key] = running_max
+    return {key: adjusted[key] for key in sorted(adjusted)}
+
+
+def holm_bonferroni_adjust(p_values: Mapping[str, float]) -> dict[str, float]:
+    """Step-down Holm-Bonferroni FWER adjusted p-values (Holm, Scand. J. Stat. 1979)."""
+    return {key: _round6(val) for key, val in _holm_raw_adjusted(p_values).items()}
+
+
+def build_multiplicity_diagnostics(
+    groups: Mapping[str, Mapping[str, object]],
+    *,
+    alpha: float = 0.05,
+) -> dict[str, object]:
+    """Compute diagnostic-only Holm-Bonferroni FWER adjustment across evaluated paired endpoints."""
+    if isinstance(alpha, bool) or not isinstance(alpha, (int, float)) or not (0.0 < float(alpha) < 1.0):
+        raise ValueError("alpha must be within (0, 1)")
+    alpha_f = float(alpha)
+    raw_exact: dict[str, float] = {}
+    raw_midp: dict[str, float] = {}
+    for exposure in sorted(EXPOSURES):
+        group = groups.get(exposure)
+        if not isinstance(group, Mapping):
+            continue
+        stats = group.get("statistics")
+        if not isinstance(stats, Mapping):
+            continue
+        for endpoint in ("detections", "false_positives"):
+            entry = stats.get(endpoint)
+            if not isinstance(entry, Mapping) or not entry.get("n"):
+                continue
+            exact_p = entry.get("exact_mcnemar_p")
+            midp_p = entry.get("midp_mcnemar_p")
+            if isinstance(exact_p, (int, float)) and not isinstance(exact_p, bool):
+                raw_exact[f"{exposure}.{endpoint}"] = float(exact_p)
+            if isinstance(midp_p, (int, float)) and not isinstance(midp_p, bool):
+                raw_midp[f"{exposure}.{endpoint}"] = float(midp_p)
+    raw_adj_exact = _holm_raw_adjusted(raw_exact)
+    raw_adj_midp = _holm_raw_adjusted(raw_midp)
+    adj_exact = {k: _round6(v) for k, v in raw_adj_exact.items()}
+    adj_midp = {k: _round6(v) for k, v in raw_adj_midp.items()}
+    endpoints = sorted(set(raw_exact) | set(raw_midp))
+    return {
+        "schema": "semantic-crosscheck/holm-bonferroni/v1",
+        "diagnostic_only": True,
+        "alpha": alpha_f,
+        "family_size": len(endpoints),
+        "endpoints": endpoints,
+        "exact_mcnemar": {
+            "raw_p": {k: _round6(raw_exact[k]) for k in sorted(raw_exact)},
+            "holm_adjusted_p": adj_exact,
+            "raw_under_alpha": sum(1 for v in raw_exact.values() if v < alpha_f),
+            "holm_under_alpha": sum(1 for v in raw_adj_exact.values() if v < alpha_f),
+        },
+        "midp_mcnemar": {
+            "raw_p": {k: _round6(raw_midp[k]) for k in sorted(raw_midp)},
+            "holm_adjusted_p": adj_midp,
+            "raw_under_alpha": sum(1 for v in raw_midp.values() if v < alpha_f),
+            "holm_under_alpha": sum(1 for v in raw_adj_midp.values() if v < alpha_f),
+        },
+    }
 
 
 def summarize(cases, baseline, candidate):
@@ -978,7 +1063,9 @@ def compare(args):
     report: dict[str, object] = dict(
         schema_version=1, experiment=plan["experiment"], added_check=plan["added_check"],
         baseline_checks=plan["baseline_checks"], budget=plan["budget"],
-        input_sha256=digests, groups=groups, pairs=pairs,
+        input_sha256=digests, groups=groups,
+        multiplicity_diagnostics=build_multiplicity_diagnostics(groups),
+        pairs=pairs,
     )
     if "claim_limit" in plan:
         report["claim_limit"] = plan["claim_limit"]

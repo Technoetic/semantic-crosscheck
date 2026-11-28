@@ -447,6 +447,13 @@ def _doctor_assumptions(results: dict, summary: dict) -> set[str]:
                 detail.get("child_unlogged_partitions") is True,
                 _pos_int(detail.get("unvalidated_constraints")),
                 _pos_int(detail.get("child_unvalidated_constraints")),
+                _pos_int(detail.get("invalid_indexes")),
+                _pos_int(detail.get("child_invalid_indexes")),
+                _pos_int(detail.get("generated_columns")),
+                relkind == "v" and _pos_int(detail.get("view_volatile_functions")),
+                relkind == "v" and detail.get("view_dep_rls_tables") is True,
+                relkind == "v" and detail.get("view_dep_unlogged_tables") is True,
+                relkind == "v" and detail.get("view_dep_foreign_tables") is True,
                 relkind in ("r", "p") and detail.get("has_rules") is True,
             )
             if any(hygiene_flags):

@@ -66,3 +66,10 @@ v0.36.0부터 [`openai/math`](https://github.com/openai/math)(커밋 `3344da59`,
 
 - **픽스처 디렉터리 정확 구성원 감사 (`tools/paired_release.py`, `tools/run_paired_example.py`):** `--fixtures-dir`에 계획된 `{<case_id>.json}` 외의 미등록 파일(`extra_files`), 하위 디렉터리(`extra_directories`), 심볼릭 링크·비정규 항목(`unexpected_entries`)이 남아 있으면 `tree_membership_passed = false`로 공시하고 `--check-fixture-leakage`에서 종료 코드 `1`로 실패한다(`tools/run_paired_example.py`도 `cases/`의 정확 구성원 일치를 검증한다).
 - **이전 CWD · 읽기 전용 · `python -O -B` 변조 거부 자가 감사 (`tools/portability_check.py`):** `python -O -B tools/portability_check.py --json`은 무관한 작업 디렉터리에서 오프라인 검증기(`knowledge-evolution`, `run_paired_example.py`, `paired_release.py`, `result_contract`, `report --permitted-assumptions`)를 `-O`(assert 제거) 모드로 실행해 정상 통과, 원본 파일 SHA-256 읽기 전용 불변성, 그리고 1바이트 영수증 변조·미등록 픽스처 삽입·수치 주장 조작·중복 JSON 키·미허용 가정의 실패 폐쇄를 검증한다.
+
+## 다중 검정 Holm-Bonferroni FWER 진단 (v0.37.0)
+
+동일 비교 실행에서 여러 노출 구간(`heldout`, `development`, `unknown`)과 지표(`detections`, `false_positives`)의 McNemar p-값을 동시에 읽으면 가족별 제1종 오류율(FWER)이 팽창한다. v0.37.0부터 `tools/paired_release.py`는 Python 표준 라이브러리만으로 [Holm (1979)](https://www.jstor.org/stable/4615733)의 단계적 하향 보정(`holm_bonferroni_adjust`)을 계산해 최상위 진단 전용 블록 `multiplicity_diagnostics`(`semantic-crosscheck/holm-bonferroni/v1`, `diagnostic_only = true`)에 함께 기록한다.
+
+- **대상과 출력:** 표본 수 `n > 0`인 모든 평가된 `(exposure, detections/false_positives)` 조합에 대해 `exact_mcnemar`와 `midp_mcnemar` 각각의 원시 p-값(`raw_p`), Holm 보정 p-값(`holm_adjusted_p`), `alpha = 0.05` 미만 건수(`raw_under_alpha`, `holm_under_alpha`)를 출력한다.
+- **하위호환성:** 기존 `groups`, `pairs`, `--claims`, `--check-markdown`, 종료 코드는 변경하지 않는다.

@@ -8,12 +8,14 @@ Only ``tables`` and the fixture-only ``trace`` may contain cell values.
 """
 import copy
 from collections.abc import Mapping
+from dataclasses import dataclass, field
 import hashlib
 
 from . import constraints
 
 LIMIT = 10000
-OPERATIONS = ('row_deletion', 'dependency_group_deletion', 'value_simplification')
+OPERATIONS = ('chunk_deletion', 'row_deletion', 'dependency_group_deletion', 'value_simplification')
+_DDMIN_MIN_ROWS = 4
 
 
 def _schema(schema):
@@ -134,9 +136,14 @@ def _operations(fixture, schema, profile):
 
 def _apply(fixture, operation):
     trial = copy.deepcopy(fixture)
-    if operation['operation'] == 'row_deletion':
+    name = operation['operation']
+    if name == 'chunk_deletion':
+        deleted = set(operation['indices'])
+        table = operation['table']
+        trial[table] = [row for index, row in enumerate(trial[table]) if index not in deleted]
+    elif name == 'row_deletion':
         del trial[operation['table']][operation['index']]
-    elif operation['operation'] == 'dependency_group_deletion':
+    elif name == 'dependency_group_deletion':
         for table, indices in operation['indices'].items():
             deleted = set(indices)
             trial[table] = [row for index, row in enumerate(trial[table]) if index not in deleted]
@@ -149,6 +156,80 @@ def _validate(fixture, schema, profile, admissible):
     constraints.validate_fixture(fixture, schema, profile)
     if admissible is not None:
         admissible(fixture)
+
+
+def _chunk_slices(length, granularity):
+    """Balanced contiguous chunk boundaries of size >= 2 for DDMIN complement trials."""
+    chunks = []
+    for part in range(granularity):
+        start = (part * length) // granularity
+        end = ((part + 1) * length) // granularity
+        if end - start >= 2:
+            chunks.append((start, end))
+    return chunks
+
+
+@dataclass
+class _ReductionState:
+    steps: int = 0
+    accepted: int = 0
+    errors: int = 0
+    invalid_domain: int = 0
+    counts: dict[str, dict[str, int]] = field(
+        default_factory=lambda: {name: {'attempted': 0, 'accepted': 0} for name in OPERATIONS}
+    )
+    trace: list[dict[str, object]] = field(default_factory=list)
+
+
+def _run_trial(current, operation, predicate, schema, profile, admissible, state: _ReductionState):
+    """Execute one budgeted trial operation and update shared reduction counters."""
+    state.steps += 1
+    name = operation['operation']
+    state.counts[name]['attempted'] += 1
+    trial = _apply(current, operation)
+    try:
+        _validate(trial, schema, profile, admissible)
+    except constraints.ConstraintViolation:
+        state.invalid_domain += 1
+        return current, False
+    try:
+        remains_witness = predicate(copy.deepcopy(trial))
+    except Exception:  # Exception text can quote values: retain only a count.
+        state.errors += 1
+        return current, False
+    if remains_witness:
+        state.accepted += 1
+        state.counts[name]['accepted'] += 1
+        state.trace.append(operation)
+        return trial, True
+    return current, False
+
+
+def _ddmin_prelude(current, predicate, max_steps, schema, profile, admissible, state: _ReductionState):
+    """Bounded DDMIN binary-chunk deletion prelude for FK-free tables (Zeller & Hildebrandt 2002)."""
+    if (profile is not None and profile.foreign_keys) or max_steps <= 0:
+        return current, False
+    for table in schema:
+        granularity = 2
+        while len(current[table]) >= _DDMIN_MIN_ROWS:
+            chunks = _chunk_slices(len(current[table]), granularity)
+            if not chunks:
+                break
+            reduced = False
+            for start, end in chunks:
+                if state.steps >= max_steps:
+                    return current, True
+                operation = {'operation': 'chunk_deletion', 'table': table, 'indices': list(range(start, end))}
+                current, ok = _run_trial(current, operation, predicate, schema, profile, admissible, state)
+                if ok:
+                    granularity = max(granularity - 1, 2)
+                    reduced = True
+                    break
+            if not reduced:
+                if granularity * 2 > len(current[table]):
+                    break
+                granularity *= 2
+    return current, False
 
 
 def shrink(fixture, predicate, max_steps, profile=None, schema=None, admissible=None):
@@ -167,41 +248,26 @@ def shrink(fixture, predicate, max_steps, profile=None, schema=None, admissible=
         raise ValueError('Structured reduction budget must be an integer 0..10000')
     _validate(fixture, schema, profile, admissible)
     current = copy.deepcopy(fixture)
-    steps = accepted = errors = invalid_domain = 0
-    counts = {name: {'attempted': 0, 'accepted': 0} for name in OPERATIONS}
-    trace = []
+    state = _ReductionState()
 
     def summary(exhausted):
-        return {'tables': current, 'steps': steps, 'accepted': accepted, 'shrink_errors': errors,
-                'invalid_domain_trials': invalid_domain,
+        return {'tables': current, 'steps': state.steps, 'accepted': state.accepted,
+                'shrink_errors': state.errors, 'invalid_domain_trials': state.invalid_domain,
                 'minimality_scope': ('admissible_single_row_deletions_after_structured_reduction' if profile or admissible is not None else
                                      'single_row_deletions_after_structured_reduction'),
-                'deletion_1_minimal': not exhausted and errors == 0, 'budget_exhausted': exhausted,
-                'supported_operations': list(OPERATIONS), 'operation_counts': counts, 'trace': trace}
+                'deletion_1_minimal': not exhausted and state.errors == 0, 'budget_exhausted': exhausted,
+                'supported_operations': list(OPERATIONS), 'operation_counts': state.counts, 'trace': state.trace}
+
+    current, exhausted = _ddmin_prelude(current, predicate, max_steps, schema, profile, admissible, state)
+    if exhausted:
+        return summary(True)
 
     while True:
         for operation in _operations(current, schema, profile):
-            if steps >= max_steps:
+            if state.steps >= max_steps:
                 return summary(True)
-            steps += 1
-            name = operation['operation']
-            counts[name]['attempted'] += 1
-            trial = _apply(current, operation)
-            try:
-                _validate(trial, schema, profile, admissible)
-            except constraints.ConstraintViolation:
-                invalid_domain += 1
-                continue
-            try:
-                remains_witness = predicate(copy.deepcopy(trial))
-            except Exception:  # Exception text can quote values: retain only a count.
-                errors += 1
-                continue
-            if remains_witness:
-                current = trial
-                accepted += 1
-                counts[name]['accepted'] += 1
-                trace.append(operation)
+            current, ok = _run_trial(current, operation, predicate, schema, profile, admissible, state)
+            if ok:
                 break  # Restart single-row deletion after every accepted transform.
         else:
             return summary(False)
@@ -216,6 +282,20 @@ def _check_operation(fixture, operation, schema, profile):
     if not isinstance(operation, dict) or operation.get('operation') not in OPERATIONS:
         raise ValueError('Replay operation')
     name = operation['operation']
+    if name == 'chunk_deletion':
+        if (set(operation) != {'operation', 'table', 'indices'}
+                or operation['table'] not in schema
+                or (profile is not None and profile.foreign_keys)):
+            raise ValueError('Replay chunk')
+        indices = operation['indices']
+        table = operation['table']
+        if not isinstance(indices, list) or len(indices) < 2 or len(indices) > len(fixture[table]):
+            raise ValueError('Replay chunk')
+        for index in indices:
+            _index(index, len(fixture[table]))
+        if indices != list(range(indices[0], indices[0] + len(indices))):
+            raise ValueError('Replay chunk')
+        return
     if name == 'dependency_group_deletion':
         if set(operation) != {'operation', 'indices'} or not isinstance(operation['indices'], dict) or not operation['indices']:
             raise ValueError('Replay group')

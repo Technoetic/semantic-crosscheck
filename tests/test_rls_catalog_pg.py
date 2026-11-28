@@ -40,6 +40,18 @@ class CatalogGuardUnitTests(unittest.TestCase):
             "child_unvalidated_constraints",
             "mismatched_column_collations",
             "pg_collation_actual_version",
+            "invalid_indexes",
+            "child_invalid_indexes",
+            "generated_columns",
+            "attgenerated",
+            "pg_rewrite",
+            "pg_depend",
+            "pg_proc",
+            "provolatile",
+            "view_volatile_functions",
+            "view_dep_rls_tables",
+            "view_dep_unlogged_tables",
+            "view_dep_foreign_tables",
         ):
             self.assertIn(token, pg17_sql)
         self.assertIn("pg_database_collation_actual_version", doctor._DB_COLLATION_VERSION_SQL)
@@ -96,6 +108,61 @@ class CatalogGuardUnitTests(unittest.TestCase):
         self.assertTrue(any("child_unlogged_partitions=true" in w for w in child_warns))
         self.assertTrue(any("3 local unvalidated CHECK/FOREIGN KEY constraint(s)" in w for w in child_warns))
         self.assertTrue(any("2 column collation(s) with a version mismatch" in w for w in child_warns))
+
+    def test_v037_catalog_warnings_invalid_indexes_generated_cols_and_view_deps(self):
+        tbl_warns = doctor.catalog_warnings(
+            "dup_tbl",
+            {
+                "table_exists": True,
+                "relkind": "p",
+                "invalid_indexes": 1,
+                "child_invalid_indexes": 2,
+                "generated_columns": 3,
+                "view_volatile_functions": 4,
+                "view_dep_rls_tables": True,
+            },
+        )
+        self.assertEqual(len(tbl_warns), 3)
+        self.assertTrue(any("1 invalid or unready index(es)" in w for w in tbl_warns))
+        self.assertTrue(any("2 invalid or unready index(es)" in w for w in tbl_warns))
+        self.assertTrue(any("3 generated column(s)" in w for w in tbl_warns))
+        # View dependency warnings must never fire on non-views.
+        self.assertFalse(any("VOLATILE" in w or "view_dep_rls_tables" in w for w in tbl_warns))
+
+        view_warns = doctor.catalog_warnings(
+            "inv_view",
+            {
+                "table_exists": True,
+                "relkind": "v",
+                "view_security_invoker": True,
+                "view_volatile_functions": 1,
+                "view_dep_rls_tables": True,
+                "view_dep_unlogged_tables": True,
+                "view_dep_foreign_tables": True,
+            },
+        )
+        self.assertEqual(len(view_warns), 4)
+        self.assertTrue(any("1 unpinned VOLATILE function(s)" in w for w in view_warns))
+        self.assertTrue(any("view_dep_rls_tables=true" in w for w in view_warns))
+        self.assertTrue(any("view_dep_unlogged_tables=true" in w for w in view_warns))
+        self.assertTrue(any("view_dep_foreign_tables=true" in w for w in view_warns))
+
+        from semantic_crosscheck import report as report_mod
+        for key, val in (
+            ("invalid_indexes", 1),
+            ("child_invalid_indexes", 1),
+            ("generated_columns", 1),
+            ("view_volatile_functions", 1),
+            ("view_dep_rls_tables", True),
+            ("view_dep_unlogged_tables", True),
+            ("view_dep_foreign_tables", True),
+        ):
+            relkind = "v" if key.startswith("view_") else "r"
+            fake_results = {"doctor": {"checks": [{"id": "privileges:select:x", "status": "pass",
+                                                   "detail": {"relkind": relkind, key: val}}]}}
+            fake_summary = {"stages": {"doctor": {"counted_as": "pass"}}}
+            with self.subTest(flag=key):
+                self.assertIn("catalog_hygiene_warnings", report_mod.active_assumptions(fake_summary, fake_results, None))
 
     def test_grain_evaluate_fails_closed_on_foreign_child_partition(self):
         actual = {
@@ -695,6 +762,215 @@ class RlsAndNullsNotDistinctPostgresTest(unittest.TestCase):
         checks_after = {c["id"]: c for c in doc_after["checks"]}
         self.assertEqual(checks_after["privileges:select:phyg"]["detail"]["child_unvalidated_constraints"], 0)
         self.assertFalse(any("local unvalidated CHECK/FOREIGN KEY" in n for n in doc_after["not_proven"]))
+
+    def test_v037_invalid_indexes_generated_columns_and_view_dependencies(self):
+        from pg8000.exceptions import DatabaseError
+
+        self._owner_exec(
+            "DROP VIEW IF EXISTS sxc_demo.v_nested_risky, sxc_demo.v_inv_risky, sxc_demo.v_only_volatile, "
+            "sxc_demo.v_over_part, sxc_demo.v_rule_clean;"
+            "DROP FUNCTION IF EXISTS sxc_demo.v037_jitter(numeric);"
+            "DROP FOREIGN TABLE IF EXISTS sxc_demo.v037_fbase CASCADE;"
+            "DROP TABLE IF EXISTS sxc_demo.v037_dup, sxc_demo.v037_rls_base, sxc_demo.v037_unlogged_base, "
+            "sxc_demo.v037_pidx, sxc_demo.v037_vpart, sxc_demo.v037_ruled_base CASCADE;"
+            "CREATE TABLE sxc_demo.v037_dup ("
+            "  fact_id integer, node_id text, qty numeric, "
+            "  gross numeric GENERATED ALWAYS AS (qty * 1.1) STORED"
+            ");"
+            "INSERT INTO sxc_demo.v037_dup (fact_id, node_id, qty) VALUES (1, 'a', 10), (1, 'a', 20);"
+            "CREATE TABLE sxc_demo.v037_pidx (fact_id integer, node_id text, qty numeric) PARTITION BY RANGE (fact_id);"
+            "CREATE TABLE sxc_demo.v037_pidx_c PARTITION OF sxc_demo.v037_pidx FOR VALUES FROM (1) TO (100);"
+            "INSERT INTO sxc_demo.v037_pidx VALUES (1, 'a', 10), (1, 'a', 20);"
+            "CREATE TABLE sxc_demo.v037_vpart (node_id text, qty numeric) PARTITION BY LIST (node_id);"
+            "CREATE UNLOGGED TABLE sxc_demo.v037_vpart_u PARTITION OF sxc_demo.v037_vpart FOR VALUES IN ('a');"
+            "ALTER TABLE sxc_demo.v037_vpart_u ENABLE ROW LEVEL SECURITY;"
+            "CREATE POLICY v037_vp_p ON sxc_demo.v037_vpart_u FOR SELECT USING (qty > 0);"
+            "CREATE TABLE sxc_demo.v037_rls_base (node_id text PRIMARY KEY, qty numeric);"
+            "INSERT INTO sxc_demo.v037_rls_base VALUES ('a', 10);"
+            "ALTER TABLE sxc_demo.v037_rls_base ENABLE ROW LEVEL SECURITY;"
+            "CREATE POLICY v037_rls_p ON sxc_demo.v037_rls_base FOR SELECT USING (qty > 0);"
+            "CREATE UNLOGGED TABLE sxc_demo.v037_unlogged_base (node_id text PRIMARY KEY, note text);"
+            "INSERT INTO sxc_demo.v037_unlogged_base VALUES ('a', 'u');"
+            "CREATE TABLE sxc_demo.v037_ruled_base (node_id text PRIMARY KEY, qty numeric);"
+            "CREATE RULE v037_ins_audit AS ON INSERT TO sxc_demo.v037_ruled_base DO ALSO "
+            "INSERT INTO sxc_demo.v037_unlogged_base (node_id, note) VALUES (NEW.node_id, 'log') ON CONFLICT DO NOTHING;"
+            "CREATE FUNCTION sxc_demo.v037_jitter(v numeric) RETURNS numeric "
+            "LANGUAGE sql VOLATILE AS $$ SELECT v + random()::numeric $$;"
+        )
+        admin = pgfixture._admin(self.fx.name)
+        try:
+            admin.run("DROP FOREIGN DATA WRAPPER IF EXISTS sxc_v037_fdw CASCADE")
+            admin.run("CREATE FOREIGN DATA WRAPPER sxc_v037_fdw")
+            admin.run("CREATE SERVER sxc_v037_srv FOREIGN DATA WRAPPER sxc_v037_fdw")
+            admin.run(f'GRANT USAGE ON FOREIGN SERVER sxc_v037_srv TO "{self.fx.owner}"')
+        finally:
+            admin.close()
+        self._owner_exec(
+            "CREATE FOREIGN TABLE sxc_demo.v037_fbase (node_id text) SERVER sxc_v037_srv;"
+            "CREATE VIEW sxc_demo.v_inv_risky WITH (security_invoker = true) AS "
+            "SELECT r.node_id, sxc_demo.v037_jitter(r.qty) AS jqty, u.note, f.node_id AS fn "
+            "FROM sxc_demo.v037_rls_base r "
+            "JOIN sxc_demo.v037_unlogged_base u ON u.node_id = r.node_id "
+            "LEFT JOIN sxc_demo.v037_fbase f ON f.node_id = r.node_id;"
+            "CREATE VIEW sxc_demo.v_nested_risky WITH (security_invoker = true) AS "
+            "SELECT node_id, jqty FROM sxc_demo.v_inv_risky;"
+            "CREATE VIEW sxc_demo.v_only_volatile WITH (security_invoker = true) AS "
+            "SELECT sxc_demo.v037_jitter(1) AS r;"
+            "CREATE VIEW sxc_demo.v_over_part WITH (security_invoker = true) AS "
+            "SELECT node_id, qty FROM sxc_demo.v037_vpart;"
+            "CREATE VIEW sxc_demo.v_rule_clean WITH (security_invoker = true) AS "
+            "SELECT node_id, qty FROM sxc_demo.v037_ruled_base;"
+            f'GRANT SELECT ON sxc_demo.v_nested_risky, sxc_demo.v_inv_risky, sxc_demo.v_only_volatile, '
+            f'sxc_demo.v_over_part, sxc_demo.v_rule_clean, sxc_demo.v037_dup, sxc_demo.v037_pidx, '
+            f'sxc_demo.v037_vpart, sxc_demo.v037_rls_base, sxc_demo.v037_unlogged_base, '
+            f'sxc_demo.v037_fbase, sxc_demo.v037_ruled_base TO "{self.fx.check}";'
+            f'GRANT EXECUTE ON FUNCTION sxc_demo.v037_jitter(numeric) TO "{self.fx.check}";'
+        )
+        # CREATE UNIQUE INDEX CONCURRENTLY must run outside a transaction block and leaves indisvalid=false on duplicates.
+        oconn = db.connect("SXC_PG_OWNER_DSN")
+        try:
+            for ddl in (
+                "CREATE UNIQUE INDEX CONCURRENTLY v037_dup_uidx ON sxc_demo.v037_dup (fact_id)",
+                "CREATE UNIQUE INDEX CONCURRENTLY v037_pidx_c_uidx ON sxc_demo.v037_pidx_c (fact_id)",
+            ):
+                with self.assertRaises(DatabaseError):
+                    oconn.run(ddl)
+        finally:
+            oconn.close()
+
+        def cleanup():
+            self._owner_exec(
+                "DROP VIEW IF EXISTS sxc_demo.v_nested_risky, sxc_demo.v_inv_risky, sxc_demo.v_only_volatile, "
+                "sxc_demo.v_over_part, sxc_demo.v_rule_clean;"
+                "DROP FUNCTION IF EXISTS sxc_demo.v037_jitter(numeric);"
+                "DROP FOREIGN TABLE IF EXISTS sxc_demo.v037_fbase CASCADE;"
+                "DROP TABLE IF EXISTS sxc_demo.v037_dup, sxc_demo.v037_rls_base, sxc_demo.v037_unlogged_base, "
+                "sxc_demo.v037_pidx, sxc_demo.v037_vpart, sxc_demo.v037_ruled_base CASCADE;"
+            )
+            adm = pgfixture._admin(self.fx.name)
+            try:
+                adm.run("DROP FOREIGN DATA WRAPPER IF EXISTS sxc_v037_fdw CASCADE")
+            finally:
+                adm.close()
+
+        self.addCleanup(cleanup)
+
+        cfg_path = self.tmp / "v037_hygiene.toml"
+        cfg_path.write_text(
+            'version = 1\n'
+            '[source]\nschemas = ["sxc_demo"]\noutput_schema = "sxc_out"\nstatement_timeout_ms = 5000\n'
+            '[entities.dup]\ntable = "sxc_demo.v037_dup"\nkey = ["fact_id"]\n'
+            '[entities.pidx]\ntable = "sxc_demo.v037_pidx"\nkey = ["fact_id"]\n'
+            '[entities.vrisky]\ntable = "sxc_demo.v_inv_risky"\nkey = ["node_id"]\n'
+            '[entities.vnested]\ntable = "sxc_demo.v_nested_risky"\nkey = ["node_id"]\n'
+            '[entities.vonly]\ntable = "sxc_demo.v_only_volatile"\nkey = ["r"]\n'
+            '[entities.vpart]\ntable = "sxc_demo.v_over_part"\nkey = ["node_id"]\n'
+            '[entities.vclean]\ntable = "sxc_demo.v_rule_clean"\nkey = ["node_id"]\n'
+            '[entities.node]\ntable = "sxc_demo.rls_node"\nkey = ["node_id"]\n'
+            '[measures.dtotal]\nentity = "dup"\ncolumn = "qty"\nagg = "sum"\nby = "node_id"\nnode = "node"\n'
+            '[measures.ptotal]\nentity = "pidx"\ncolumn = "qty"\nagg = "sum"\nby = "node_id"\nnode = "node"\n',
+            encoding="utf-8",
+        )
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            code = sxc.main(["doctor", "--config", str(cfg_path), "--out", str(self.tmp)])
+        self.assertEqual(code, 0)
+        doc_res = json.loads((self.tmp / "doctor" / "result.json").read_text(encoding="utf-8"))
+        checks = {c["id"]: c for c in doc_res["checks"]}
+
+        dup_d = checks["privileges:select:dup"]["detail"]
+        self.assertEqual(dup_d["invalid_indexes"], 1)
+        self.assertEqual(dup_d["generated_columns"], 1)
+        self.assertTrue(any("entities.dup: source relation has 1 invalid or unready index(es)" in n
+                            for n in doc_res["not_proven"]))
+        self.assertTrue(any("entities.dup: source relation defines 1 generated column(s)" in n
+                            for n in doc_res["not_proven"]))
+
+        pidx_d = checks["privileges:select:pidx"]["detail"]
+        self.assertEqual(pidx_d["child_invalid_indexes"], 1)
+        self.assertTrue(any("entities.pidx: child partition(s) or inherited relation(s) have 1 invalid or unready" in n
+                            for n in doc_res["not_proven"]))
+
+        for ent_key in ("vrisky", "vnested"):
+            vr_d = checks[f"privileges:select:{ent_key}"]["detail"]
+            self.assertTrue(vr_d["view_security_invoker"])
+            self.assertEqual(vr_d["view_volatile_functions"], 1)
+            self.assertTrue(vr_d["view_dep_rls_tables"])
+            self.assertTrue(vr_d["view_dep_unlogged_tables"])
+            self.assertTrue(vr_d["view_dep_foreign_tables"])
+        self.assertTrue(any("entities.vrisky: source view references 1 unpinned VOLATILE function(s)" in n
+                            for n in doc_res["not_proven"]))
+        self.assertTrue(any("entities.vrisky: source view depends on underlying relation(s) with PostgreSQL row-level" in n
+                            for n in doc_res["not_proven"]))
+        self.assertTrue(any("entities.vrisky: source view depends on underlying UNLOGGED" in n
+                            for n in doc_res["not_proven"]))
+        self.assertTrue(any("entities.vrisky: source view depends on underlying foreign table" in n
+                            for n in doc_res["not_proven"]))
+
+        # Zero-base-table volatile-only view still reports view_volatile_functions=1 cleanly.
+        vo_d = checks["privileges:select:vonly"]["detail"]
+        self.assertEqual(vo_d["view_volatile_functions"], 1)
+        self.assertFalse(vo_d["view_dep_rls_tables"])
+
+        # View over partitioned table expands pg_inherits to detect child UNLOGGED and RLS partitions.
+        vp_d = checks["privileges:select:vpart"]["detail"]
+        self.assertTrue(vp_d["view_dep_rls_tables"])
+        self.assertTrue(vp_d["view_dep_unlogged_tables"])
+        self.assertFalse(vp_d["view_dep_foreign_tables"])
+
+        # Non-SELECT (ON INSERT) rewrite rule on base table referencing an UNLOGGED table must NOT false-positive.
+        vc_d = checks["privileges:select:vclean"]["detail"]
+        self.assertEqual(vc_d["view_volatile_functions"], 0)
+        self.assertFalse(vc_d["view_dep_rls_tables"])
+        self.assertFalse(vc_d["view_dep_unlogged_tables"])
+        self.assertFalse(vc_d["view_dep_foreign_tables"])
+
+        # Grain records invalid index + generated column flags and opaque not_proven without leaking identifiers.
+        spec_v037 = self.tmp / "v037_grain.json"
+        spec_v037.write_text(
+            json.dumps({
+                "schema_version": 1,
+                "contracts": [
+                    {
+                        "measure": "dtotal",
+                        "source": {"entity": "dup", "table": "sxc_demo.v037_dup", "key": ["fact_id"]},
+                        "group_by": ["node_id"],
+                        "aggregate": {"function": "sum", "column": "qty"},
+                        "filters": {"exact": {}, "normalized": {}},
+                        "output": {"cube": "m_dtotal", "key": ["key"], "value": "value", "reaggregate": "sum"},
+                        "node": {"entity": "node", "table": "sxc_demo.rls_node", "key": ["node_id"]},
+                        "join": {"relationship": "one_to_one", "node_key": ["node_id"], "output_key": ["key"]},
+                        "null_policy": {"operation": "exclude", "allow_excluded_rows": False},
+                    },
+                    {
+                        "measure": "ptotal",
+                        "source": {"entity": "pidx", "table": "sxc_demo.v037_pidx", "key": ["fact_id"]},
+                        "group_by": ["node_id"],
+                        "aggregate": {"function": "sum", "column": "qty"},
+                        "filters": {"exact": {}, "normalized": {}},
+                        "output": {"cube": "m_ptotal", "key": ["key"], "value": "value", "reaggregate": "sum"},
+                        "node": {"entity": "node", "table": "sxc_demo.rls_node", "key": ["node_id"]},
+                        "join": {"relationship": "one_to_one", "node_key": ["node_id"], "output_key": ["key"]},
+                        "null_policy": {"operation": "exclude", "allow_excluded_rows": False},
+                    },
+                ],
+            }),
+            encoding="utf-8",
+        )
+        g_res = grain.run(
+            config.load(cfg_path),
+            SimpleNamespace(spec=str(spec_v037), max_rows=10000, config=str(cfg_path),
+                            _diagnostic_configuration_sha=None),
+            self.tmp,
+        )
+        ev_by_id = {c.id: c for c in g_res.checks}
+        self.assertEqual(ev_by_id["grain:c0001:evidence"].detail["source_invalid_indexes"], 1)
+        self.assertEqual(ev_by_id["grain:c0001:evidence"].detail["source_generated_columns"], 1)
+        self.assertEqual(ev_by_id["grain:c0002:evidence"].detail["source_child_invalid_indexes"], 1)
+        self.assertIn(grain._INVALID_INDEXES_NOT_PROVEN, g_res.not_proven)
+        self.assertIn(grain._GENERATED_COLUMNS_NOT_PROVEN, g_res.not_proven)
+        payload = json.dumps(g_res.to_dict())
+        for secret in ("v037_dup", "v037_pidx", "v037_dup_uidx", "gross"):
+            self.assertNotIn(secret, payload)
 
 
 if __name__ == "__main__":

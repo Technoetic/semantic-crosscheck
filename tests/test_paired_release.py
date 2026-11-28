@@ -997,6 +997,85 @@ class PairedReleaseTest(unittest.TestCase):
         self.assertFalse(rep_sl["fixture_leakage_audit"]["tree_membership_passed"])
         self.assertEqual(rep_sl["fixture_leakage_audit"]["unexpected_entries"], ["stray-link.json"])
 
+    def test_holm_bonferroni_multiplicity_diagnostics_and_validation(self):
+        import math
+        tools_dir = str(SCRIPT.parent)
+        if tools_dir not in sys.path:
+            sys.path.insert(0, tools_dir)
+        import paired_release as pr
+
+        self.assertEqual(pr.holm_bonferroni_adjust({}), {})
+        # Single-endpoint rounding boundary (0.0499999 < 0.05) stays consistent between raw and Holm counts.
+        boundary = pr.build_multiplicity_diagnostics({
+            "heldout": {"statistics": {"detections": {"n": 10, "exact_mcnemar_p": 0.0499999, "midp_mcnemar_p": 0.0499999}}},
+        })
+        self.assertEqual(boundary["exact_mcnemar"]["raw_under_alpha"], 1)
+        self.assertEqual(boundary["exact_mcnemar"]["holm_under_alpha"], 1)
+        adj = pr.holm_bonferroni_adjust({
+            "heldout.detections": 0.015625,
+            "heldout.false_positives": 1.0,
+            "development.detections": 0.03125,
+            "development.false_positives": 0.5,
+        })
+        self.assertEqual(adj, {
+            "development.detections": 0.09375,
+            "development.false_positives": 1.0,
+            "heldout.detections": 0.0625,
+            "heldout.false_positives": 1.0,
+        })
+        # Step-down monotonicity enforces non-decreasing adjusted p-values after ranking.
+        mono = pr.holm_bonferroni_adjust({"a": 0.01, "b": 0.012, "c": 0.04})
+        self.assertEqual(mono, {"a": 0.03, "b": 0.03, "c": 0.04})
+
+        for bad in ({"a": -0.01}, {"a": 1.01}, {"a": math.nan}, {"a": math.inf}, {"a": True}, {"": 0.5}):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                pr.holm_bonferroni_adjust(bad)
+
+        # End-to-end CLI output includes diagnostic-only multiplicity_diagnostics across 4 endpoints.
+        n_cases = 20
+        cases = []
+        base_obs = []
+        cand_obs = []
+        for idx in range(n_cases):
+            # heldout error: a=10, b=6, c=0, d=4 -> exact_p=0.03125, midp=0.015625
+            b_st = "flag" if idx < 10 else "clear"
+            c_st = "flag" if idx < 16 else "clear"
+            cases.append({"id": f"he{idx}", "fixture_sha256": f"{idx:064x}", "expected": "error", "exposure": "heldout"})
+            base_obs.append({"id": f"he{idx}", "fixture_sha256": f"{idx:064x}", "status": b_st})
+            cand_obs.append({"id": f"he{idx}", "fixture_sha256": f"{idx:064x}", "status": c_st})
+            # heldout clean: d=20 -> p=1.0
+            cases.append({"id": f"hc{idx}", "fixture_sha256": f"{100 + idx:064x}", "expected": "clean", "exposure": "heldout"})
+            base_obs.append({"id": f"hc{idx}", "fixture_sha256": f"{100 + idx:064x}", "status": "clear"})
+            cand_obs.append({"id": f"hc{idx}", "fixture_sha256": f"{100 + idx:064x}", "status": "clear"})
+            # development error: a=10, b=5, c=0, d=5 -> exact_p=0.0625, midp=0.03125
+            db_st = "flag" if idx < 10 else "clear"
+            dc_st = "flag" if idx < 15 else "clear"
+            cases.append({"id": f"de{idx}", "fixture_sha256": f"{200 + idx:064x}", "expected": "error", "exposure": "development"})
+            base_obs.append({"id": f"de{idx}", "fixture_sha256": f"{200 + idx:064x}", "status": db_st})
+            cand_obs.append({"id": f"de{idx}", "fixture_sha256": f"{200 + idx:064x}", "status": dc_st})
+            # development clean: b=1, d=19 -> exact_p=1.0, midp=0.5
+            cases.append({"id": f"dc{idx}", "fixture_sha256": f"{300 + idx:064x}", "expected": "clean", "exposure": "development"})
+            base_obs.append({"id": f"dc{idx}", "fixture_sha256": f"{300 + idx:064x}", "status": "clear"})
+            cand_obs.append({"id": f"dc{idx}", "fixture_sha256": f"{300 + idx:064x}", "status": "flag" if idx == 0 else "clear"})
+
+        self.plan = dict(schema_version=1, experiment="holm", added_check="new",
+                         baseline_checks=["old"], budget=len(cases), cases=cases)
+        self.baseline = dict(schema_version=1, arm="baseline", checks=["old"], budget=len(cases), observations=base_obs)
+        self.candidate = dict(schema_version=1, arm="candidate", checks=["new", "old"], budget=len(cases), observations=cand_obs)
+        self.refresh_plan()
+        code, rep = self.compare()
+        self.assertEqual(code, 0, rep)
+        mult = rep["multiplicity_diagnostics"]
+        self.assertEqual(mult["schema"], "semantic-crosscheck/holm-bonferroni/v1")
+        self.assertTrue(mult["diagnostic_only"])
+        self.assertEqual(mult["family_size"], 4)
+        self.assertEqual(mult["exact_mcnemar"]["raw_under_alpha"], 1)
+        self.assertEqual(mult["exact_mcnemar"]["holm_under_alpha"], 0)
+        self.assertEqual(mult["midp_mcnemar"]["raw_under_alpha"], 2)
+        self.assertEqual(mult["midp_mcnemar"]["holm_under_alpha"], 0)
+        self.assertEqual(mult["midp_mcnemar"]["holm_adjusted_p"]["heldout.detections"], 0.0625)
+        self.assertEqual(mult["midp_mcnemar"]["holm_adjusted_p"]["development.detections"], 0.09375)
+
 
 if __name__ == "__main__":
     unittest.main()

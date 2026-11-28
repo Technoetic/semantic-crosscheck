@@ -41,6 +41,14 @@ _UNVALIDATED_CONSTRAINTS_NOT_PROVEN = (
     'A checked relation or child partition has unvalidated CHECK or FOREIGN KEY constraints '
     '(convalidated=false); existing rows are not checked against those constraints.'
 )
+_INVALID_INDEXES_NOT_PROVEN = (
+    'A checked relation or child partition has invalid or unready index(es) in pg_index '
+    '(indisvalid=false or indisready=false); PostgreSQL ignores them for uniqueness and query planning.'
+)
+_GENERATED_COLUMNS_NOT_PROVEN = (
+    'A checked relation defines generated column(s) in pg_attribute (attgenerated<>\'\'); '
+    'derived column values depend on their PostgreSQL generation expression.'
+)
 
 
 def summarizability_failures(evidence: dict, allow_excluded_rows: bool) -> list[str]:
@@ -314,10 +322,18 @@ def evaluate(conn, actual, max_rows):
           coalesce((SELECT count(*) FROM pg_catalog.pg_constraint con
                     WHERE con.conrelid = c.oid AND con.contype IN ('c', 'f') AND NOT con.convalidated), 0)::integer
             AS unvalidated_constraints,
+          coalesce((SELECT count(*) FROM pg_catalog.pg_index i
+                    WHERE i.indrelid = c.oid AND (NOT i.indisvalid OR NOT i.indisready)), 0)::integer
+            AS invalid_indexes,
+          coalesce((SELECT count(*) FROM pg_catalog.pg_attribute a
+                    WHERE a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
+                      AND a.attgenerated <> ''), 0)::integer
+            AS generated_columns,
           coalesce(children.child_partition_row_security, false) AS child_partition_row_security,
           coalesce(children.child_foreign_partitions, false) AS child_foreign_partitions,
           coalesce(children.child_unlogged_partitions, false) AS child_unlogged_partitions,
-          coalesce(children.child_unvalidated_constraints, 0)::integer AS child_unvalidated_constraints
+          coalesce(children.child_unvalidated_constraints, 0)::integer AS child_unvalidated_constraints,
+          coalesce(children.child_invalid_indexes, 0)::integer AS child_invalid_indexes
           FROM pg_catalog.pg_class c
           JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
           LEFT JOIN LATERAL (
@@ -334,7 +350,11 @@ def evaluate(conn, actual, max_rows):
                     WHERE con.conrelid IN (SELECT oid FROM parts)
                       AND con.contype IN ('c', 'f')
                       AND con.coninhcount = 0
-                      AND NOT con.convalidated) AS child_unvalidated_constraints
+                      AND NOT con.convalidated) AS child_unvalidated_constraints,
+                   (SELECT count(*)
+                    FROM pg_catalog.pg_index i
+                    WHERE i.indrelid IN (SELECT oid FROM parts)
+                      AND (NOT i.indisvalid OR NOT i.indisready)) AS child_invalid_indexes
             FROM parts p
             JOIN pg_catalog.pg_class ch ON ch.oid = p.oid
           ) AS children ON true
@@ -351,6 +371,9 @@ def evaluate(conn, actual, max_rows):
         catalog_flags[side + '_unlogged'] = str(meta.get('relpersistence', 'p')) == 'u'
         catalog_flags[side + '_child_unlogged_partitions'] = bool(meta.get('child_unlogged_partitions', False))
         catalog_flags[side + '_unique_nulls_not_distinct'] = bool(meta['unique_nulls_not_distinct'])
+        catalog_flags[side + '_invalid_indexes'] = int(meta.get('invalid_indexes', 0))
+        catalog_flags[side + '_child_invalid_indexes'] = int(meta.get('child_invalid_indexes', 0))
+        catalog_flags[side + '_generated_columns'] = int(meta.get('generated_columns', 0))
         catalog_flags[side + '_unvalidated_constraints'] = int(meta.get('unvalidated_constraints', 0))
         catalog_flags[side + '_child_unvalidated_constraints'] = int(meta.get('child_unvalidated_constraints', 0))
         if child_foreign:
@@ -441,6 +464,8 @@ def run(cfg, args, out: Path) -> Result:
             child_foreign_seen = False
             unlogged_seen = False
             unvalidated_seen = False
+            invalid_idx_seen = False
+            generated_col_seen = False
             for index, (contract, actual) in enumerate(zip(spec['contracts'], operations), 1):
                 evidence = evaluate(conn, actual, max_rows)
                 if evidence.get('source_row_security') or evidence.get('node_row_security'):
@@ -458,6 +483,12 @@ def run(cfg, args, out: Path) -> Result:
                         or evidence.get('source_child_unvalidated_constraints')
                         or evidence.get('node_child_unvalidated_constraints')):
                     unvalidated_seen = True
+                if (evidence.get('source_invalid_indexes') or evidence.get('node_invalid_indexes')
+                        or evidence.get('source_child_invalid_indexes')
+                        or evidence.get('node_child_invalid_indexes')):
+                    invalid_idx_seen = True
+                if evidence.get('source_generated_columns') or evidence.get('node_generated_columns'):
+                    generated_col_seen = True
                 if not evidence['complete']:
                     status = 'not_run'
                 else:
@@ -486,6 +517,10 @@ def run(cfg, args, out: Path) -> Result:
                 result.not_proven.append(_UNLOGGED_NOT_PROVEN)
             if unvalidated_seen:
                 result.not_proven.append(_UNVALIDATED_CONSTRAINTS_NOT_PROVEN)
+            if invalid_idx_seen:
+                result.not_proven.append(_INVALID_INDEXES_NOT_PROVEN)
+            if generated_col_seen:
+                result.not_proven.append(_GENERATED_COLUMNS_NOT_PROVEN)
         # Bind completion to exactly the files checked at startup.
         if hashlib.sha256(_read(source)).hexdigest() != spec['spec_sha256'] or hashlib.sha256(Path(cfg.path).read_bytes()).hexdigest() != config_sha:
             raise ValueError('input changed')

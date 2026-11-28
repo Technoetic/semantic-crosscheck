@@ -179,6 +179,51 @@ class SavedResultContract(unittest.TestCase):
         self.assertEqual(result.status, 'error')
         self.assertEqual(next(check.status for check in result.checks if check.id == 'stage:reason'), 'error')
 
+    def test_result_write_fsyncs_temp_file_before_replace_and_parent_dir_on_posix(self):
+        import os
+        from unittest import mock
+        from semantic_crosscheck import result as result_mod
+
+        events = []
+        real_fsync = os.fsync
+        real_replace = os.replace
+
+        def spy_fsync(fd):
+            events.append(('fsync', fd))
+            return real_fsync(fd)
+
+        def spy_replace(src, dst):
+            events.append(('replace', str(dst)))
+            return real_replace(src, dst)
+
+        res = Result('build')
+        res.add('x', 'pass')
+        with mock.patch('os.fsync', side_effect=spy_fsync), mock.patch('os.replace', side_effect=spy_replace):
+            path = res.write(self.out)
+        self.assertTrue(path.is_file())
+        kinds = [kind for kind, _ in events]
+        self.assertIn('fsync', kinds)
+        self.assertIn('replace', kinds)
+        self.assertLess(kinds.index('fsync'), kinds.index('replace'))
+
+        # Simulate POSIX parent-directory fsync order and graceful EINVAL fallback.
+        posix_events = []
+        with mock.patch.object(result_mod.os, 'name', 'posix'), \
+                mock.patch.object(result_mod.os, 'open', return_value=77) as mock_open, \
+                mock.patch.object(result_mod.os, 'fsync', side_effect=lambda fd: posix_events.append(('fsync', fd))), \
+                mock.patch.object(result_mod.os, 'close', side_effect=lambda fd: posix_events.append(('close', fd))):
+            result_mod._fsync_dir(path.parent)
+        mock_open.assert_called_once()
+        self.assertEqual(posix_events, [('fsync', 77), ('close', 77)])
+
+        closed = []
+        with mock.patch.object(result_mod.os, 'name', 'posix'), \
+                mock.patch.object(result_mod.os, 'open', return_value=88), \
+                mock.patch.object(result_mod.os, 'fsync', side_effect=OSError('EINVAL')), \
+                mock.patch.object(result_mod.os, 'close', side_effect=lambda fd: closed.append(fd)):
+            result_mod._fsync_dir(path.parent)
+        self.assertEqual(closed, [88])
+
 
 if __name__ == '__main__':
     unittest.main()

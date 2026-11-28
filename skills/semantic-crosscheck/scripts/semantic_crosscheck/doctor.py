@@ -98,6 +98,13 @@ def _privileges_sql(server_version_num: int = MIN_PG) -> str:
            coalesce((SELECT count(*) FROM pg_catalog.pg_constraint con
                      WHERE con.conrelid = c.oid AND con.contype IN ('c', 'f') AND NOT con.convalidated), 0)::integer
              AS unvalidated_constraints,
+           coalesce((SELECT count(*) FROM pg_catalog.pg_index i
+                     WHERE i.indrelid = c.oid AND (NOT i.indisvalid OR NOT i.indisready)), 0)::integer
+             AS invalid_indexes,
+           coalesce((SELECT count(*) FROM pg_catalog.pg_attribute a
+                     WHERE a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
+                       AND a.attgenerated <> ''), 0)::integer
+             AS generated_columns,
            coalesce((SELECT count(DISTINCT col.oid)
                      FROM pg_catalog.pg_attribute a
                      JOIN pg_catalog.pg_collation col ON col.oid = a.attcollation
@@ -108,7 +115,12 @@ def _privileges_sql(server_version_num: int = MIN_PG) -> str:
            coalesce(children.child_partition_row_security, false) AS child_partition_row_security,
            coalesce(children.child_foreign_partitions, false) AS child_foreign_partitions,
            coalesce(children.child_unlogged_partitions, false) AS child_unlogged_partitions,
-           coalesce(children.child_unvalidated_constraints, 0)::integer AS child_unvalidated_constraints
+           coalesce(children.child_unvalidated_constraints, 0)::integer AS child_unvalidated_constraints,
+           coalesce(children.child_invalid_indexes, 0)::integer AS child_invalid_indexes,
+           coalesce(vdeps.view_volatile_functions, 0)::integer AS view_volatile_functions,
+           coalesce(vdeps.view_dep_rls_tables, false) AS view_dep_rls_tables,
+           coalesce(vdeps.view_dep_unlogged_tables, false) AS view_dep_unlogged_tables,
+           coalesce(vdeps.view_dep_foreign_tables, false) AS view_dep_foreign_tables
     FROM (SELECT 1) AS one
     LEFT JOIN pg_namespace n ON n.nspname = :schema
     LEFT JOIN pg_class c ON c.relnamespace = n.oid AND c.relname = :table AND c.relkind IN ('r', 'p', 'v', 'm', 'f')
@@ -126,10 +138,55 @@ def _privileges_sql(server_version_num: int = MIN_PG) -> str:
               WHERE con.conrelid IN (SELECT oid FROM parts)
                 AND con.contype IN ('c', 'f')
                 AND con.coninhcount = 0
-                AND NOT con.convalidated) AS child_unvalidated_constraints
+                AND NOT con.convalidated) AS child_unvalidated_constraints,
+             (SELECT count(*)
+              FROM pg_catalog.pg_index i
+              WHERE i.indrelid IN (SELECT oid FROM parts)
+                AND (NOT i.indisvalid OR NOT i.indisready)) AS child_invalid_indexes
       FROM parts p
       JOIN pg_catalog.pg_class ch ON ch.oid = p.oid
     ) AS children ON c.oid IS NOT NULL
+    LEFT JOIN LATERAL (
+      WITH RECURSIVE vrel(oid) AS (
+        SELECT c.oid WHERE c.relkind = 'v'
+        UNION
+        SELECT dep.refobjid
+        FROM vrel vr
+        JOIN pg_catalog.pg_class vc ON vc.oid = vr.oid AND vc.relkind = 'v'
+        JOIN pg_catalog.pg_rewrite rw ON rw.ev_class = vc.oid AND rw.ev_type = '1'
+        JOIN pg_catalog.pg_depend dep ON dep.objid = rw.oid
+          AND dep.classid = 'pg_catalog.pg_rewrite'::regclass
+          AND dep.refclassid = 'pg_catalog.pg_class'::regclass
+          AND dep.deptype = 'n'
+          AND dep.refobjid <> vr.oid
+      ),
+      vrel_all(oid) AS (
+        SELECT vr.oid FROM vrel vr WHERE vr.oid <> c.oid
+        UNION
+        SELECT inh.inhrelid
+        FROM vrel_all va
+        JOIN pg_catalog.pg_inherits inh ON inh.inhparent = va.oid
+      ),
+      vfuncs AS (
+        SELECT DISTINCT dep.refobjid AS func_oid
+        FROM vrel vr
+        JOIN pg_catalog.pg_class vc ON vc.oid = vr.oid AND vc.relkind = 'v'
+        JOIN pg_catalog.pg_rewrite rw ON rw.ev_class = vc.oid AND rw.ev_type = '1'
+        JOIN pg_catalog.pg_depend dep ON dep.objid = rw.oid
+          AND dep.classid = 'pg_catalog.pg_rewrite'::regclass
+          AND dep.refclassid = 'pg_catalog.pg_proc'::regclass
+          AND dep.deptype = 'n'
+      )
+      SELECT (SELECT count(*)
+              FROM vfuncs vf
+              JOIN pg_catalog.pg_proc pr ON pr.oid = vf.func_oid
+              WHERE pr.provolatile = 'v') AS view_volatile_functions,
+             bool_or(dc.relrowsecurity) AS view_dep_rls_tables,
+             bool_or(dc.relpersistence = 'u') AS view_dep_unlogged_tables,
+             bool_or(dc.relkind = 'f') AS view_dep_foreign_tables
+      FROM vrel_all va
+      JOIN pg_catalog.pg_class dc ON dc.oid = va.oid
+    ) AS vdeps ON c.oid IS NOT NULL AND c.relkind = 'v'
 """
 
 
@@ -387,6 +444,62 @@ def collation_version_warnings(row: dict) -> list[str]:
     ]
 
 
+def _index_and_column_warnings(name: str, row: dict) -> list[str]:
+    warnings: list[str] = []
+    invalid_idx = int(row.get("invalid_indexes", 0))
+    if invalid_idx > 0:
+        warnings.append(
+            f"entities.{name}: source relation has {invalid_idx} invalid or unready index(es) in pg_index "
+            "(indisvalid=false or indisready=false); PostgreSQL ignores invalid indexes for uniqueness "
+            "enforcement and query planning"
+        )
+    child_invalid_idx = int(row.get("child_invalid_indexes", 0))
+    if child_invalid_idx > 0:
+        warnings.append(
+            f"entities.{name}: child partition(s) or inherited relation(s) have {child_invalid_idx} invalid or "
+            "unready index(es) in pg_index (indisvalid=false or indisready=false)"
+        )
+    gen_cols = int(row.get("generated_columns", 0))
+    if gen_cols > 0:
+        warnings.append(
+            f"entities.{name}: source relation defines {gen_cols} generated column(s) in pg_attribute "
+            "(attgenerated<>''); derived column values depend on their PostgreSQL generation expression"
+        )
+    return warnings
+
+
+def _view_dependency_warnings(name: str, row: dict) -> list[str]:
+    if str(row.get("relkind", "")) != "v":
+        return []
+    warnings: list[str] = []
+    volatile_funcs = int(row.get("view_volatile_functions", 0))
+    if volatile_funcs > 0:
+        warnings.append(
+            f"entities.{name}: source view references {volatile_funcs} unpinned VOLATILE function(s) via "
+            "pg_rewrite/pg_depend (provolatile='v'; pinned built-in pg_catalog functions are omitted by pg_depend); "
+            "volatile functions can return different values across statements inside a single REPEATABLE READ snapshot"
+        )
+    if row.get("view_dep_rls_tables"):
+        warnings.append(
+            f"entities.{name}: source view depends on underlying relation(s) with PostgreSQL row-level security "
+            "enabled (view_dep_rls_tables=true); visible rows can differ across roles depending on view "
+            "security_invoker and underlying RLS policies"
+        )
+    if row.get("view_dep_unlogged_tables"):
+        warnings.append(
+            f"entities.{name}: source view depends on underlying UNLOGGED relation(s) "
+            "(view_dep_unlogged_tables=true); unlogged tables are truncated automatically after an unclean "
+            "shutdown or crash"
+        )
+    if row.get("view_dep_foreign_tables"):
+        warnings.append(
+            f"entities.{name}: source view depends on underlying foreign table(s) "
+            "(view_dep_foreign_tables=true); foreign tables do not participate in PostgreSQL REPEATABLE READ "
+            "snapshot isolation across statements or stages"
+        )
+    return warnings
+
+
 def catalog_warnings(name: str, row: dict) -> list[str]:
     """Disclose zero-extra-round-trip PostgreSQL catalog risks for one existing source relation."""
     if not row.get("table_exists"):
@@ -456,6 +569,8 @@ def catalog_warnings(name: str, row: dict) -> list[str]:
             f"entities.{name}: source table has PostgreSQL rewrite rules (relhasrules=true); "
             "rewrite rules can alter or suppress visible rows"
         )
+    warnings.extend(_index_and_column_warnings(name, row))
+    warnings.extend(_view_dependency_warnings(name, row))
     return warnings
 
 
@@ -473,17 +588,28 @@ def _privileges(conn, cfg, res: Result, hints: dict, server_version_num: int = M
         view_security_invoker = bool(r.get("view_security_invoker", False))
         view_security_barrier = bool(r.get("view_security_barrier", False))
         unvalidated = int(r.get("unvalidated_constraints", 0))
+        invalid_indexes = int(r.get("invalid_indexes", 0))
+        child_invalid_indexes = int(r.get("child_invalid_indexes", 0))
+        generated_columns = int(r.get("generated_columns", 0))
         child_rls = bool(r.get("child_partition_row_security", False))
         child_foreign = bool(r.get("child_foreign_partitions", False))
         child_unlogged = bool(r.get("child_unlogged_partitions", False))
         child_unvalidated = int(r.get("child_unvalidated_constraints", 0))
         mismatched_colls = int(r.get("mismatched_column_collations", 0))
+        view_volatile_functions = int(r.get("view_volatile_functions", 0))
+        view_dep_rls = bool(r.get("view_dep_rls_tables", False))
+        view_dep_unlogged = bool(r.get("view_dep_unlogged_tables", False))
+        view_dep_foreign = bool(r.get("view_dep_foreign_tables", False))
         unpopulated_mv = r["table_exists"] and relkind == "m" and not is_populated
         ok = r["table_exists"] and r["can_use"] and r["can_select"] and not unpopulated_mv
         res.add(f"privileges:select:{name}", _st(ok), f"entities.{name}", schema_exists=r["schema_exists"],
                 table_exists=r["table_exists"], relkind=relkind, relpersistence=relpersistence,
                 is_populated=is_populated, schema_usage=r["can_use"], select=r["can_select"],
                 view_security_invoker=view_security_invoker, view_security_barrier=view_security_barrier,
+                view_volatile_functions=view_volatile_functions,
+                view_dep_rls_tables=view_dep_rls,
+                view_dep_unlogged_tables=view_dep_unlogged,
+                view_dep_foreign_tables=view_dep_foreign,
                 row_security=bool(r.get("row_security", False)),
                 force_row_security=bool(r.get("force_row_security", False)),
                 bypass_rls=bool(r.get("bypass_rls", False)),
@@ -491,6 +617,9 @@ def _privileges(conn, cfg, res: Result, hints: dict, server_version_num: int = M
                 child_foreign_partitions=child_foreign,
                 child_unlogged_partitions=child_unlogged,
                 unique_nulls_not_distinct=bool(r.get("unique_nulls_not_distinct", False)),
+                invalid_indexes=invalid_indexes,
+                child_invalid_indexes=child_invalid_indexes,
+                generated_columns=generated_columns,
                 unvalidated_constraints=unvalidated,
                 child_unvalidated_constraints=child_unvalidated,
                 mismatched_column_collations=mismatched_colls,
